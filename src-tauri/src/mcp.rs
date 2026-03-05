@@ -5,6 +5,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use tauri::State;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 /// MCP 服务器进程管理器
 pub struct McpServerManager {
     processes: Mutex<HashMap<String, Child>>,
@@ -190,7 +193,14 @@ pub async fn start_mcp_stdio_server(
     for (key, value) in env {
         cmd.env(key, value);
     }
-    
+
+    // 在 Windows 上设置 CREATE_NO_WINDOW 标志，防止弹出控制台窗口
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+        cmd.creation_flags(CREATE_NO_WINDOW.0);
+    }
+
     let child = cmd.spawn()
         .map_err(|e| format!("Failed to spawn process: {}", e))?;
     

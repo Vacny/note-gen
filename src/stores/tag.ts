@@ -82,35 +82,29 @@ const useTagStore = create<TagState>((set, get) => ({
     const filename = 'tags.json'
     const tags = await getTags()
     const store = await Store.load('store.json');
-    const jsonToBase64 = (data: Tag[]) => {
-      return Buffer.from(JSON.stringify(data, null, 2)).toString('base64');
-    }
     const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github';
     let result = false
     let res;
     let files: any;
+    const fullPath = `${path}/${filename}`;
     switch (primaryBackupMethod) {
       case 'github':
         const githubRepo = await getSyncRepoName('github')
-        files = await githubGetFiles({ path: `${path}/${filename}`, repo: githubRepo })
+        files = await githubGetFiles({ path: fullPath, repo: githubRepo })
         res = await uploadGithubFile({
-          ext: 'json',
-          file: jsonToBase64(tags),
+          file: JSON.stringify(tags),
           repo: githubRepo,
-          path,
-          filename,
+          path: fullPath,
           sha: files?.sha,
         })
         break;
       case 'gitee':
         const giteeRepo = await getSyncRepoName('gitee')
-        files = await giteeGetFiles({ path: `${path}/${filename}`, repo: giteeRepo })
+        files = await giteeGetFiles({ path: fullPath, repo: giteeRepo })
         res = await uploadGiteeFile({
-          ext: 'json',
-          file: jsonToBase64(tags),
+          file: JSON.stringify(tags),
           repo: giteeRepo,
-          path,
-          filename,
+          path: fullPath,
           sha: files?.sha,
         })
         break;
@@ -121,8 +115,7 @@ const useTagStore = create<TagState>((set, get) => ({
           ? files.find(file => file.name === filename)
           : (files?.name === filename ? files : undefined)
         res = await uploadGitlabFile({
-          ext: 'json',
-          file: jsonToBase64(tags),
+          file: JSON.stringify(tags),
           repo: gitlabRepo,
           path,
           filename,
@@ -136,8 +129,7 @@ const useTagStore = create<TagState>((set, get) => ({
           ? files.find(file => file.name === filename)
           : (files?.name === filename ? files : undefined)
         res = await uploadGiteaFile({
-          ext: 'json',
-          file: jsonToBase64(tags),
+          file: JSON.stringify(tags),
           repo: giteaRepo,
           path,
           filename,

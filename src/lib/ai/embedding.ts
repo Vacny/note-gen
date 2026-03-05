@@ -210,28 +210,23 @@ export async function rerankDocuments(
   documents: {id: number, filename: string, content: string, similarity: number}[]
 ): Promise<{id: number, filename: string, content: string, similarity: number}[]> {
   try {
-    // 检查是否有文档需要重排序
     if (!documents.length) {
       return documents;
     }
-    
-    // 获取重排序模型信息
+
     const modelInfo = await getRerankModelInfo();
     if (!modelInfo) {
-      // 如果没有配置重排序模型，返回原始排序
       return documents;
     }
-    
+
     const { baseURL, apiKey, model } = modelInfo;
-    
+
     if (!baseURL || !model) {
-      return documents; // 配置不完整，返回原始排序
+      return documents;
     }
-    
-    // 构建重排序请求数据
-    // 注意：这里使用了OpenAI的格式，但可能需要根据实际使用的模型调整
+
     const passages = documents.map(doc => doc.content);
-    
+
     const response = await fetch(baseURL + '/rerank', {
       method: 'POST',
       headers: {
@@ -245,33 +240,38 @@ export async function rerankDocuments(
         documents: passages
       })
     });
-    
+
     if (!response.ok) {
       throw new Error(`重排序请求失败: ${response.status} ${response.statusText}`);
     }
-    
-    // 解析响应
+
     const data = await response.json();
-    
-    // 检查响应格式
+
     if (!data || !data.results) {
       throw new Error('重排序结果格式不正确');
     }
-    
-    // 处理重排序结果
-    // 将原始文档与新的相似度分数结合
+
+    // 计算最高 rerank 分数，用于判断是否使用 rerank 结果
+    const maxRerankScore = Math.max(...data.results.map((r: any) => r.relevance_score || r.score || 0));
+    const RERANK_THRESHOLD = 0.1;
+
+    // 如果 rerank 模型认为没有相关文档（最高分太低），返回原始排序
+    if (maxRerankScore < RERANK_THRESHOLD) {
+      return documents;
+    }
+
     const rerankResults = data.results.map((result: any, index: number) => {
+      const docIndex = result.document_index ?? result.index ?? index;
+      const originalDoc = documents[docIndex];
       return {
-        ...documents[result.document_index || result.index || index],
+        ...originalDoc,
         similarity: result.relevance_score || result.score || documents[index].similarity
       };
-    });
-    
-    // 根据新的相似度分数排序
+    }).filter((doc: any): doc is {id: number, filename: string, content: string, similarity: number} => doc !== undefined);
+
     return rerankResults.sort((a: {similarity: number}, b: {similarity: number}) => b.similarity - a.similarity);
   } catch (error) {
-    console.error('重排序失败:', error);
-    // 发生错误时返回原始排序
+    console.error('[Rerank] 重排序失败:', error);
     return documents;
   }
 }

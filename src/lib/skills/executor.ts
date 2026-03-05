@@ -2,13 +2,17 @@
  * Skill 执行器
  *
  * 负责 Skill 的执行和指令格式化。
+ * 遵循 Agent Skills 官方规范: https://agentskills.io/specification
  */
 
 import type {
   SkillContent,
   SkillExecutionResult,
   SkillExecutionRecord,
+  ScriptExecutionResult,
+  SkillScript,
 } from './types'
+import { resolveSkillDirectory, resolveScriptRelativePath, buildShellCommand } from './path-utils'
 
 // ============================================================================
 // SkillExecutor 类
@@ -21,6 +25,7 @@ import type {
  * - 在当前上下文执行 Skill
  * - 格式化 Skill 指令为系统提示
  * - 管理 Skill 执行记录
+ * - 执行脚本 (scripts/)
  */
 export class SkillExecutor {
   private executionHistory: SkillExecutionRecord[] = []
@@ -52,12 +57,44 @@ export class SkillExecutor {
       sections.push('')
     }
 
+    // 添加兼容性信息 (官方规范)
+    if (skill.metadata.compatibility) {
+      sections.push(`**Compatibility**: ${skill.metadata.compatibility}`)
+      sections.push('')
+    }
+
+    // 添加许可证信息 (官方规范)
+    if (skill.metadata.license) {
+      sections.push(`**License**: ${skill.metadata.license}`)
+      sections.push('')
+    }
+
     // 添加 Skill 版本信息
-    sections.push(`**Version**: ${skill.metadata.version}`)
+    if (skill.metadata.version) {
+      sections.push(`**Version**: ${skill.metadata.version}`)
+    }
     if (skill.metadata.author) {
       sections.push(`**Author**: ${skill.metadata.author}`)
     }
     sections.push('')
+
+    // 添加可用脚本列表 (官方规范)
+    if (skill.scripts && skill.scripts.length > 0) {
+      sections.push('**Available Scripts**:')
+      for (const script of skill.scripts) {
+        sections.push(`  - \`${script.name}\` (${script.type})`)
+      }
+      sections.push('')
+    }
+
+    // 添加可用参考文档 (官方规范)
+    if (skill.references && skill.references.length > 0) {
+      sections.push('**Available References**:')
+      for (const ref of skill.references) {
+        sections.push(`  - [${ref.name}](${ref.path})`)
+      }
+      sections.push('')
+    }
 
     // 添加分隔线
     sections.push('---')
@@ -108,8 +145,22 @@ export class SkillExecutor {
         sections.push('')
       }
 
+      if (skill.metadata.compatibility) {
+        sections.push(`**Compatibility**: ${skill.metadata.compatibility}`)
+        sections.push('')
+      }
+
       sections.push(skill.instructions)
       sections.push('')
+
+      // 添加可用脚本
+      if (skill.scripts && skill.scripts.length > 0) {
+        sections.push('**Available Scripts**:')
+        for (const script of skill.scripts) {
+          sections.push(`  - \`${script.name}\` (${script.type})`)
+        }
+        sections.push('')
+      }
 
       // 添加工具权限提示
       if (skill.metadata.allowedTools && skill.metadata.allowedTools.length > 0) {
@@ -134,6 +185,248 @@ export class SkillExecutor {
    */
   formatSkillAsSystemPrompt(skill: SkillContent): string {
     return this.formatSkillsAsSystemPrompt([skill])
+  }
+
+  // ========================================================================
+  // 脚本执行
+  // ========================================================================
+
+  /**
+   * 执行 Skill 的脚本
+   *
+   * @param skill - Skill 内容
+   * @param scriptName - 脚本名称
+   * @param args - 脚本参数 (可选)
+   * @returns 脚本执行结果
+   */
+  async executeScript(
+    skill: SkillContent,
+    scriptName: string,
+    args?: string[]
+  ): Promise<ScriptExecutionResult> {
+    const startTime = Date.now()
+
+    // 查找脚本
+    const script = skill.scripts.find(s => s.name === scriptName)
+    if (!script) {
+      return {
+        success: false,
+        scriptName,
+        error: `Script "${scriptName}" not found in skill "${skill.metadata.name}"`,
+        executionTime: Date.now() - startTime,
+      }
+    }
+
+    try {
+      // 根据脚本类型执行
+      const result = await this.executeScriptByType(script, args, skill)
+
+      const executionTime = Date.now() - startTime
+
+      return {
+        success: true,
+        scriptName,
+        output: result.output,
+        exitCode: result.exitCode,
+        executionTime,
+      }
+    } catch (error) {
+      const executionTime = Date.now() - startTime
+      const errorMessage = error instanceof Error ? error.message : String(error)
+
+      return {
+        success: false,
+        scriptName,
+        error: errorMessage,
+        executionTime,
+      }
+    }
+  }
+
+  /**
+   * 根据脚本类型执行脚本
+   */
+  private async executeScriptByType(
+    script: SkillScript,
+    args?: string[],
+    skill?: SkillContent
+  ): Promise<{ output: string; exitCode: number }> {
+    // 注意：在 Tauri 环境中，脚本执行需要通过 Command API
+
+    const { Command } = await import('@tauri-apps/plugin-shell')
+
+    let command: string
+
+    // 根据脚本类型确定解释器命令
+    // 优先使用 'python3'，如果不存在则回退到 'python'
+    switch (script.type) {
+      case 'python':
+        command = 'python3'
+        break
+      case 'bash':
+      case 'shell':
+        command = 'bash'
+        break
+      case 'node':
+      case 'javascript':
+        command = 'node'
+        break
+      default:
+        throw new Error(`Unsupported script type: ${script.type}`)
+    }
+
+    // 如果没有 skill 信息，抛出错误而不是静默失败
+    if (!skill) {
+      throw new Error('Skill information is required to execute script')
+    }
+
+    // 获取 skill 文件信息
+    const fileInfo = await import('@/lib/skills').then(m => m.skillManager.getSkillFileInfo(skill.metadata.id))
+    if (!fileInfo) {
+      throw new Error(`Cannot find skill file info for: ${skill.metadata.id}`)
+    }
+
+    // 使用统一的路径解析函数
+    const workingDirectory = await resolveSkillDirectory(fileInfo.directory, skill.metadata.scope)
+
+    // 使用统一的脚本路径解析函数
+    const skillBaseName = fileInfo.directory.split('/').pop() || skill.metadata.id
+    const relativeScriptPath = resolveScriptRelativePath(script.path, skillBaseName)
+
+    // 使用参数转义函数
+    const shellCommand = buildShellCommand(workingDirectory, workingDirectory, command, [relativeScriptPath, ...(args || [])])
+
+    const result = await Command.create('bash', ['-c', shellCommand]).execute()
+
+    // 合并 stdout 和 stderr，确保不丢失任何输出
+    const output = result.stdout + result.stderr
+
+    return {
+      output: output || '',
+      exitCode: result.code ?? 0,
+    }
+  }
+
+  /**
+   * 获取 Skill 的所有脚本
+   *
+   * @param skill - Skill 内容
+   * @returns 脚本列表
+   */
+  getScripts(skill: SkillContent): SkillScript[] {
+    return skill.scripts || []
+  }
+
+  /**
+   * 检查 Skill 是否有指定脚本
+   *
+   * @param skill - Skill 内容
+   * @param scriptName - 脚本名称
+   * @returns 是否存在
+   */
+  hasScript(skill: SkillContent, scriptName: string): boolean {
+    return skill.scripts.some(s => s.name === scriptName)
+  }
+
+  // ========================================================================
+  // 渐进式加载 (官方规范)
+  // ========================================================================
+
+  /**
+   * 获取 Skill 的元数据摘要 (用于启动时加载)
+   * 官方规范建议只加载约 100 tokens 的元数据
+   *
+   * @param skill - Skill 内容
+   * @returns 元数据摘要
+   */
+  getMetadataSummary(skill: SkillContent): string {
+    const parts: string[] = []
+    parts.push(`**${skill.metadata.name}**`)
+    parts.push(skill.metadata.description)
+
+    if (skill.metadata.compatibility) {
+      parts.push(`*Compatibility: ${skill.metadata.compatibility}*`)
+    }
+
+    return parts.join('\n')
+  }
+
+  /**
+   * 读取参考文档内容 (按需加载)
+   *
+   * @param skill - Skill 内容
+   * @param referenceName - 参考文档名称
+   * @returns 参考文档内容
+   */
+  async loadReference(
+    skill: SkillContent,
+    referenceName: string
+  ): Promise<string | null> {
+    const reference = skill.references.find(r => r.name === referenceName)
+    if (!reference) {
+      return null
+    }
+
+    try {
+      const { readTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs')
+      const { getFilePathOptions } = await import('@/lib/workspace')
+
+      let content: string
+      if (skill.metadata.scope === 'global') {
+        content = await readTextFile(reference.path, { baseDir: BaseDirectory.AppData })
+      } else {
+        const options = await getFilePathOptions(reference.path)
+        if (options.baseDir) {
+          content = await readTextFile(options.path, { baseDir: options.baseDir })
+        } else {
+          content = await readTextFile(options.path)
+        }
+      }
+
+      return content
+    } catch (error) {
+      console.error(`读取参考文档失败: ${reference.path}`, error)
+      return null
+    }
+  }
+
+  /**
+   * 读取资源文件内容 (按需加载)
+   *
+   * @param skill - Skill 内容
+   * @param assetName - 资源文件名称
+   * @returns 资源文件内容
+   */
+  async loadAsset(
+    skill: SkillContent,
+    assetName: string
+  ): Promise<string | null> {
+    const asset = skill.assets.find(a => a.name === assetName)
+    if (!asset) {
+      return null
+    }
+
+    try {
+      const { readTextFile, BaseDirectory } = await import('@tauri-apps/plugin-fs')
+      const { getFilePathOptions } = await import('@/lib/workspace')
+
+      let content: string
+      if (skill.metadata.scope === 'global') {
+        content = await readTextFile(asset.path, { baseDir: BaseDirectory.AppData })
+      } else {
+        const options = await getFilePathOptions(asset.path)
+        if (options.baseDir) {
+          content = await readTextFile(options.path, { baseDir: options.baseDir })
+        } else {
+          content = await readTextFile(options.path)
+        }
+      }
+
+      return content
+    } catch (error) {
+      console.error(`读取资源文件失败: ${asset.path}`, error)
+      return null
+    }
   }
 
   // ========================================================================
@@ -256,6 +549,7 @@ export class SkillExecutor {
    * @param result - 结果内容
    * @param error - 错误信息
    * @param toolsUsed - 使用的工具
+   * @param scriptsUsed - 使用的脚本
    * @param startTime - 开始时间
    * @returns 执行结果
    */
@@ -265,6 +559,7 @@ export class SkillExecutor {
     result?: string,
     error?: string,
     toolsUsed: string[] = [],
+    scriptsUsed: string[] = [],
     startTime?: number
   ): SkillExecutionResult {
     const executionTime = startTime
@@ -277,6 +572,7 @@ export class SkillExecutor {
       result,
       error,
       toolsUsed,
+      scriptsUsed,
       executionTime,
     }
   }

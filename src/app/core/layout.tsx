@@ -11,7 +11,6 @@ import { useI18n } from "@/hooks/useI18n"
 import useVectorStore from "@/stores/vector"
 import useImageStore from "@/stores/imageHosting"
 import useShortcutStore from "@/stores/shortcut"
-import useChatStore from "@/stores/chat"
 import useUpdateStore from "@/stores/update"
 import initQuickRecordText from "@/lib/shortcut/quick-record-text"
 import { useRouter, usePathname } from "next/navigation"
@@ -35,7 +34,6 @@ export default function RootLayout({
   const { currentLocale } = useI18n()
   const { initShortcut } = useShortcutStore()
   const { initVectorDb } = useVectorStore()
-  const { initIsLinkMark } = useChatStore()
   const { initUpdateStore, checkForUpdates } = useUpdateStore()
   const router = useRouter()
   const pathname = usePathname()
@@ -60,7 +58,6 @@ export default function RootLayout({
     initAllDatabases()
     initShortcut()
     initVectorDb()
-    initIsLinkMark()
     initQuickRecordText()
     initShowWindow()
     initMcp()

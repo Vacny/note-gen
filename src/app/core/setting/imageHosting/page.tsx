@@ -1,70 +1,79 @@
 'use client';
-import { ImageUp, SquareCheckBig } from "lucide-react"
+import { ImageUp } from "lucide-react"
 import { useTranslations } from 'next-intl';
 import { SettingType } from '../components/setting-base';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GithubImageHosting } from "./github";
 import SMMSImageHosting from "./smms";
 import useImageStore from "@/stores/imageHosting";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Store } from "@tauri-apps/plugin-store";
 import PicgoImageHosting from "./picgo";
 import { S3ImageHosting } from "./s3";
 import { SettingSwitch } from "./setting-switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import useSettingStore from "@/stores/setting"
 
 export default function ImageHostingPage() {
   const t = useTranslations();
   const { mainImageHosting, setMainImageHosting } = useImageStore()
-  const [value, setValue] = useState(mainImageHosting)
+  const { useImageRepo } = useSettingStore()
 
-  async function init() {
-    const store = await Store.load('store.json');
-    const imageHosting = await store.get<string>('mainImageHosting')
-    if (imageHosting) {
-      setMainImageHosting(imageHosting)
-      setValue(imageHosting)
-    }
+  // 使用 mainImageHosting 作为受控值
+  const currentValue = mainImageHosting || 'github'
+
+  const handleValueChange = async (value: string) => {
+    await setMainImageHosting(value)
   }
 
   useEffect(() => {
+    // 初始化时从 store 加载
+    const init = async () => {
+      const store = await Store.load('store.json');
+      const imageHosting = await store.get<string>('mainImageHosting')
+      if (imageHosting) {
+        await setMainImageHosting(imageHosting)
+      }
+    }
     init()
   }, [])
-  
+
   return (
     <SettingType id="imageHosting" icon={<ImageUp />} title={t('settings.imageHosting.title')} desc={t('settings.imageHosting.desc')}>
       <SettingSwitch />
-      <Tabs className="mt-4" value={value} defaultValue={mainImageHosting} onValueChange={(value) => {setValue(value)}}>
-        <TabsList className="grid grid-cols-4 w-full mb-8">
-          <TabsTrigger value="github" className="flex items-center gap-2">
-            Github
-            {mainImageHosting === 'github' && <SquareCheckBig className="size-4" />}
-          </TabsTrigger>
-          <TabsTrigger value="smms" className="flex items-center gap-2">
-            SM.MS
-            {mainImageHosting === 'smms' && <SquareCheckBig className="size-4" />}
-          </TabsTrigger>
-          <TabsTrigger value="picgo" className="flex items-center gap-2">
-            PicGo
-            {mainImageHosting === 'picgo' && <SquareCheckBig className="size-4" />}
-          </TabsTrigger>
-          <TabsTrigger value="s3" className="flex items-center gap-2">
-            S3
-            {mainImageHosting === 's3' && <SquareCheckBig className="size-4" />}
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="github">
-          <GithubImageHosting />
-        </TabsContent>
-        <TabsContent value="smms">
-          <SMMSImageHosting />
-        </TabsContent>
-        <TabsContent value="picgo">
-          <PicgoImageHosting />
-        </TabsContent>
-        <TabsContent value="s3">
-          <S3ImageHosting />
-        </TabsContent>
-      </Tabs>
+      {useImageRepo && (
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium">{t('settings.imageHosting.type')}</label>
+          <Select value={currentValue} onValueChange={handleValueChange}>
+            <SelectTrigger className="w-45">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="github">Github</SelectItem>
+              <SelectItem value="smms">SM.MS</SelectItem>
+              <SelectItem value="picgo">PicGo</SelectItem>
+              <SelectItem value="s3">S3</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      {useImageRepo && currentValue === 'github' && (
+        <GithubImageHosting />
+      )}
+      {useImageRepo && currentValue === 'smms' && (
+        <SMMSImageHosting />
+      )}
+      {useImageRepo && currentValue === 'picgo' && (
+        <PicgoImageHosting />
+      )}
+      {useImageRepo && currentValue === 's3' && (
+        <S3ImageHosting />
+      )}
     </SettingType>
   )
 }

@@ -9,8 +9,8 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer"
-import { FileManager } from '@/app/core/article/file/file-manager'
-import { FileActions } from '@/app/core/article/file/file-actions'
+import { FileManager } from '@/app/core/main/file/file-manager'
+import { FileActions } from '@/app/core/main/file/file-actions'
 
 export function WritingHeader() {
   const { activeFilePath } = useArticleStore()
@@ -42,7 +42,7 @@ export function WritingHeader() {
                 <FileActions />
             </div>
             <div className="flex-1">
-              <FileManager />
+              <FileManager focusSidebar={() => {}} />
             </div>
           </div>
         </DrawerContent>

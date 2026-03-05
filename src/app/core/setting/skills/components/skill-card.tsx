@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Sparkles, Trash, Loader2, Edit2 } from 'lucide-react'
 import { useSkillsStore } from '@/stores/skills'
 import { Textarea } from '@/components/ui/textarea'
+import { SkillMetadata } from '@/lib/skills/types'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,19 +21,7 @@ import {
 } from '@/components/ui/alert-dialog'
 
 interface SkillCardProps {
-  skill: {
-    id: string
-    name: string
-    description: string
-    version: string
-    author?: string
-    scope: 'global' | 'project'
-    allowedTools?: string[]
-    userInvocable: boolean
-    enabled: boolean
-    createdAt: number
-    updatedAt: number
-  }
+  skill: SkillMetadata
   onRefresh: () => void
 }
 

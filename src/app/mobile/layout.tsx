@@ -2,7 +2,8 @@
 
 import { ThemeProvider } from "@/components/theme-provider"
 import useSettingStore from "@/stores/setting"
-import { useEffect } from "react";
+import { useEffect } from "react"
+import { applyThemeColors } from "@/lib/theme-utils"
 import { initAllDatabases } from "@/db"
 import dayjs from "dayjs"
 import zh from "dayjs/locale/zh-cn";
@@ -18,18 +19,18 @@ import { reportAppStart } from "@/lib/event-report"
 import { MobileStatusBar } from "@/components/mobile-statusbar"
 import { TextSizeProvider } from "@/contexts/text-size-context"
 import { SyncConfirmDialog } from "@/components/sync-confirm-dialog"
-import { ControlText } from "@/app/core/record/mark/control-text"
-import { ControlRecording } from "@/app/core/record/mark/control-recording"
-import { ControlImage } from "@/app/core/record/mark/control-image"
-import { ControlLink } from "@/app/core/record/mark/control-link"
-import { ControlFile } from "@/app/core/record/mark/control-file"
+import { ControlText } from "@/app/core/main/mark/control-text"
+import { ControlRecording } from "@/app/core/main/mark/control-recording"
+import { ControlImage } from "@/app/core/main/mark/control-image"
+import { ControlLink } from "@/app/core/main/mark/control-link"
+import { ControlFile } from "@/app/core/main/mark/control-file"
 
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { initSettingData } = useSettingStore()
+  const { initSettingData, customThemeColors } = useSettingStore()
   const { initMainHosting } = useImageStore()
   const { currentLocale } = useI18n()
   useEffect(() => {
@@ -60,6 +61,11 @@ export default function RootLayout({
         break;
     }
   }, [currentLocale])
+
+  // 应用自定义主题颜色
+  useEffect(() => {
+    applyThemeColors(customThemeColors)
+  }, [customThemeColors])
 
   return (
     <ThemeProvider

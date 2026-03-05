@@ -13,7 +13,7 @@ export interface Tool {
   description: string
   parameters: ToolParameter[]
   requiresConfirmation: boolean
-  category: 'note' | 'chat' | 'tag' | 'mark' | 'search' | 'mcp' | 'system'
+  category: 'note' | 'chat' | 'tag' | 'mark' | 'search' | 'mcp' | 'system' | 'editor'
   execute: (params: Record<string, any>) => Promise<ToolResult>
 }
 
@@ -32,8 +32,6 @@ export interface ToolCall {
   status: 'pending' | 'running' | 'success' | 'error'
   timestamp: number
 }
-
-export type ChatMode = 'chat' | 'agent'
 
 export interface ConfirmationRecord {
   toolName: string
@@ -56,6 +54,9 @@ export interface AgentState {
   pendingConfirmation?: {
     toolName: string
     params: Record<string, any>
+    originalContent?: string  // 原始内容（用于显示 diff）
+    modifiedContent?: string  // 修改后的内容（用于显示 diff）
+    filePath?: string         // 文件路径（用于显示在确认对话框中）
   }
   confirmationHistory: ConfirmationRecord[] // 确认操作的历史记录
   loadedSkills?: Array<{
@@ -64,6 +65,17 @@ export interface AgentState {
     description?: string
   }> // 当前对话加载的 Skills 列表
   selectedSkills?: string[] // AI 选择的 Skill ID 列表
+  currentStepStartTime?: number // 当前步骤开始时间戳（用于实时计算耗时）
+  // RAG 相关字段（实时执行时显示）
+  ragSources?: string[] // RAG 检索到的来源文件列表
+  ragSourceDetails?: Array<{
+    filepath: string
+    filename: string
+    content: string
+  }> // RAG 检索到的来源文件详情
+  // Final Answer 模式（检测到 Final Answer 时切换到 Markdown 渲染）
+  isFinalAnswerMode?: boolean
+  finalAnswerContent?: string
 }
 
 export interface ReActStep {
@@ -73,4 +85,5 @@ export interface ReActStep {
     params: Record<string, any>
   }
   observation?: string
+  duration?: number  // 耗时（毫秒）
 }

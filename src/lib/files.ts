@@ -6,6 +6,15 @@ export interface MarkdownFile {
   name: string;
   path: string;
   relativePath: string;
+  modifiedAt?: Date;
+  /** 文件元数据（仅在 includeMetadata=true 时返回） */
+  metadata?: {
+    size?: number;           // 文件大小（字节）
+    modifiedAt?: Date;       // 最后修改时间
+    createdAt?: Date;        // 创建时间
+    accessedAt?: Date;       // 最后访问时间
+    isReadOnly?: boolean;    // 是否只读
+  };
 }
 
 // 文件夹关联接口
@@ -71,8 +80,9 @@ export async function collectMarkdownFiles(folderPath: string): Promise<Array<{p
 
 /**
  * 获取工作区中所有Markdown文件（平铺所有文件夹）
+ * @param includeMetadata 是否包含文件元数据（如修改时间），默认 false
  */
-export async function getAllMarkdownFiles(): Promise<MarkdownFile[]> {
+export async function getAllMarkdownFiles(includeMetadata: boolean = false): Promise<MarkdownFile[]> {
   const workspace = await getWorkspacePath();
 
 
@@ -107,11 +117,39 @@ export async function getAllMarkdownFiles(): Promise<MarkdownFile[]> {
             ? await join(dirPath, entry.name)
             : currentRelativePath;
 
-          files.push({
+          const fileInfo: MarkdownFile = {
             name: entry.name,
             path: fullPath,
             relativePath: currentRelativePath
-          });
+          };
+
+          // 如果需要元数据，获取文件完整元数据
+          if (includeMetadata) {
+            try {
+              const { stat } = await import('@tauri-apps/plugin-fs');
+              // 使用 getFilePathOptions 获取正确的路径（兼容自定义工作区和默认工作区）
+              const pathOptions = await getFilePathOptions(currentRelativePath);
+              const metadata = pathOptions.baseDir
+                ? await stat(pathOptions.path, { baseDir: pathOptions.baseDir })
+                : await stat(pathOptions.path);
+
+              // 存储 modifiedAt 用于兼容
+              fileInfo.modifiedAt = metadata.mtime ?? undefined;
+
+              // 存储完整元数据
+              fileInfo.metadata = {
+                size: metadata.size,
+                modifiedAt: metadata.mtime ?? undefined,
+                createdAt: metadata.birthtime ?? undefined,
+                accessedAt: metadata.atime ?? undefined,
+                isReadOnly: metadata.readonly,
+              };
+            } catch (error) {
+              console.warn(`[getAllMarkdownFiles] 获取文件元数据失败: ${currentRelativePath}`, error);
+            }
+          }
+
+          files.push(fileInfo);
         }
       }
     } catch (error) {

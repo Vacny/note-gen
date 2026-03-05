@@ -1,22 +1,37 @@
 import { Tool, ToolResult } from '../types'
-import { getMarks, insertMark, updateMark, delMark, restoreMark, Mark, insertMarks, updateMarks, deleteMarks, restoreMarks } from '@/db/marks'
+import { getMarks, getAllMarks, insertMark, updateMark, delMark, restoreMark, Mark, insertMarks, updateMarks, deleteMarks, restoreMarks } from '@/db/marks'
+import useTagStore from '@/stores/tag'
+
+/**
+ * 获取当前选中的标签ID
+ * 如果用户没有明确指定标签，使用当前选中的标签
+ */
+function getCurrentTagId(tagId?: number): number {
+  // 如果明确传入了 tagId，使用传入的值
+  if (tagId !== undefined && tagId !== null) {
+    return tagId
+  }
+  // 否则使用当前选中的标签
+  return useTagStore.getState().currentTagId
+}
 
 export const readMarksTool: Tool = {
   name: 'read_marks',
-  description: '读取指定标签下的所有记录（marks）',
+  description: 'Read all content records (marks) under a specific tag. Uses current selected tag if tagId not specified.',
   category: 'mark',
   requiresConfirmation: false,
   parameters: [
     {
       name: 'tagId',
       type: 'number',
-      description: '标签ID',
-      required: true,
+      description: 'Tag ID (optional, uses current selected tag if not specified)',
+      required: false,
     },
   ],
   execute: async (params): Promise<ToolResult> => {
     try {
-      const marks = await getMarks(params.tagId)
+      const tagId = getCurrentTagId(params.tagId)
+      const marks = await getMarks(tagId)
       const activeMarks = marks.filter(m => m.deleted === 0)
       return {
         success: true,
@@ -34,38 +49,38 @@ export const readMarksTool: Tool = {
 
 export const createMarkTool: Tool = {
   name: 'create_mark',
-  description: '创建一条新的记录（mark）',
+  description: 'Create a new content record (mark) under a specific tag.',
   category: 'mark',
   requiresConfirmation: false,
   parameters: [
     {
       name: 'tagId',
       type: 'number',
-      description: '标签ID',
+      description: 'Tag ID (use list_tags first to get available tags)',
       required: true,
     },
     {
       name: 'type',
       type: 'string',
-      description: '记录类型：scan, text, image, link, file, recording',
+      description: 'Mark type: scan (OCR), text, image, link, file, recording',
       required: true,
     },
     {
       name: 'content',
       type: 'string',
-      description: '记录内容',
+      description: 'Main content of the mark (text, OCR result, etc.)',
       required: false,
     },
     {
       name: 'url',
       type: 'string',
-      description: '相关URL或文件路径',
+      description: 'Related URL or file path',
       required: false,
     },
     {
       name: 'desc',
       type: 'string',
-      description: '描述信息',
+      description: 'Brief description or title',
       required: false,
     },
   ],
@@ -95,32 +110,32 @@ export const createMarkTool: Tool = {
 
 export const updateMarkTool: Tool = {
   name: 'update_mark',
-  description: '更新指定的记录',
+  description: 'Update content of an existing mark.',
   category: 'mark',
   requiresConfirmation: false,
   parameters: [
     {
       name: 'id',
       type: 'number',
-      description: '记录ID',
+      description: 'Mark ID (use read_marks first to get mark IDs)',
       required: true,
     },
     {
       name: 'content',
       type: 'string',
-      description: '新的内容',
+      description: 'New content',
       required: false,
     },
     {
       name: 'desc',
       type: 'string',
-      description: '新的描述',
+      description: 'New description',
       required: false,
     },
     {
       name: 'tagId',
       type: 'number',
-      description: '移动到新的标签',
+      description: 'Move to new tag (optional)',
       required: false,
     },
   ],
@@ -159,14 +174,14 @@ export const updateMarkTool: Tool = {
 
 export const deleteMarkTool: Tool = {
   name: 'delete_mark',
-  description: '删除指定的记录（软删除，可恢复）',
+  description: 'Soft delete a mark. Can be restored with restore_mark.',
   category: 'mark',
   requiresConfirmation: true,
   parameters: [
     {
       name: 'id',
       type: 'number',
-      description: '要删除的记录ID',
+      description: 'Mark ID to delete',
       required: true,
     },
   ],
@@ -188,14 +203,14 @@ export const deleteMarkTool: Tool = {
 
 export const restoreMarkTool: Tool = {
   name: 'restore_mark',
-  description: '恢复已删除的记录',
+  description: 'Restore deleted marks',
   category: 'mark',
   requiresConfirmation: false,
   parameters: [
     {
       name: 'id',
       type: 'number',
-      description: '要恢复的记录ID',
+      description: 'ID of the mark to restore',
       required: true,
     },
   ],
@@ -217,42 +232,43 @@ export const restoreMarkTool: Tool = {
 
 export const searchMarksTool: Tool = {
   name: 'search_marks',
-  description: '在记录中搜索包含关键词的内容',
+  description: 'Search content within marks (database records). Uses current selected tag if tagId not specified.',
   category: 'search',
   requiresConfirmation: false,
   parameters: [
     {
       name: 'query',
       type: 'string',
-      description: '搜索关键词',
+      description: 'Search keyword',
       required: true,
     },
     {
       name: 'tagId',
       type: 'number',
-      description: '可选：限制在指定标签下搜索',
+      description: 'Tag ID (optional, uses current selected tag if not specified)',
       required: false,
     },
     {
       name: 'type',
       type: 'string',
-      description: '可选：按类型筛选（scan, text, image, link, file, recording）',
+      description: 'Optional: filter by mark type (scan, text, image, link, file, recording)',
       required: false,
     },
   ],
   execute: async (params): Promise<ToolResult> => {
     try {
-      const marks = await getMarks(params.tagId || 1)
-      let results = marks.filter(mark => 
+      const tagId = getCurrentTagId(params.tagId)
+      const marks = await getMarks(tagId)
+      let results = marks.filter(mark =>
         mark.deleted === 0 &&
         (mark.content?.toLowerCase().includes(params.query.toLowerCase()) ||
          mark.desc?.toLowerCase().includes(params.query.toLowerCase()))
       )
-      
+
       if (params.type) {
         results = results.filter(mark => mark.type === params.type)
       }
-      
+
       return {
         success: true,
         data: results,
@@ -267,16 +283,77 @@ export const searchMarksTool: Tool = {
   },
 }
 
+export const searchAllMarksTool: Tool = {
+  name: 'search_all_marks',
+  description: 'Search ALL marks across ALL tags for keywords.',
+  category: 'search',
+  requiresConfirmation: false,
+  parameters: [
+    {
+      name: 'query',
+      type: 'string',
+      description: 'Search keyword',
+      required: true,
+    },
+    {
+      name: 'mode',
+      type: 'string',
+      description: 'Search mode: fuzzy (default, contains keyword) or exact (exact match)',
+      required: false,
+    },
+    {
+      name: 'type',
+      type: 'string',
+      description: 'Optional: filter by mark type (scan, text, image, link, file, recording)',
+      required: false,
+    },
+  ],
+  execute: async (params): Promise<ToolResult> => {
+    try {
+      const allMarks = await getAllMarks()
+      const queryLower = params.query.toLowerCase()
+
+      let results = allMarks.filter(mark => {
+        if (mark.deleted === 1) return false
+
+        const contentMatch = params.mode === 'exact'
+          ? mark.content?.toLowerCase() === queryLower
+          : mark.content?.toLowerCase().includes(queryLower)
+        const descMatch = params.mode === 'exact'
+          ? mark.desc?.toLowerCase() === queryLower
+          : mark.desc?.toLowerCase().includes(queryLower)
+
+        return contentMatch || descMatch
+      })
+
+      if (params.type) {
+        results = results.filter(mark => mark.type === params.type)
+      }
+
+      return {
+        success: true,
+        data: results,
+        message: `在所有标签中找到 ${results.length} 条匹配的记录`,
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: `搜索所有记录失败: ${error}`,
+      }
+    }
+  },
+}
+
 export const createMarksBatchTool: Tool = {
   name: 'create_marks_batch',
-  description: '批量创建多条记录（marks），避免循环调用。适用于需要一次性创建多条记录的场景。',
+  description: 'Batch create multiple marks to avoid loop calls. Use for scenarios requiring multiple marks to be created at once.',
   category: 'mark',
   requiresConfirmation: false,
   parameters: [
     {
       name: 'marks',
       type: 'array',
-      description: '要创建的记录数组，每个记录包含 tagId, type, content, url, desc 等字段',
+      description: 'Array of marks to create, each mark contains tagId, type, content, url, desc and other fields',
       required: true,
     },
   ],
@@ -317,14 +394,14 @@ export const createMarksBatchTool: Tool = {
 
 export const updateMarksBatchTool: Tool = {
   name: 'update_marks_batch',
-  description: '批量更新多条记录，避免循环调用。每条记录必须包含 id 字段。',
+  description: 'Batch update multiple marks to avoid loop calls. Each mark must include the id field.',
   category: 'mark',
   requiresConfirmation: false,
   parameters: [
     {
       name: 'marks',
       type: 'array',
-      description: '要更新的记录数组，每个记录必须包含 id 以及要更新的字段',
+      description: 'Array of marks to update, each mark must include id and fields to update',
       required: true,
     },
   ],
@@ -366,14 +443,14 @@ export const updateMarksBatchTool: Tool = {
 
 export const deleteMarksBatchTool: Tool = {
   name: 'delete_marks_batch',
-  description: '批量删除多条记录（软删除，可恢复），避免循环调用。',
+  description: 'Batch delete multiple marks (soft delete, can be restored) to avoid loop calls.',
   category: 'mark',
   requiresConfirmation: true,
   parameters: [
     {
       name: 'ids',
       type: 'array',
-      description: '要删除的记录ID数组',
+      description: 'Array of mark IDs to delete',
       required: true,
     },
   ],
@@ -404,14 +481,14 @@ export const deleteMarksBatchTool: Tool = {
 
 export const restoreMarksBatchTool: Tool = {
   name: 'restore_marks_batch',
-  description: '批量恢复已删除的记录，避免循环调用。',
+  description: 'Batch restore deleted marks to avoid loop calls.',
   category: 'mark',
   requiresConfirmation: false,
   parameters: [
     {
       name: 'ids',
       type: 'array',
-      description: '要恢复的记录ID数组',
+      description: 'Array of mark IDs to restore',
       required: true,
     },
   ],
@@ -447,6 +524,7 @@ export const markTools: Tool[] = [
   deleteMarkTool,
   restoreMarkTool,
   searchMarksTool,
+  searchAllMarksTool,
   createMarksBatchTool,
   updateMarksBatchTool,
   deleteMarksBatchTool,

@@ -205,7 +205,7 @@ export async function getSimilarDocuments(
   if (!cachedVectors.length) return [];
 
   // 计算余弦相似度并排序
-  const results = cachedVectors.map(doc => {
+  const allSimilarities = cachedVectors.map(doc => {
     const similarity = cosineSimilarity(queryEmbedding, doc.embedding);
 
     return {
@@ -214,7 +214,9 @@ export async function getSimilarDocuments(
       content: doc.content,
       similarity
     };
-  })
+  });
+
+  const results = allSimilarities
   .filter(doc => doc.similarity >= threshold)
   .sort((a, b) => b.similarity - a.similarity)
   .slice(0, limit);

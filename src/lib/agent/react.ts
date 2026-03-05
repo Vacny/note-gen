@@ -1,6 +1,7 @@
 import { ReActStep, ToolCall, ToolResult } from './types'
 import { getToolByName, getToolDescriptions } from './tools'
 import { skillManager } from '@/lib/skills'
+import OpenAI from 'openai'
 
 export interface ReActConfig {
   maxIterations: number
@@ -10,7 +11,12 @@ export interface ReActConfig {
   onToolCall?: (toolCall: ToolCall) => void
   onIterationStart?: () => void
   onSkillsSelected?: (skillIds: string[]) => void  // 当 AI 选择 Skills 时调用
-  requestConfirmation?: (toolName: string, params: Record<string, any>) => Promise<boolean>
+  onFinalAnswerRender?: (markdownContent: string) => void  // 当检测到 Final Answer 时立即渲染 Markdown
+  requestConfirmation?: (toolName: string, params: Record<string, any>, context?: {
+    originalContent?: string
+    modifiedContent?: string
+    filePath?: string
+  }) => Promise<boolean>
   activeSkills?: string[]  // 当前激活的 Skills
 }
 
@@ -43,7 +49,11 @@ export class ReActAgent {
     return this.stopped
   }
 
-  async run(userInput: string, context?: string, imageUrls?: string[]): Promise<string> {
+  async run(
+    userInput: string,
+    contextOrMessages?: string | OpenAI.Chat.ChatCompletionMessageParam[],
+    imageUrls?: string[]
+  ): Promise<string> {
     this.steps = []
     this.currentIteration = 0
     this.toolCallCounter = 0
@@ -53,6 +63,11 @@ export class ReActAgent {
     this.abortController = new AbortController()
 
     let finalAnswer = ''
+
+    // 检测 contextOrMessages 的类型
+    const isMessagesArray = Array.isArray(contextOrMessages)
+    const contextString = isMessagesArray ? undefined : contextOrMessages as string | undefined
+    const messagesArray = isMessagesArray ? contextOrMessages as OpenAI.Chat.ChatCompletionMessageParam[] : undefined
 
     while (this.currentIteration < this.config.maxIterations) {
       // 检查是否已停止
@@ -69,9 +84,9 @@ export class ReActAgent {
       }
 
       // 每次迭代都重新构建系统提示词，因为 Skills 指令依赖于当前迭代次数
-      const systemPrompt = this.buildSystemPrompt()
+      const systemPrompt = await this.buildSystemPrompt()
 
-      const thought = await this.think(userInput, context, systemPrompt, imageUrls)
+      const thought = await this.think(userInput, contextString, messagesArray, systemPrompt, imageUrls)
 
       // 再次检查是否已停止
       if (this.stopped) {
@@ -79,15 +94,34 @@ export class ReActAgent {
         throw new Error('USER_STOPPED')
       }
 
-      // 检查是否包含 Final Answer（支持多种格式）
-      if (thought.includes('Final Answer:') || thought.includes('Final Answer：') || thought.includes('最终答案')) {
-        // 尝试多种分割方式
+      // 检查是否包含 Final Answer（支持多种格式，包括换行的情况）
+      // 处理 "Action: Final\nAnswer:" 的特殊情况
+      const normalizedThought = thought.replace(/\s+/g, ' ')
+      const hasFinalAnswer = normalizedThought.includes('Final Answer:') ||
+                             normalizedThought.includes('Final Answer：') ||
+                             normalizedThought.includes('最终答案') ||
+                             /Action:\s*Final\s*Answer/i.test(thought)
+
+      if (hasFinalAnswer) {
+        // 直接提取 Final Answer 后面的内容作为 Markdown 格式返回
         if (thought.includes('Final Answer:')) {
           finalAnswer = thought.split('Final Answer:')[1].trim()
         } else if (thought.includes('Final Answer：')) {
           finalAnswer = thought.split('Final Answer：')[1].trim()
         } else if (thought.includes('最终答案')) {
           finalAnswer = thought.split('最终答案')[1].trim()
+        } else if (/Action:\s*Final\s*Answer:\s*([\s\S]*)/i.test(thought)) {
+          // 处理 "Action: Final\nAnswer:" 的情况
+          const match = thought.match(/Action:\s*Final\s*Answer:\s*([\s\S]*)/i)
+          if (match) {
+            finalAnswer = match[1].trim()
+          }
+        } else if (/Final Answer:\s*([\s\S]*)/i.test(thought)) {
+          // 处理 "Final Answer:\n..." 多行内容的情况
+          const match = thought.match(/Final Answer:\s*([\s\S]*)/i)
+          if (match) {
+            finalAnswer = match[1].trim()
+          }
         }
         break
       }
@@ -105,7 +139,24 @@ export class ReActAgent {
 
       const action = this.parseAction(thought)
       if (!action) {
-        finalAnswer = '抱歉，我无法理解如何执行这个任务。'
+        // 无法解析 Action，尝试从 thought 中提取答案
+        // 检查是否 AI 想直接回答但忘记使用 Final Answer 格式
+        const thoughtContent = thought.replace(/Thought:\s*/i, '').trim()
+        if (thoughtContent && thoughtContent.length > 10 && !thoughtContent.includes('Action:')) {
+          // 看起来 AI 想直接回答，提取内容作为答案
+          finalAnswer = thoughtContent
+          break
+        }
+
+        // 如果是第一次迭代，可能是 AI 没理解用户意图
+        // 尝试让 AI 直接回答而不是调用工具
+        if (this.currentIteration === 1) {
+          finalAnswer = thoughtContent || '抱歉，我不太理解您的需求。您能详细说明一下吗？'
+          break
+        }
+
+        // 多次迭代后仍然失败，给出提示
+        finalAnswer = thoughtContent || '抱歉，我遇到了一些问题。您能换种方式说明一下您的需求吗？'
         break
       }
 
@@ -180,124 +231,258 @@ export class ReActAgent {
     return finalAnswer || '任务执行完成。'
   }
 
-  private buildSystemPrompt(): string {
+  private async buildSystemPrompt(): Promise<string> {
     const toolDescriptions = getToolDescriptions()
     const skillsInstructions = this.formatSkillsInstructions()
 
-    let prompt = `你是一个高效的智能助手 Agent，使用工具帮助用户完成任务。遵循 ReAct 框架：Thought（思考）→ Action（行动）→ Observation（观察）。
+    // Load user memories (preferences and knowledge)
+    let memoryPrompt = ''
+    try {
+      const { contextLoader } = await import('@/lib/context/loader')
+      // Get all memories (preferences are always included, knowledge is matched by similarity)
+      const memoryContext = await contextLoader.getContextForQuery('')  // Empty query gets all preferences
+      if (memoryContext.preferences.length > 0 || memoryContext.memory.length > 0) {
+        memoryPrompt = contextLoader.formatMemoriesForPrompt(memoryContext)
+      }
+    } catch (error) {
+      console.error('[Agent] Failed to load memories:', error)
+    }
 
-## 🚨 重要警告：Skills 不是工具
+    let prompt = `You are an efficient AI agent that uses tools to help users complete tasks. Follow the ReAct framework: Thought → Action → Observation.
 
-**绝对不能使用以下格式**：
+${memoryPrompt ? `## User Memories\n\n${memoryPrompt}\n` : ''}
+
+## 🚨 Important Warning: Skills Are Not Tools
+
+**You must NEVER use these formats:**
 - ❌ Action: style-detector
 - ❌ Action: skill_detector
 - ❌ Action: any_skill_name
 
-**Skills 只是指导文档，不是可调用的工具！**
-- Skills 告诉你应该如何完成任务
-- 你需要理解 Skill 的要求，然后使用**实际的工具**（如 create_markdown_file）来执行
-- 例如：如果 style-detector 说要写网文，你应该 Action: create_markdown_file，在内容里写网文风格
+**Skills are guidance documents, NOT callable tools!**
+- Skills tell you HOW to complete tasks
+- You need to understand Skill requirements, then use **actual tools** (like create_file) to execute
+- Example: if style-detector says to write web fiction, you should Action: create_file and write in web fiction style in the content
 
-## 核心原则
+## Core Principles
 
-**效率优先**：尽量用最少的步骤完成任务，避免不必要的思考和操作。
-**直接行动**：如果任务明确，直接执行，不要过度分析。
-**快速结束**：完成核心任务后立即给出 Final Answer，不要重复执行相同的操作。
+**Intent First**: Before using any tool, carefully analyze user's intent:
+- **Is the user asking a question?** → Give direct answer with Final Answer
+- **Is the user requesting information?** → Search/read relevant notes, then answer
+- **Is the user explicitly requesting an action?** (create, modify, delete) → Then use tools
+- **Are you unsure about user's intent?** → Ask clarifying question, don't assume
 
-## 可用工具
+**Efficiency**: Complete tasks with minimum steps, avoid unnecessary tool calls.
+**Direct Action**: If intent is clear and action is needed, execute without over-analysis.
+**Quick Finish**: Give Final Answer immediately after completing task, don't repeat operations.
+
+## Knowledge Base Search Guide
+
+In the "context information", you may see "Knowledge Base Search Results" section. This is from **automatic RAG search**.
+
+**If automatic search results are insufficient**, you can actively call search tools for more precise retrieval:
+
+Search tool selection guide:
+- search_markdown_files: Use when user asks to search files (default: keyword mode, rag: semantic mode)
+- search_markdown_files + folderPath: Limit scope to specific folder
+- search_marks: Search database records under tags
+
+Important tips:
+- Only call search tools when user explicitly requests to search/查找/搜索
+
+## 🚨 Critical: Understanding Notes vs Tags vs Marks
+
+Before using any tools, you MUST understand the difference between these three core concepts:
+
+### 1. **Notes (笔记)** - File System Resources
+- **What**: Markdown (.md) files in the file manager
+- **Storage**: Local file system (custom workspace or default article directory)
+- **How to identify**: Tool names contain "markdown_file" (e.g., "read_markdown_file", "list_markdown_files")
+- **When to use**: User mentions "notes", "files", "documents", or wants to read/write organized content
+- **Key distinction**: These are **files** with paths like "folder/note.md"
+
+### 2. **Tags (标签)** - Organization Categories
+- **What**: Grouping labels to organize marks/records
+- **Storage**: SQLite database
+- **How to identify**: Tool names contain "_tag" (e.g., "list_tags", "create_tag")
+- **Purpose**: Categorize and organize marks; each tag can contain multiple marks
+- **Key distinction**: Tags are **categories**, NOT content themselves
+
+### 3. **Marks (记录)** - Content Records Under Tags
+- **What**: Individual content records stored under a specific tag
+- **Storage**: SQLite database (each mark belongs to one tag via tagId)
+- **How to identify**: Tool names contain "_mark" (e.g., "read_marks", "create_mark", "search_marks")
+- **Types**: scan, text, image, link, file, recording, todo
+- **Key distinction**: Marks are **content items** like bookmarks, captured text, OCR results, etc.
+
+### Decision Guide:
+| User Request | Concept | Tools to Use |
+|--------------|---------|--------------|
+| "List my notes" / "Read note files" | Note (file) | list_markdown_files, read_markdown_file |
+| "Create a new note file" | Note (file) | create_file |
+| "Find/create tags" | Tag | list_tags, create_tag |
+| "List records in inbox" / "Create a bookmark" | Mark | read_marks, create_mark |
+| "Search my captures" / "Find saved content" | Mark | search_marks |
+
+**IMPORTANT**: Never confuse these concepts! Tags organize Marks, but Tags and Marks are NOT the same as Notes (files).
+
+## Available Tools
 
 ${toolDescriptions}`
 
-    // 添加 Skills 指令
+    // Add Skills instructions
     if (skillsInstructions) {
       prompt += `
 
-## 可用的 Skills
+## Available Skills
 
 ${skillsInstructions}`
     }
 
     prompt += `
 
-## 输出格式要求
+## Output Format Requirements
 
-你的每次回复**必须严格遵循**以下格式之一：
+Your every response **MUST strictly follow** one of these formats:
 
-### 格式 1：思考并执行工具
+### Format 1: Think and Execute Tool
 \`\`\`
-Thought: [详细的思考过程，说明为什么要执行这个操作]
+Thought: [Detailed thinking process explaining why to execute this operation]
 Action: tool_name
 Action Input: {"param1": "value1", "param2": "value2"}
 \`\`\`
 
-**示例：**
+**Example:**
 \`\`\`
-Thought: 用户想要整理 React 笔记，我需要先搜索所有包含 React 关键词的笔记
+Thought: User wants to organize React notes, I need to search for all notes containing React keyword
 Action: search_notes
 Action Input: {"query": "React"}
 \`\`\`
 
-### 格式 2：给出最终答案（重要：任务完成后必须使用此格式）
+### Format 2: Give Final Answer (IMPORTANT: Must use this format after task completion)
 \`\`\`
-Thought: 我已经完成了所有必要的操作，可以给出最终答案了
-Final Answer: [完整的、对用户友好的最终答案]
-\`\`\`
-
-**示例：**
-\`\`\`
-Thought: 我已经成功创建了 React 知识总结笔记，任务完成
-Final Answer: 已为您整理完成！我创建了一个名为"React 知识总结"的笔记，包含了 5 条相关笔记的内容整理。
+Thought: I have completed all necessary operations, ready to give final answer
+Final Answer: [Complete, user-friendly final answer]
 \`\`\`
 
-## ⚠️ 重要规则（必须遵守）
+**Example:**
+\`\`\`
+Thought: I have successfully created React knowledge summary note, task completed
+Final Answer: Done! I created a note called "React Knowledge Summary" which includes organized content from 5 related notes.
+\`\`\`
 
-1. **严格格式**：Thought → Action + Action Input 或 Final Answer
-2. **JSON 格式**：Action Input 必须是有效 JSON，使用双引号
-3. **一次一个工具**：每次只调用一个工具
-4. **立即结束**：完成核心任务后**必须**给出 Final Answer，不要做额外操作
-5. **不要重复**：仔细观察 Observation，如果操作已经成功完成，立即给出 Final Answer，不要重复执行
-6. **只用可用工具**：不要编造工具或参数，**绝对不要调用 Skill 名称作为工具**
-7. **简洁思考**：Thought 保持简短，直接说明要做什么
-8. **🚨 Skills 不是工具**：永远不要使用 Action: skill_xxx，Skills 只是指导文档
+## ⚠️ Important Rules (Must Follow)
 
-## 🚫 常见错误（避免）
+**🎯 Intent Judgment (CRITICAL)**:
+- If user is **asking a question** (What is...? How do I...? Tell me about...?) → Give Final Answer directly
+- If user is **requesting information** (Find..., Show me..., List...) → Use search/read tools, then answer
+- If user is **requesting an action** (Create..., Modify..., Delete..., Make...) → Use action tools
+- If **uncertain about intent** → Ask clarifying question in Final Answer format
+- **NEVER assume** user wants creation/modification when they're just asking or discussing
 
-❌ **错误1**：修改笔记后，又继续搜索或修改同一个笔记
-✅ **正确**：修改笔记后直接给出 Final Answer
+**🔍 Search Tools Usage**:
+- Only use search_markdown_files when user explicitly asks to search (e.g., "搜索", "查找", "帮我找")
+- NEVER use search tools when user is just asking a question without requesting search
+- For RAG mode (semantic search): only use when user explicitly asks for "语义搜索" or "AI搜索"
 
-❌ **错误2**：搜索到结果后，又用相同条件搜索
-✅ **正确**：搜索到结果后，根据结果执行操作，然后给出 Final Answer
+**Technical Rules**:
+1. **Strict Format**: Thought → Action + Action Input or Final Answer
+2. **JSON Format**: Action Input must be valid JSON with double quotes
+3. **One Tool at a Time**: Only call one tool per iteration
+4. **✅ TASK COMPLETION (CRITICAL)**: After any successful tool execution, you MUST give Final Answer immediately - do NOT repeat the same or similar operations
+5. **Don't Repeat**: If operation succeeded, immediately give Final Answer - never create the same file twice or perform redundant actions
+6. **Use Available Tools Only**: Don't make up tools or parameters
+7. **Concise Thinking**: Keep Thought brief, directly state what to do
+8. **🚨 Skills Are Not Tools**: NEVER use Action: skill_xxx, Skills are just guidance documents
+9. **📌 Use Quote Line Numbers**: When context includes "quoted content" with VALID line numbers (positive integers, NOT -1), ALWAYS use replace_editor_content with line-based mode (startLine/endLine). If line numbers are -1 or invalid, first use get_editor_selection to get valid line numbers. NEVER use from/to or searchContent.
+10. **📝 State-Based Reasoning**: Base your next action on the PREVIOUS observation result, not on the original user request - the context shows what you just did and the result
 
-❌ **错误3**：创建文件后，又继续创建相同或相似的文件
-✅ **正确**：创建文件后，确认成功，立即给出 Final Answer
+## 🚫 Common Errors (Avoid)
 
-❌ **错误4**：试图调用 Skill 作为工具（如 Action: style-detector）
-✅ **正确**：理解 Skill 的指导，使用实际工具（如 Action: create_markdown_file）并在内容中按 Skill 要求执行
+❌ **Error 1**: After modifying a note, continue searching or modifying the same note
+✅ **Correct**: After modifying note, directly give Final Answer
 
-## 示例
+❌ **Error 2**: After getting search results, search again with same conditions
+✅ **Correct**: After getting search results, execute operations based on results, then give Final Answer
 
-**用户**："创建一个笔记介绍 NoteGen"
+❌ **Error 3**: After creating a file, try to create another similar file (redundant creation)
+✅ **Correct**: After creating file, confirm success and immediately give Final Answer
+
+❌ **Error 4**: Try to call Skill as a tool (like Action: style-detector)
+✅ **Correct**: Understand Skill guidance, use actual tools (like Action: create_file) and follow Skill requirements in content
+
+❌ **Error 5**: Use invalid line numbers (e.g., -1) or use from/to/searchContent when valid positive line numbers are available
+✅ **Correct**: Only use line-based mode with VALID positive line numbers. If line numbers are -1 or invalid, first call get_editor_selection to get valid line numbers, then use replace_editor_content with those line numbers
+
+❌ **Error 6**: Ignore the previous operation result and repeat the same action
+✅ **Correct**: Always base your next action on the PREVIOUS observation result - if the result shows success, give Final Answer immediately
+
+❌ **Error 7**: Reconsider the original user request in every iteration instead of building on previous results
+✅ **Correct**: Focus on the PREVIOUS step's result - the context shows what you just did and what happened
+
+❌ **Error 8**: Use search tools when user is just asking a question without explicitly requesting search
+✅ **Correct**: Only use search_markdown_files when user explicitly says "搜索", "查找", "帮我找". For regular questions like "What is React?", give Final Answer directly without searching
+
+## Example
+
+**Example 1: User asking a question (NO TOOL NEEDED)**
+
+**User**: "What is React?"
 
 **Iteration 1:**
 \`\`\`
-Thought: 直接创建笔记
-Action: create_markdown_file
-Action Input: {"fileName": "NoteGen介绍.md", "content": "# NoteGen\\n\\n智能笔记软件..."}
+Thought: User is asking for information about React. This is a question, not a request to create content. I should answer directly.
+Final Answer: React is a JavaScript library for building user interfaces, developed by Facebook. It uses a component-based architecture and virtual DOM for efficient rendering.
 \`\`\`
-Observation: 成功创建文件
+
+**Example 2: User requesting creation (USE TOOL)**
+
+**User**: "Create a note introducing NoteGen"
+
+**Iteration 1:**
+\`\`\`
+Thought: User explicitly requested to create a note. I will use the create_file tool.
+Action: create_file
+Action Input: {"fileName": "NoteGen-Intro.md", "content": "# NoteGen\\n\\nAn intelligent note-taking software..."}
+\`\`\`
+Observation: File created successfully
 
 **Iteration 2:**
 \`\`\`
-Thought: 任务完成
-Final Answer: 已创建笔记"NoteGen介绍.md"
+Thought: Task completed
+Final Answer: Created note "NoteGen-Intro.md"
 \`\`\`
 
-现在开始执行任务！`
+**Example 3: User requesting information (USE SEARCH TOOL)**
+
+**User**: "Find notes about React hooks"
+
+**Iteration 1:**
+\`\`\`
+Thought: User wants to find information about React hooks from existing notes. I should search for relevant notes.
+Action: search_markdown_files
+Action Input: {"query": "React hooks"}
+\`\`\`
+Observation: Found 3 notes about React hooks...
+
+**Iteration 2:**
+\`\`\`
+Thought: I found relevant information. Now I can answer the user's question.
+Final Answer: I found 3 notes about React hooks: [summary of findings]
+\`\`\`
+
+Now start executing the task!`
 
     return prompt
   }
 
-  private async think(userInput: string, context: string | undefined, systemPrompt: string, imageUrls?: string[]): Promise<string> {
+  private async think(
+    userInput: string,
+    context: string | undefined,
+    messages: OpenAI.Chat.ChatCompletionMessageParam[] | undefined,
+    systemPrompt: string,
+    imageUrls?: string[]
+  ): Promise<string> {
     const historyContext = this.steps.map((step, i) =>
       `Iteration ${i + 1}:
 Thought: ${step.thought}
@@ -307,17 +492,165 @@ Observation: ${step.observation}
 `
     ).join('\n')
 
-    const prompt = `${systemPrompt}
+    // If messages array is provided, use it; otherwise use old string concatenation
+    if (messages && messages.length > 0) {
+      // Use messages array mode - build messages and add user request
+      const messagesForAI: OpenAI.Chat.ChatCompletionMessageParam[] = []
+
+      // Add system prompt (if any)
+      if (systemPrompt) {
+        messagesForAI.push({
+          role: 'system',
+          content: systemPrompt
+        })
+      }
+
+      // Add conversation history
+      messagesForAI.push(...messages)
+
+      // Add current iteration context (ReAct step history)
+      if (historyContext) {
+        messagesForAI.push({
+          role: 'system',
+          content: `## Previous Iterations\n${historyContext}`
+        })
+      }
+
+      // 【关键修改】按照 LangChain 最佳实践：
+      // 第一次迭代：发送原始用户请求
+      // 后续迭代：只发送上一步操作的结果，不再重复发送原始请求
+      if (this.currentIteration === 1) {
+        messagesForAI.push({
+          role: 'user',
+          content: `This is iteration ${this.currentIteration}, please give your Thought and Action (or Final Answer):\n\nUser Request: ${userInput}`
+        })
+      } else {
+        // 后续迭代：只发送上一步的结果
+        const lastStep = this.steps[this.steps.length - 1]
+        const lastObservation = lastStep?.observation || 'No previous result'
+        messagesForAI.push({
+          role: 'user',
+          content: `## Previous Step Result\n${lastObservation}\n\n---\nIf the task is completed, respond with Final Answer.\nIf you need to continue, provide your next Thought and Action.`
+        })
+      }
+
+      // 调用实际的 LLM API
+      try {
+        const { fetchAiStream } = await import('@/lib/ai')
+        let response = ''
+        let lastUpdateLength = 0
+
+        // 传递 AbortSignal 以支持终止，同时传递图片URL（仅在第一次迭代时）
+        const imagesForThisIteration = this.currentIteration === 1 ? imageUrls : undefined
+        await fetchAiStream('', (content) => {
+          // 检查是否已终止
+          if (this.stopped) {
+            return
+          }
+
+          response = content
+
+          // 检测是否包含 Final Answer，提取内容并渲染 Markdown
+          const extractedFinalAnswer = this.extractFinalAnswer(content)
+          if (extractedFinalAnswer) {
+            // 包含 Final Answer，立即渲染 Markdown
+            this.config.onFinalAnswerRender?.(extractedFinalAnswer)
+          }
+
+          // 实时更新，但只在内容有实质性增长时更新（避免频繁更新）
+          if (content.length - lastUpdateLength > 10 || content.includes('Action:') || content.includes('Final Answer:')) {
+            this.config.onThought?.(content)
+            lastUpdateLength = content.length
+          }
+        }, this.abortController?.signal, undefined, undefined, undefined, imagesForThisIteration, undefined, messagesForAI)
+
+        // 检查是否已终止
+        if (this.stopped) {
+          return `Thought: User terminated the task
+Final Answer: Task was terminated by user`
+        }
+
+        // 确保最终内容被更新
+        if (response.length !== lastUpdateLength) {
+          this.config.onThought?.(response)
+        }
+
+        // 记录 AI 的思考内容，用于调试
+        const mentionedSkills = this.extractMentionedSkills(response)
+
+        // 第一次迭代后，处理 Skills 选择
+        if (this.currentIteration === 1) {
+          const activeSkillIds = this.config.activeSkills || []
+          const selectedSkillIds: string[] = []
+
+          if (mentionedSkills.length > 0) {
+            // 将提到的 Skills ID 添加到已选择集合
+            for (const skillName of mentionedSkills) {
+              // 通过名称查找对应的 Skill ID
+              const skill = activeSkillIds
+                .map(id => skillManager.getSkill(id))
+                .filter((s): s is Exclude<typeof s, undefined> => s !== undefined)
+                .find(s => s.metadata.name === skillName)
+
+              if (skill) {
+                this.selectedSkills.add(skill.metadata.id)
+                selectedSkillIds.push(skill.metadata.id)
+              }
+            }
+          }
+
+          // 无论是否选择了 Skills，都要通知外部（空数组表示未选择）
+          this.config.onSkillsSelected?.(selectedSkillIds)
+        }
+
+        return response
+      } catch (error) {
+        // 检查是否是因为终止导致的错误
+        if (this.stopped || (error instanceof Error && error.name === 'AbortError')) {
+          return `Thought: User terminated the task
+Final Answer: Task was terminated by user`
+        }
+
+        console.error('LLM API call failed:', error)
+        // 如果 API 调用失败，返回错误提示
+        return `Thought: Sorry, AI service is temporarily unavailable
+Final Answer: Unable to complete task, please retry later or check AI configuration`
+      }
+    }
+
+    // 旧的字符串拼接模式（向后兼容）
+    // 【关键修改】按照 LangChain 最佳实践：
+    // 第一次迭代：发送完整请求
+    // 后续迭代：只发送上一步结果，不再重复发送原始请求
+    let prompt: string
+    if (this.currentIteration === 1) {
+      prompt = `${systemPrompt}
 
 ${context ? `## 上下文信息\n${context}\n` : ''}
 
 ## 对话历史
 ${historyContext}
 
-## 用户请求
+## User Request
 ${userInput}
 
-现在是第 ${this.currentIteration} 次迭代，请给出你的 Thought 和 Action（或 Final Answer）：`
+This is iteration ${this.currentIteration}, please give your Thought and Action (or Final Answer):`
+    } else {
+      // 后续迭代：只发送上一步的结果
+      const lastStep = this.steps[this.steps.length - 1]
+      const lastObservation = lastStep?.observation || '无'
+      prompt = `${systemPrompt}
+
+## 已完成的步骤
+${historyContext}
+
+## 上一步操作结果
+${lastObservation}
+
+---
+如果任务已完成，请回复 Final Answer。
+如果需要继续操作，请提供你的 Thought 和 Action。`
+    }
 
     // 调用实际的 LLM API
     try {
@@ -334,6 +667,13 @@ ${userInput}
         }
 
         response = content
+
+        // 检测是否包含 Final Answer，提取内容并渲染 Markdown
+        const extractedFinalAnswer = this.extractFinalAnswer(content)
+        if (extractedFinalAnswer) {
+          // 包含 Final Answer，立即渲染 Markdown
+          this.config.onFinalAnswerRender?.(extractedFinalAnswer)
+        }
 
         // 实时更新，但只在内容有实质性增长时更新（避免频繁更新）
         if (content.length - lastUpdateLength > 10 || content.includes('Action:') || content.includes('Final Answer:')) {
@@ -356,28 +696,29 @@ Final Answer: 任务已被用户终止`
       // 记录 AI 的思考内容，用于调试
       const mentionedSkills = this.extractMentionedSkills(response)
 
-      // 第一次迭代后，如果 AI 选择了 Skills，记录下来
-      if (this.currentIteration === 1 && mentionedSkills.length > 0) {
-        // 将提到的 Skills ID 添加到已选择集合
+      // 第一次迭代后，处理 Skills 选择
+      if (this.currentIteration === 1) {
         const activeSkillIds = this.config.activeSkills || []
         const selectedSkillIds: string[] = []
-        for (const skillName of mentionedSkills) {
-          // 通过名称查找对应的 Skill ID
-          const skill = activeSkillIds
-            .map(id => skillManager.getSkill(id))
-            .filter((s): s is Exclude<typeof s, undefined> => s !== undefined)
-            .find(s => s.metadata.name === skillName)
 
-          if (skill) {
-            this.selectedSkills.add(skill.metadata.id)
-            selectedSkillIds.push(skill.metadata.id)
+        if (mentionedSkills.length > 0) {
+          // 将提到的 Skills ID 添加到已选择集合
+          for (const skillName of mentionedSkills) {
+            // 通过名称查找对应的 Skill ID
+            const skill = activeSkillIds
+              .map(id => skillManager.getSkill(id))
+              .filter((s): s is Exclude<typeof s, undefined> => s !== undefined)
+              .find(s => s.metadata.name === skillName)
+
+            if (skill) {
+              this.selectedSkills.add(skill.metadata.id)
+              selectedSkillIds.push(skill.metadata.id)
+            }
           }
         }
 
-        // 通知外部选择的 Skills
-        if (selectedSkillIds.length > 0) {
-          this.config.onSkillsSelected?.(selectedSkillIds)
-        }
+        // 无论是否选择了 Skills，都要通知外部（空数组表示未选择）
+        this.config.onSkillsSelected?.(selectedSkillIds)
       }
 
       return response
@@ -397,9 +738,20 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
 
   private parseAction(thought: string): { tool: string; params: Record<string, any> } | null {
     try {
+      // 首先检查是否包含 Final Answer - 如果是，返回 null
+      // 需要处理换行的情况，如 "Action: Final\nAnswer: ..."
+      const normalizedThought = thought.replace(/\s+/g, ' ')
+      if (normalizedThought.includes('Final Answer:') ||
+          normalizedThought.includes('Final Answer：') ||
+          normalizedThought.includes('最终答案') ||
+          // 处理 "Action: Final\nAnswer:" 的情况
+          /Action:\s*Final\s*Answer/i.test(thought)) {
+        return null
+      }
+
       // 修改正则表达式，支持工具名称中的连字符、下划线等字符
       const actionMatch = thought.match(/Action:\s*([a-zA-Z0-9_-]+)/i)
-      
+
       if (!actionMatch) return null
 
       const tool = actionMatch[1]
@@ -460,25 +812,67 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
           params = JSON.parse(jsonStr)
         } catch {
           // JSON 解析失败，尝试修复
-          
-          // 移除末尾可能的不完整内容
-          jsonStr = jsonStr.replace(/,\s*$/, '') // 移除末尾的逗号
-          jsonStr = jsonStr.replace(/:\s*$/, ': ""') // 补全缺少值的键
-          jsonStr = jsonStr.replace(/,\s*}/, '}') // 移除对象末尾的逗号
-          
-          // 补全未闭合的引号
-          const quotes = (jsonStr.match(/"/g) || []).length
-          if (quotes % 2 !== 0) {
+
+          // 使用栈来跟踪未闭合的结构
+          const stack: string[] = []
+          let inString = false
+          let escapeNext = false
+
+          for (let i = 0; i < jsonStr.length; i++) {
+            const char = jsonStr[i]
+
+            if (escapeNext) {
+              escapeNext = false
+              continue
+            }
+
+            if (char === '\\') {
+              escapeNext = true
+              continue
+            }
+
+            if (char === '"' && !escapeNext) {
+              inString = !inString
+              if (!inString && stack.length > 0 && stack[stack.length - 1] === '"') {
+                stack.pop() // 闭合字符串
+              } else if (inString) {
+                stack.push('"') // 进入字符串
+              }
+              continue
+            }
+
+            if (!inString) {
+              if (char === '{' || char === '[') {
+                stack.push(char)
+              } else if (char === '}') {
+                if (stack.length > 0 && stack[stack.length - 1] === '{') {
+                  stack.pop()
+                }
+              } else if (char === ']') {
+                if (stack.length > 0 && stack[stack.length - 1] === '[') {
+                  stack.pop()
+                }
+              }
+            }
+          }
+
+          // 如果在字符串中，先闭合字符串
+          if (inString) {
             jsonStr += '"'
           }
-          
-          // 补全未闭合的括号
-          const openBraces = (jsonStr.match(/{/g) || []).length
-          const closeBraces = (jsonStr.match(/}/g) || []).length
-          if (openBraces > closeBraces) {
-            jsonStr += '}'.repeat(openBraces - closeBraces)
+
+          // 反向闭合栈中的结构
+          while (stack.length > 0) {
+            const open = stack.pop()
+            if (open === '"') {
+              jsonStr += '"'
+            } else if (open === '[') {
+              jsonStr += ']'
+            } else if (open === '{') {
+              jsonStr += '}'
+            }
           }
-          
+
           try {
             params = JSON.parse(jsonStr)
           } catch (retryError) {
@@ -533,7 +927,129 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
     const requiresConfirmation = tool.requiresConfirmation && !isAuthorized
 
     if (requiresConfirmation && this.config.requestConfirmation) {
-      const confirmed = await this.config.requestConfirmation(toolName, params)
+      // 准备确认上下文信息（原始内容、修改后内容、文件路径）
+      const confirmContext: {
+        originalContent?: string
+        modifiedContent?: string
+        filePath?: string
+      } = {}
+
+      // 对于 modify_current_note 工具，获取原始内容和修改后的内容用于 diff 显示
+      if (toolName === 'modify_current_note') {
+        try {
+          const { getFilePathOptions } = await import('@/lib/workspace')
+          const { readTextFile } = await import('@tauri-apps/plugin-fs')
+          const useArticleStore = (await import('@/stores/article')).default
+
+          const articleStore = useArticleStore.getState()
+          const currentFilePath = articleStore.activeFilePath
+
+          if (currentFilePath) {
+            confirmContext.filePath = currentFilePath
+
+            // 读取原始内容
+            const { path, baseDir } = await getFilePathOptions(currentFilePath)
+            let originalContent = ''
+            if (baseDir) {
+              originalContent = await readTextFile(path, { baseDir })
+            } else {
+              originalContent = await readTextFile(path)
+            }
+
+            // 导入工具函数来计算修改后的内容
+            const { searchReplaceContent, insertLinesAtPosition, deleteLinesInRange, replaceLinesInRange } = await import('./react-diff-helpers')
+
+            // 计算修改后的内容（用于 diff 显示）
+            let modifiedContent = originalContent
+
+            if (params.searchReplace) {
+              const sr = params.searchReplace
+              modifiedContent = searchReplaceContent(
+                modifiedContent,
+                sr.searchPattern || '',
+                sr.replacement || '',
+                sr.useRegex || false,
+                sr.caseSensitive || false,
+                sr.replaceAll !== false
+              )
+            } else if (params.insertLines) {
+              const il = params.insertLines
+              const newLines = Array.isArray(il.newLines) ? il.newLines : [il.newLines]
+              modifiedContent = insertLinesAtPosition(
+                modifiedContent,
+                il.afterLine || 0,
+                newLines
+              )
+            } else if (params.deleteLines) {
+              const dl = params.deleteLines
+              modifiedContent = deleteLinesInRange(
+                modifiedContent,
+                dl.startLine,
+                dl.endLine
+              )
+            } else if (params.lineEdits && Array.isArray(params.lineEdits)) {
+              // 处理 lineEdits
+              const sortedEdits = [...params.lineEdits].sort((a, b) => b.startLine - a.startLine)
+              for (const edit of sortedEdits) {
+                modifiedContent = replaceLinesInRange(
+                  modifiedContent,
+                  edit.startLine,
+                  edit.endLine,
+                  edit.newLines
+                )
+              }
+            } else if (params.content) {
+              modifiedContent = params.content
+            }
+
+            // 提取变化的区域（只显示有变化的行及其上下文）
+            const extractChangedRegion = (original: string, modified: string, contextLines = 3) => {
+              const originalLines = original.split('\n')
+              const modifiedLines = modified.split('\n')
+
+              // 找到第一个和最后一个不同的行
+              let firstDiff = -1
+              let lastDiff = -1
+
+              const maxLines = Math.max(originalLines.length, modifiedLines.length)
+              for (let i = 0; i < maxLines; i++) {
+                if (originalLines[i] !== modifiedLines[i]) {
+                  if (firstDiff === -1) firstDiff = i
+                  lastDiff = i
+                }
+              }
+
+              // 如果没有变化，返回前 50 行
+              if (firstDiff === -1) {
+                const previewLines = 50
+                return {
+                  original: originalLines.slice(0, previewLines).join('\n'),
+                  modified: modifiedLines.slice(0, previewLines).join('\n')
+                }
+              }
+
+              // 提取变化区域及其上下文
+              const start = Math.max(0, firstDiff - contextLines)
+              const end = Math.min(maxLines, lastDiff + contextLines + 1)
+
+              return {
+                original: originalLines.slice(start, end).join('\n'),
+                modified: modifiedLines.slice(start, end).join('\n'),
+                hasMore: end < maxLines
+              }
+            }
+
+            const changedRegion = extractChangedRegion(originalContent, modifiedContent)
+            confirmContext.originalContent = changedRegion.original
+            confirmContext.modifiedContent = changedRegion.modified
+
+          }
+        } catch (error) {
+          console.error('[Agent] Failed to prepare diff context:', error)
+        }
+      }
+
+      const confirmed = await this.config.requestConfirmation(toolName, params, confirmContext)
 
       if (!confirmed) {
         toolCall.status = 'error'
@@ -591,16 +1107,18 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
 
         return observation
       } else {
-        return `工具 ${toolName} 执行失败：${result.error}`
+        const errorMsg = result.error || '未知错误'
+        return `工具 ${toolName} 执行失败：${errorMsg}`
       }
     } catch (error) {
       toolCall.status = 'error'
+      const errorStr = error instanceof Error ? error.message : String(error)
       toolCall.result = {
         success: false,
-        error: String(error),
+        error: errorStr,
       }
       this.config.onToolCall?.(toolCall)
-      return `工具 ${toolName} 执行出错：${error}`
+      return `工具 ${toolName} 执行出错：${errorStr}`
     }
   }
 
@@ -674,7 +1192,7 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
       return ''
     }
 
-    // 第一次迭代：只发送 Skills 的简要信息（名称和描述），让 AI 选择
+    // First iteration: only send brief info (name and description), let AI choose
     if (this.currentIteration === 1) {
       const skillsList: string[] = []
       const skillsDebugInfo: any[] = []
@@ -685,10 +1203,10 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
           continue
         }
 
-        // 只发送简要信息
+        // Only send brief information
         let skillText = `### ${skill.metadata.name}\n\n`
-        skillText += `- 描述：${skill.metadata.description}\n`
-        skillText += `- ID：${skill.metadata.id}\n\n`
+        skillText += `- Description: ${skill.metadata.description}\n`
+        skillText += `- ID: ${skill.metadata.id}\n\n`
 
         skillsList.push(skillText)
         skillsDebugInfo.push({
@@ -702,36 +1220,36 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
         return ''
       }
 
-      const result = `## 可用的 Skills
+      const result = `## Available Skills
 
-**第一步：使用 select_skill 工具选择合适的 Skill**
+**Step 1: Use select_skill tool to choose appropriate Skill**
 
-请根据用户任务，从以下 Skills 中选择最相关的一个或多个：
+Please select the most relevant skill(s) from the following based on user task:
 
 ${skillsList.join('\n---\n\n')}
 
-**🚨 必须使用工具来选择 Skill！**
+**🚨 You MUST use tool to select Skill!**
 
-正确的选择 Skill 方式：
+Correct way to select Skill:
 \`\`\`
-Thought: 用户要求写网文，我需要选择 style-detector Skill 来指导写作风格。
+Thought: User wants to write web fiction, I need to select style-detector Skill to guide writing style.
 Action: select_skill
 Action Input: {"skill_ids": ["style-detector"]}
 \`\`\`
 
-选择 Skill 后，你将在下一个迭代中收到该 Skill 的完整指令。然后你可以使用实际的工具（如 create_markdown_file）来完成任务。
+After selecting Skill, you will receive complete Skill instructions in next iteration. Then you can use actual tools (like create_file) to complete the task.
 
-**重要说明**：
-- 仔细阅读每个 Skill 的描述
-- 使用 \`select_skill\` 工具来选择 Skill
-- 在 Action Input 中传入 Skill ID 数组（例如：["style-detector", "weekly"]）
-- 选择后等待下一个迭代，Skill 的完整指令会提供给你
-- 永远不要直接使用 Skill 名称作为 Action`
+**Important Notes**:
+- Carefully read each Skill's description
+- Use \`select_skill\` tool to select Skill
+- Pass Skill ID array in Action Input (e.g.: ["style-detector", "weekly"])
+- After selection, wait for next iteration, complete Skill instructions will be provided
+- NEVER use Skill name directly as Action`
 
       return result
     }
 
-    // 后续迭代：只发送已选择的 Skills 的完整内容
+    // Subsequent iterations: only send complete content of selected Skills
     if (this.selectedSkills.size === 0) {
       return ''
     }
@@ -745,27 +1263,36 @@ Action Input: {"skill_ids": ["style-detector"]}
         continue
       }
 
-      // 发送完整的 Skill 信息
+      // Send complete Skill information
       let skillText = `### ${skill.metadata.name}\n\n`
 
-      // YAML 元数据部分
-      skillText += `**元数据**：\n`
-      skillText += `- 描述：${skill.metadata.description}\n`
-      skillText += `- 版本：${skill.metadata.version}\n`
+      // YAML metadata section
+      skillText += `**Metadata**:\n`
+      skillText += `- Description: ${skill.metadata.description}\n`
+      skillText += `- Version: ${skill.metadata.version}\n`
       if (skill.metadata.author) {
-        skillText += `- 作者：${skill.metadata.author}\n`
+        skillText += `- Author: ${skill.metadata.author}\n`
       }
       if (skill.metadata.allowedTools && skill.metadata.allowedTools.length > 0) {
-        skillText += `- 授权工具：${skill.metadata.allowedTools.join(', ')}\n`
+        skillText += `- Authorized Tools: ${skill.metadata.allowedTools.join(', ')}\n`
       }
       skillText += `\n`
 
-      // 完整指令部分（Markdown 内容）
-      skillText += `**执行指令**：\n${skill.instructions}\n\n`
+      // 添加可用脚本列表
+      if (skill.scripts && skill.scripts.length > 0) {
+        skillText += `**Available Scripts**:\n`
+        for (const script of skill.scripts) {
+          skillText += `  - \`${script.name}\` (${script.type})\n`
+        }
+        skillText += `\n`
+      }
+
+      // Complete instructions section (Markdown content)
+      skillText += `**Instructions**:\n${skill.instructions}\n\n`
 
       skillsList.push(skillText)
 
-      // 收集调试信息
+      // Collect debug info
       skillsDebugInfo.push({
         id: skill.metadata.id,
         name: skill.metadata.name,
@@ -778,25 +1305,25 @@ Action Input: {"skill_ids": ["style-detector"]}
       return ''
     }
 
-    const result = `## 已选择的 Skills
+    const result = `## Selected Skills
 
-你选择了以下 Skills 来指导当前任务：
+You selected the following Skills to guide current task:
 
 ${skillsList.join('\n---\n\n')}
 
-**📋 如何使用这些 Skills**：
+**📋 How to use these Skills**:
 
-1. **仔细阅读上述 Skills 的完整指令**
-2. **理解 Skills 的要求后，直接应用到你的工作中**
-3. **不要询问用户确认** - 直接按照 Skills 的指导执行任务
-4. **不要尝试读取额外的文件** - Skills 已包含所有必要信息
-5. **使用实际工具完成任务** - 如 create_markdown_file, modify_current_note 等
+1. **Carefully read complete instructions of above Skills**
+2. **Understand Skill requirements, then apply directly to your work**
+3. **Don't ask user for confirmation** - Execute tasks directly following Skill guidance
+4. **Don't try to read additional files** - Skills already contain all necessary information
+5. **Use actual tools to complete tasks** - Like create_file, modify_current_note, etc.
 
-**⚠️ 重要提醒**：
-- 严格按照上述 Skills 的要求执行任务
-- 不要尝试调用 Skill 作为工具
-- 不要询问用户风格选择 - 直接应用最相关的风格
-- 如果是 style-detector Skill，直接应用对应风格（如网文风格）到你的内容中`
+**⚠️ Important Reminders**:
+- Strictly follow above Skill requirements to execute tasks
+- Don't try to call Skill as a tool
+- Don't ask user for style selection - directly apply most relevant style
+- If it's style-detector Skill, directly apply corresponding style (like web fiction style) to your content`
 
     return result
   }
@@ -829,6 +1356,39 @@ ${skillsList.join('\n---\n\n')}
     }
 
     return mentioned
+  }
+
+  /**
+   * 从内容中提取 Final Answer（用于流式渲染 Markdown）
+   */
+  private extractFinalAnswer(content: string): string | null {
+    // 检测是否包含 Final Answer
+    const normalizedContent = content.replace(/\s+/g, ' ')
+    const hasFinalAnswer = normalizedContent.includes('Final Answer:') ||
+                           normalizedContent.includes('Final Answer：') ||
+                           normalizedContent.includes('最终答案') ||
+                           /Action:\s*Final\s*Answer/i.test(content)
+
+    if (!hasFinalAnswer) {
+      return null
+    }
+
+    // 提取 Final Answer 后面的内容
+    let result: string | null = null
+    if (content.includes('Final Answer:')) {
+      result = content.split('Final Answer:')[1].trim()
+    } else if (content.includes('Final Answer：')) {
+      result = content.split('Final Answer：')[1].trim()
+    } else if (content.includes('最终答案')) {
+      result = content.split('最终答案')[1].trim()
+    } else if (/Action:\s*Final\s*Answer:\s*([\s\S]*)/i.test(content)) {
+      const match = content.match(/Action:\s*Final\s*Answer:\s*([\s\S]*)/i)
+      if (match) {
+        result = match[1].trim()
+      }
+    }
+
+    return result
   }
 
   /**

@@ -4,7 +4,6 @@ import { useTranslations } from 'next-intl'
 import { SettingType } from '../components/setting-base'
 import { Settings } from 'lucide-react'
 import { InterfaceSettings } from './interface-settings'
-import { ToolSettings } from './tool-settings'
 
 export default function GeneralSettingsPage() {
   const t = useTranslations('settings.general')
@@ -17,7 +16,6 @@ export default function GeneralSettingsPage() {
       icon={<Settings className="size-4 lg:size-6" />}
     >
       <InterfaceSettings />
-      <ToolSettings />
     </SettingType>
   )
 }

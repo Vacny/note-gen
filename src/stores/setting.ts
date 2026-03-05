@@ -75,6 +75,12 @@ interface SettingState {
   sttModel: string
   setSttModel: (sttModel: string) => Promise<void>
 
+  condenseModel: string
+  setCondenseModel: (condenseModel: string) => Promise<void>
+
+  inspirationModel: string
+  setInspirationModel: (inspirationModel: string) => Promise<void>
+
   templateList: GenTemplate[]
   setTemplateList: (templateList: GenTemplate[]) => Promise<void>
 
@@ -223,9 +229,13 @@ interface SettingState {
   recordToolbarConfig: RecordToolbarItem[]
   setRecordToolbarConfig: (config: RecordToolbarItem[]) => Promise<void>
 
-  // 托盘设置
-  trayEnabled: boolean
-  setTrayEnabled: (enabled: boolean) => Promise<void>
+  // 摘要设置
+  enableCondense: boolean
+  setEnableCondense: (enabled: boolean) => Promise<void>
+  keepLatestCount: number
+  setKeepLatestCount: (count: number) => Promise<void>
+  condenseMaxLength: number
+  setCondenseMaxLength: (length: number) => Promise<void>
 }
 
 export interface ChatToolbarItem {
@@ -245,7 +255,13 @@ const useSettingStore = create<SettingState>((set, get) => ({
   initSettingData: async () => {
     const store = await Store.load('store.json');
     await get().setVersion()
-    
+
+    // 初始化图床配置
+    const savedUseImageRepo = await store.get<boolean>('useImageRepo')
+    if (savedUseImageRepo !== undefined && savedUseImageRepo !== null) {
+      set({ useImageRepo: savedUseImageRepo })
+    }
+
     // 初始化默认的NoteGen模型配置
     const existingAiModelList = (await store.get('aiModelList') as AiConfig[]) || []
     const hasNoteGenModels = existingAiModelList.some(config => 
@@ -364,7 +380,9 @@ const useSettingStore = create<SettingState>((set, get) => ({
     const modelTypes = [
       { storeKey: 'completionModel', modelType: 'chat' },
       { storeKey: 'markDescModel', modelType: 'chat' },
-      { storeKey: 'commitModel', modelType: 'chat' }
+      { storeKey: 'commitModel', modelType: 'chat' },
+      { storeKey: 'condenseModel', modelType: 'chat' },
+      { storeKey: 'inspirationModel', modelType: 'chat' }
     ]
 
     for (const { storeKey, modelType } of modelTypes) {
@@ -374,7 +392,7 @@ const useSettingStore = create<SettingState>((set, get) => ({
         const noteGenFreeConfig = finalAiModelList.find(config => config.key === 'note-gen-free')
         if (noteGenFreeConfig?.models?.some(model => model.id === 'note-gen-chat' && model.modelType === modelType)) {
           await store.set(storeKey, 'note-gen-chat')
-          set({ [storeKey.replace('Model', '')]: 'note-gen-chat' })
+          set({ [storeKey]: 'note-gen-chat' })
         } else {
           // 查找其他可用的聊天模型
           for (const config of finalAiModelList) {
@@ -382,12 +400,12 @@ const useSettingStore = create<SettingState>((set, get) => ({
               const chatModel = config.models.find(model => model.modelType === modelType)
               if (chatModel) {
                 await store.set(storeKey, `${config.key}-${chatModel.id}`)
-                set({ [storeKey.replace('Model', '')]: `${config.key}-${chatModel.id}` })
+                set({ [storeKey]: `${config.key}-${chatModel.id}` })
                 break
               }
             } else if (config.modelType === modelType || !config.modelType) {
               await store.set(storeKey, config.key)
-              set({ [storeKey.replace('Model', '')]: config.key })
+              set({ [storeKey]: config.key })
               break
             }
           }
@@ -467,6 +485,54 @@ const useSettingStore = create<SettingState>((set, get) => ({
         } else if (key === 'aiModelList' && hasNoteGenModels) {
           // 如果已经有NoteGen模型，使用存储的配置
           set({ [key]: res as AiConfig[] })
+        } else if (key === 'recordToolbarConfig') {
+          // 确保包含所有工具，如果缺少新工具则自动添加
+          const storedConfig = res as RecordToolbarItem[]
+          const defaultConfig = value as RecordToolbarItem[]
+
+          // 检查是否有缺失的工具
+          const missingTools = defaultConfig.filter(
+            defaultItem => !storedConfig.some(stored => stored.id === defaultItem.id)
+          )
+
+          if (missingTools.length > 0) {
+            // 合并配置：保留用户的顺序和启用状态，添加新工具
+            const mergedConfig = [...storedConfig]
+            let maxOrder = Math.max(...storedConfig.map(item => item.order), 0)
+
+            missingTools.forEach(tool => {
+              mergedConfig.push({ ...tool, order: ++maxOrder })
+            })
+
+            await store.set(key, mergedConfig)
+            set({ [key]: mergedConfig })
+          } else {
+            set({ [key]: res as RecordToolbarItem[] })
+          }
+        } else if (key === 'chatToolbarConfigPc' || key === 'chatToolbarConfigMobile') {
+          // 确保聊天工具栏包含所有工具，如果缺少新工具则自动添加
+          const storedConfig = res as ChatToolbarItem[]
+          const defaultConfig = value as ChatToolbarItem[]
+
+          // 检查是否有缺失的工具
+          const missingTools = defaultConfig.filter(
+            defaultItem => !storedConfig.some(stored => stored.id === defaultItem.id)
+          )
+
+          if (missingTools.length > 0) {
+            // 合并配置：保留用户的顺序和启用状态，添加新工具
+            const mergedConfig = [...storedConfig]
+            let maxOrder = Math.max(...storedConfig.map(item => item.order), 0)
+
+            missingTools.forEach(tool => {
+              mergedConfig.push({ ...tool, order: ++maxOrder })
+            })
+
+            await store.set(key, mergedConfig)
+            set({ [key]: mergedConfig })
+          } else {
+            set({ [key]: res as ChatToolbarItem[] })
+          }
         } else if (key !== 'aiModelList') {
           set({ [key]: res })
         }
@@ -558,6 +624,20 @@ const useSettingStore = create<SettingState>((set, get) => ({
     const store = await Store.load('store.json');
     await store.set('sttModel', sttModel)
     set({ sttModel })
+  },
+
+  condenseModel: '',
+  setCondenseModel: async (condenseModel) => {
+    const store = await Store.load('store.json');
+    await store.set('condenseModel', condenseModel)
+    set({ condenseModel })
+  },
+
+  inspirationModel: '',
+  setInspirationModel: async (inspirationModel) => {
+    const store = await Store.load('store.json');
+    await store.set('inspirationModel', inspirationModel)
+    set({ inspirationModel })
   },
 
   templateList: [
@@ -989,19 +1069,14 @@ const useSettingStore = create<SettingState>((set, get) => ({
 
   // 聊天工具栏配置 - PC 端
   chatToolbarConfigPc: [
-    // 底部工具栏
+    // 底部工具栏（可排序）
     { id: 'modelSelect', enabled: true, order: 0 },
     { id: 'promptSelect', enabled: true, order: 1 },
-    { id: 'chatLanguage', enabled: true, order: 2 },
-    // 顶部工具栏 - 左侧
-    { id: 'chatLink', enabled: true, order: 3 },
-    { id: 'fileLink', enabled: true, order: 4 },
-    { id: 'mcpButton', enabled: true, order: 5 },
-    { id: 'ragSwitch', enabled: true, order: 6 },
-    { id: 'clipboardMonitor', enabled: true, order: 7 },
-    // 顶部工具栏 - 右侧
-    { id: 'clearContext', enabled: true, order: 8 },
-    { id: 'clearChat', enabled: true, order: 9 },
+    { id: 'mcpButton', enabled: true, order: 2 },
+    { id: 'ragSwitch', enabled: true, order: 3 },
+    { id: 'clipboardMonitor', enabled: true, order: 4 },
+    // 顶部工具栏 - 右侧（不参与排序）
+    { id: 'newChat', enabled: true, order: 5 },
   ],
   setChatToolbarConfigPc: async (config: ChatToolbarItem[]) => {
     set({ chatToolbarConfigPc: config })
@@ -1014,14 +1089,10 @@ const useSettingStore = create<SettingState>((set, get) => ({
   chatToolbarConfigMobile: [
     { id: 'modelSelect', enabled: true, order: 0 },
     { id: 'promptSelect', enabled: true, order: 1 },
-    { id: 'chatLanguage', enabled: true, order: 2 },
-    { id: 'chatLink', enabled: true, order: 3 },
-    { id: 'fileLink', enabled: true, order: 4 },
-    { id: 'mcpButton', enabled: true, order: 5 },
-    { id: 'ragSwitch', enabled: true, order: 6 },
-    { id: 'clipboardMonitor', enabled: true, order: 7 },
-    { id: 'clearContext', enabled: true, order: 8 },
-    { id: 'clearChat', enabled: true, order: 9 },
+    { id: 'mcpButton', enabled: true, order: 2 },
+    { id: 'ragSwitch', enabled: true, order: 3 },
+    { id: 'clipboardMonitor', enabled: true, order: 4 },
+    { id: 'newChat', enabled: true, order: 5 },
   ],
   setChatToolbarConfigMobile: async (config: ChatToolbarItem[]) => {
     set({ chatToolbarConfigMobile: config })
@@ -1038,6 +1109,7 @@ const useSettingStore = create<SettingState>((set, get) => ({
     { id: 'image', enabled: true, order: 3 },
     { id: 'link', enabled: true, order: 4 },
     { id: 'file', enabled: true, order: 5 },
+    { id: 'todo', enabled: true, order: 6 },
   ],
   setRecordToolbarConfig: async (config: RecordToolbarItem[]) => {
     set({ recordToolbarConfig: config })
@@ -1046,12 +1118,28 @@ const useSettingStore = create<SettingState>((set, get) => ({
     await store.save()
   },
 
-  // 托盘设置
-  trayEnabled: true,
-  setTrayEnabled: async (enabled: boolean) => {
-    set({ trayEnabled: enabled })
+  // 摘要设置
+  enableCondense: true,
+  setEnableCondense: async (enabled: boolean) => {
+    set({ enableCondense: enabled })
     const store = await Store.load('store.json');
-    await store.set('trayEnabled', enabled)
+    await store.set('enableCondense', enabled)
+    await store.save()
+  },
+
+  keepLatestCount: 4,
+  setKeepLatestCount: async (count: number) => {
+    set({ keepLatestCount: count })
+    const store = await Store.load('store.json');
+    await store.set('keepLatestCount', count)
+    await store.save()
+  },
+
+  condenseMaxLength: 100,
+  setCondenseMaxLength: async (length: number) => {
+    set({ condenseMaxLength: length })
+    const store = await Store.load('store.json');
+    await store.set('condenseMaxLength', length)
     await store.save()
   },
 }))

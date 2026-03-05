@@ -2,9 +2,9 @@
 import { MobileMarkHeader } from './mobile-mark-header'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
-import { TagManage } from '@/app/core/record/mark/tag-manage'
+import { TagManage } from '@/app/core/main/mark/tag-manage'
 import useMarkStore from '@/stores/mark'
-import { MarkList } from '@/app/core/record/mark/mark-list'
+import { MarkList } from '@/app/core/main/mark/mark-list'
 import { clearTrash } from '@/db/marks'
 import { confirm } from '@tauri-apps/plugin-dialog'
 

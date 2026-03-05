@@ -38,9 +38,13 @@
     "info": "信息",
     "restartToApply": "，请重启应用使配置生效",
     "unsaved": "未保存",
-    "saving": "保存中..."
+    "saving": "保存中...",
+    "configureSync": "配置同步"
   },
   "settings": {
+    "defaultModels": {
+      "title": "默认模型"
+    },
     "others": "高级",
     "general": {
       "title": "常规设置",
@@ -186,6 +190,7 @@
       },
       "tools": {
         "title": "工具设置",
+        "desc": "配置各种工具栏按钮的显示和排序",
         "chatToolbar": {
           "title": "对话工具栏",
           "desc": "自定义对话工具栏按钮的显示顺序和可见性",
@@ -356,8 +361,9 @@
       "skillDeleted": "Skill 删除成功"
     },
     "editor": {
-      "title": "Markdown 编辑器",
-      "desc": "在这里，你可以对 Markdown 编辑器进行自定义配置，打造更适合你的写作方式。",
+      "title": "编辑器设置",
+      "desc": "在这里，你可以对编辑器进行自定义配置，打造更适合你的写作方式。",
+      "interfaceSettings": "界面设置",
       "typewriterMode": "打字机模式",
       "typewriterModeDesc": "打字机模式下，编辑器会模拟打字机效果，帮助你更好地沉浸在写作中。",
       "outlineEnable": "默认启用大纲",
@@ -375,7 +381,91 @@
         "panoramaView": "全景视图"
       },
       "enableLineNumber": "代码块行号",
-      "enableLineNumberDesc": "启用后，代码块将显示行号。"
+      "enableLineNumberDesc": "启用后，代码块将显示行号。",
+      "completion": {
+        "title": "快速补全",
+        "model": {
+          "title": "快速补全模型",
+          "desc": "选择用于编辑器 AI 内联补全的模型"
+        }
+      },
+      "commit": {
+        "title": "自动生成 Commit",
+        "model": {
+          "title": "提交模型",
+          "desc": "用于自动生成 Git 提交信息，基于文件内容变化智能生成描述性提交信息"
+        }
+      },
+      "mermaid": {
+        "title": "图表",
+        "rendering": "渲染中...",
+        "renderError": "渲染错误",
+        "clickToEdit": "点击编辑源码",
+        "clickToAdd": "点击添加图表代码",
+        "placeholder": "输入 Mermaid 图表代码...",
+        "preview": "预览",
+        "done": "完成",
+        "diagramTypes": {
+          "flowchart": "流程图",
+          "sequence": "时序图",
+          "classDiagram": "类图",
+          "stateDiagram": "状态图",
+          "er": "ER图",
+          "gantt": "甘特图",
+          "pie": "饼图",
+          "journey": "旅程图"
+        },
+        "templates": {
+          "flowchart": "graph TD\n    A[开始] --> B[处理]\n    B --> C[结束]",
+          "sequence": "sequenceDiagram\n    participant Alice\n    participant Bob\n    Alice->>Bob: 你好\n    Bob-->>Alice: 回复",
+          "classDiagram": "classDiagram\n    Animal <|-- Duck\n    Animal <|-- Fish\n    Animal : +int age\n    Animal : +String gender",
+          "stateDiagram": "stateDiagram-v2\n    [*] --> Active\n    Active --> [*]",
+          "er": "erDiagram\n    CUSTOMER ||--o{ ORDER : places\n    CUSTOMER ||--o{ DELIVERY-ADDRESS : uses",
+          "gantt": "gantt\n    title 项目计划\n    dateFormat YYYY-MM-DD\n    section 第一阶段\n    任务1 :a1, 2024-01-01, 30d\n    section 第二阶段\n    任务2 :after a1, 20d",
+          "pie": "pie title 资源分配\n    \"CPU\" : 45\n    \"内存\" : 30\n    \"存储\" : 25",
+          "journey": "journey\n    title 我的日常工作\n    section 上午\n    通勤 : 7:00, 5\n    工作 : 9:00, 8"
+        }
+      }
+    },
+    "record": {
+      "title": "记录设置",
+      "desc": "在这里，你可以配置记录相关的设置，包括记录描述和工具栏配置。",
+      "model": {
+        "title": "模型设置",
+        "markDesc": {
+          "title": "记录描述",
+          "desc": "用于处理 OCR 识别后的记录，生成记录描述"
+        }
+      },
+      "toolbar": {
+        "title": "工具栏设置",
+        "recordToolbar": {
+          "title": "记录工具栏",
+          "desc": "自定义记录工具栏按钮的显示顺序和可见性",
+          "button": "设置",
+          "text": {
+            "desc": "记录文本内容"
+          },
+          "recording": {
+            "desc": "录音记录功能"
+          },
+          "scan": {
+            "desc": "扫描识别图片中的文字"
+          },
+          "image": {
+            "desc": "上传图片到笔记"
+          },
+          "link": {
+            "desc": "记录网页链接"
+          },
+          "file": {
+            "desc": "上传文件到笔记"
+          },
+          "todo": {
+            "desc": "创建待办事项"
+          }
+        }
+      }
     },
     "uploadStore": {
       "uploadConfirm": "上传配置请确保同步仓库为私有，否则数据将会泄露！",
@@ -402,6 +492,56 @@
       "optimizeSuccess": "提示词优化成功",
       "optimizeFailed": "提示词优化失败，请稍后重试",
       "noContentToOptimize": "请先输入提示词内容"
+    },
+    "memories": {
+      "title": "记忆管理",
+      "desc": "AI 长期记忆功能，让 AI 记住你的写作偏好、经验知识和笔记习惯。",
+      "stats": {
+        "total": "总记忆数",
+        "preferences": "偏好",
+        "memories": "记忆"
+      },
+      "form": {
+        "title": "添加新记忆",
+        "categoryDescription": "记忆分为两种类型：",
+        "preferenceDescription": "偏好：语言、格式、风格等设置，每次对话都会自动加载",
+        "memoryDescription": "记忆：事实、经验、专长等信息，根据对话内容智能匹配",
+        "contentLabel": "记忆内容",
+        "contentPlaceholder": "例如：我喜欢用中文回答、我是React专家...",
+        "categoryLabel": "类型",
+        "preferenceLabel": "偏好",
+        "memoryLabel": "记忆",
+        "preferenceDesc": "语言、格式、风格等",
+        "memoryDesc": "事实、经验、专长等",
+        "save": "保存记忆",
+        "saving": "保存中..."
+      },
+      "listTitle": "我的记忆",
+      "addMemory": "添加记忆",
+      "empty": "暂无记忆，添加第一条记忆吧！",
+      "emptyHint": "你可以手动添加记忆，或在对话中使用「请记住」「记住这个」等话术让 AI 自动记忆。",
+      "preference": "偏好",
+      "memory": "记忆",
+      "replaced": "已替换",
+      "accessCount": "访问 {count} 次",
+      "tabs": {
+        "all": "全部",
+        "preference": "偏好",
+        "memory": "记忆"
+      },
+      "success": "成功",
+      "saved": "记忆已保存",
+      "updated": "记忆已更新（已替换相似记忆）",
+      "deleted": "记忆已删除",
+      "cleared": "所有记忆已清空",
+      "found": "找到 {count} 条记忆",
+      "error": "错误",
+      "errorEmpty": "请输入记忆内容",
+      "errorSave": "保存失败",
+      "errorDelete": "删除记忆失败",
+      "errorList": "获取记忆列表失败",
+      "errorEmbedding": "无法生成向量嵌入，请检查嵌入模型配置",
+      "errorClear": "清空记忆失败"
     },
     "defaultModel": {
       "title": "默认模型",
@@ -438,6 +578,10 @@
         "reranking": {
           "title": "重排模型",
           "desc": "用于搜索结果的重新排序和优化。"
+        },
+        "condense": {
+          "title": "摘要模型",
+          "desc": "用于压缩历史对话内容，节省 token 使用量"
         }
       }
     },
@@ -521,6 +665,11 @@
     "sync": {
       "title": "同步配置",
       "desc": "在这里，你可以配置同步仓库，它可以帮助你同步记录、markdown 文件、系统配置等信息。",
+      "selectPlatform": "选择同步平台",
+      "platformSettings": "选择平台",
+      "settings": "同步设置",
+      "platformDesc": "配置 Token 和仓库信息以启用同步功能",
+      "moreSettings": "更多设置",
       "repoStatus": "仓库状态",
       "syncRepo": "同步仓库",
       "syncRepoDesc": "同步写作中的 markdown 文件。",
@@ -533,7 +682,7 @@
       "newToken": "创建 access token",
       "newTokenDesc": "新建 token 时，请务必勾选 repo 权限，配置后将自动创建文件仓库（私有）和图床仓库。",
       "giteeTokenDesc": "Gitee 私人令牌用于同步数据，需要有仓库的读写权限，配置后将自动创建文件仓库（私有）和图床仓库。",
-      "imageRepoSetting": "本地/图床",
+      "imageRepoSetting": "开启图床",
       "imageRepoSettingDesc": "你已经配置了图床仓库，开启此项将使用图床仓库，否则将使用本地存储。",
       "jsdelivrSetting": "jsDelivr",
       "jsdelivrSettingDesc": "使用 jsdelivr 加速图片访问。",
@@ -545,12 +694,12 @@
       "customImageRepoDesc": "留空则使用默认仓库名",
       "backupMethod": "备份方式",
       "backupMethodDesc": "设置为主要备份方式后，写作中的所有同步相关功能将使用当前备份方式（图床功能除外）",
-      "isPrimaryBackup": "当前 {type} 为主要备份方式",
-      "setPrimaryBackup": "设为主要备份方式",
       "createRepo": "创建仓库",
       "creating": "创建中",
       "checkRepo": "检查仓库",
       "checking": "检查中",
+      "enterToken": "请输入 Access Token",
+      "enterTokenHint": "请先输入 Access Token 以检查仓库状态",
       "defaultRepoName": "默认: {name}",
       "gitlabInstanceType": "GitLab 实例类型",
       "gitlabInstanceTypeDesc": "选择要连接的 GitLab 实例类型",
@@ -572,11 +721,14 @@
       "autoSyncOptions": {
         "placeholder": "选择自动同步时间",
         "disabled": "关闭",
+        "2s": "2 秒",
+        "3s": "3 秒",
+        "5s": "5 秒",
         "10s": "10 秒",
+        "20s": "20 秒",
         "30s": "30 秒",
         "1m": "1 分钟",
-        "5m": "5 分钟",
-        "30m": "30 分钟"
+        "2m": "2 分钟"
       },
       "exclusions": {
         "title": "同步排除配置",
@@ -600,6 +752,8 @@
     "imageHosting": {
       "title": "图床设置",
       "desc": "在这里，你可以配置图床服务，用于存储和管理你的图片。",
+      "type": "选择平台",
+      "typeDesc": "选择图床服务提供商",
       "customRepoName": "自定义仓库名",
       "customRepoNameDesc": "留空则使用默认仓库名",
       "isPrimaryBackup": "当前 {type} 为主要图床",
@@ -724,6 +878,7 @@
           "title": "导出备份",
           "desc": "将应用数据打包为 .zip 文件，保存到指定位置。",
           "button": "选择位置并导出",
+          "simpleButton": "导出",
           "exporting": "导出中..."
         },
         "import": {
@@ -804,6 +959,112 @@
       "exportConfigSuccess": "导出成功",
       "importButton": "导入",
       "exportButton": "导出"
+    },
+    "chat": {
+      "title": "对话设置",
+      "desc": "在这里，你可以配置对话相关的设置，包括摘要生成等功能。",
+      "primaryModel": {
+        "title": "主要模型",
+        "model": {
+          "title": "主要聊天模型",
+          "desc": "选择用于日常对话的主要 AI 模型"
+        }
+      },
+      "toolbar": {
+        "title": "工具栏设置",
+        "chatToolbar": {
+          "title": "对话工具栏",
+          "desc": "自定义对话工具栏按钮的显示顺序和可见性",
+          "button": "设置",
+          "modelSelect": {
+            "desc": "切换用于对话的 AI 模型"
+          },
+          "promptSelect": {
+            "desc": "选择对话使用的预设提示词"
+          },
+          "chatLanguage": {
+            "desc": "设置对话的语言"
+          },
+          "chatLink": {
+            "title": "关联标签",
+            "desc": "关联当前标签的笔记内容到对话上下文"
+          },
+          "fileLink": {
+            "desc": "关联文件或文件夹到对话上下文"
+          },
+          "mcpButton": {
+            "desc": "选择并连接 MCP 服务器以使用外部工具"
+          },
+          "ragSwitch": {
+            "title": "知识库检索",
+            "desc": "启用向量知识库检索功能"
+          },
+          "clipboardMonitor": {
+            "title": "剪贴板监听",
+            "desc": "自动监听剪贴板内容变化"
+          },
+          "newChat": {
+            "desc": "开始新对话"
+          },
+          "clearContext": {
+            "desc": "清除对话上下文，保留聊天记录"
+          },
+          "clearChat": {
+            "desc": "删除所有聊天记录"
+          }
+        }
+      },
+      "condense": {
+        "title": "对话摘要",
+        "enable": {
+          "title": "启用摘要",
+          "desc": "自动压缩长对话以节省 token 使用量"
+        },
+        "model": {
+          "title": "摘要模型",
+          "desc": "选择用于生成摘要的 AI 模型",
+          "placeholder": "使用主模型"
+        },
+        "threshold": {
+          "title": "触发阈值",
+          "desc": "AI 消息超过此数量时检查压缩"
+        },
+        "minToken": {
+          "title": "最小 Token 数",
+          "desc": "单条消息超过此 token 数才进行压缩"
+        },
+        "keepLatest": {
+          "title": "保留最新条数",
+          "desc": "保留最新的 N 条 AI 消息不进行压缩"
+        },
+        "maxLength": {
+          "title": "摘要长度限制",
+          "desc": "控制生成摘要的最大字数"
+        },
+        "prompt": {
+          "title": "自定义摘要提示词",
+          "desc": "自定义生成摘要时使用的提示词模板",
+          "label": "提示词模板",
+          "placeholder": "输入自定义提示词...",
+          "help": "使用 {content} 作为原始内容的占位符",
+          "save": "保存",
+          "reset": "重置为默认"
+        }
+      },
+      "conversationTitle": {
+        "title": "会话标题",
+        "model": {
+          "title": "标题生成模型",
+          "desc": "选择用于生成会话标题的 AI 模型"
+        }
+      },
+      "inspiration": {
+        "title": "灵感模型",
+        "model": {
+          "title": "灵感生成模型",
+          "desc": "用于生成快速提示词建议，帮助用户快速开始对话"
+        }
+      }
     },
     "ai": {
       "title": "模型配置",
@@ -1004,6 +1265,7 @@
         "recording": "录音",
         "file": "文件",
         "link": "链接",
+        "todo": "待办",
         "pdf": "PDF",
         "upload": "上传记录",
         "download": "下载记录",
@@ -1044,12 +1306,36 @@
         "title": "记录文本",
         "description": "记录一段文本，笔记整理时将插入到合适的位置。",
         "characterCount": "{count} 字符",
-        "save": "记录"
+        "save": "记录",
+        "autoReadClipboard": "自动读取剪贴板文本"
       },
       "link": {
         "title": "链接记录",
         "description": "输入网页链接，系统将自动爬取页面内容并保存",
-        "save": "保存"
+        "save": "保存",
+        "autoReadClipboard": "自动读取剪贴板链接"
+      },
+      "todo": {
+        "title": "待办记录",
+        "description": "创建待办事项，管理你的任务",
+        "titlePlaceholder": "输入待办标题...",
+        "descriptionPlaceholder": "输入详细描述（可选）",
+        "priority": "优先级",
+        "priorityLow": "低",
+        "priorityMedium": "中",
+        "priorityHigh": "高",
+        "dateRange": "日期范围",
+        "dateRangePlaceholder": "选择日期范围",
+        "dueDate": "截止日期",
+        "dueDatePlaceholder": "选择日期",
+        "save": "创建待办",
+        "saveEdit": "保存",
+        "edit": "编辑待办",
+        "editDescription": "修改待办事项的详细信息",
+        "cancel": "取消",
+        "selectTag": "选择标签",
+        "completed": "已完成",
+        "uncompleted": "未完成"
       },
       "clipboard": {
         "detectedImage": "检测到剪贴板图片",
@@ -1125,7 +1411,8 @@
             }
           },
           "messageControl": {
-            "words": "字"
+            "words": "字",
+            "summary": "摘要"
           },
           "mcp": {
             "maxIterationsReached": "达到最大工具调用次数限制",
@@ -1235,13 +1522,18 @@
         "scan": "扫描图片",
         "image": "上传图片",
         "link": "记录链接",
-        "file": "上传文件"
+        "file": "上传文件",
+        "todo": "待办记录"
       },
       "list": {
         "title": "记录"
       }
     },
     "chat": {
+      "condensing": "正在压缩上下文...",
+      "condensed": {
+        "message": "已压缩 {count} 条历史消息"
+      },
       "empty": {
         "title": "开始与 AI 对话",
         "subtitle": "使用 Chat 或 Agent 模式与 AI 互动",
@@ -1250,7 +1542,22 @@
         "currentMode": "对话模式",
         "noModel": "未设置模型",
         "noPrompt": "未设置 Prompt",
-        "configureModel": "配置模型"
+        "configureModel": "配置模型",
+        "recentConversations": "最近对话",
+        "deleteConversation": "删除对话",
+        "conversationHistory": "历史对话",
+        "viewMore": "查看更多",
+        "messages": "条消息",
+        "searchPlaceholder": "搜索对话...",
+        "noMatchingConversations": "没有找到匹配的对话",
+        "noConversationHistory": "暂无历史对话",
+        "quickPrompts": {
+          "title": "快速开始",
+          "writeNote": "帮我写一篇笔记",
+          "summarize": "帮我总结这段内容",
+          "brainstorm": "帮我头脑风暴一些想法",
+          "explain": "帮我解释这个概念"
+        }
       },
       "newChat": "使用新标签开始对话",
       "removeChat": "删除当前标签对话",
@@ -1298,10 +1605,7 @@
           "tooltip": "选择 Prompt",
           "placeholder": "搜索 Prompt"
         },
-        "clearChat": "清空对话",
-        "clearContext": {
-          "tooltip": "清除上下文"
-        },
+        "newChat": "开始新对话",
         "chatLanguage": {
           "tooltip": "选择对话语言",
           "placeholder": "搜索语言"
@@ -1382,6 +1686,7 @@
       },
       "messageControl": {
         "words": "字",
+        "summary": "摘要",
         "readAloud": "朗读",
         "playing": "播放中",
         "loading": "准备中",
@@ -1390,7 +1695,8 @@
         "copied": "已复制"
       },
       "ragSources": {
-        "label": "引用文件"
+        "label": "知识库检索到 {count} 篇笔记",
+        "openFile": "打开文件"
       },
       "preview": {
         "close": "关闭",
@@ -1406,6 +1712,11 @@
       },
       "content": {
         "organize": "将你的记录整理为文章："
+      },
+      "quote": {
+        "lineSingle": "引用自 {fileName} 第 {line} 行",
+        "lineRange": "引用自 {fileName} 第 {startLine}-{endLine} 行",
+        "noLine": "引用自 {fileName}"
       },
       "note": {
         "organize": "整理",
@@ -1474,6 +1785,7 @@
     "logout": "登出",
     "setting": "设置",
     "files": "笔记",
+    "outline": "大纲",
     "showLeftSidebar": "显示左侧边栏",
     "hideLeftSidebar": "隐藏左侧边栏",
     "showCenterPanel": "显示编辑器",
@@ -1543,6 +1855,17 @@
         }
       }
     },
+    "unsupportedFile": {
+      "title": "无法预览此文件",
+      "fileName": "文件名",
+      "filePath": "文件路径",
+      "fileSize": "文件大小",
+      "modifiedTime": "修改时间",
+      "createdTime": "创建时间",
+      "pathCopied": "路径已复制",
+      "openExternal": "用外部程序打开",
+      "openDirectory": "打开文件目录"
+    },
     "file": {
       "toolbar": {
         "accessRepo": "访问仓库",
@@ -1560,9 +1883,10 @@
         "sortAsc": "升序排列",
         "sortDesc": "降序排列",
         "sort": "排序",
+        "hideCloudFiles": "隐藏云端文件",
+        "showCloudFiles": "显示云端文件",
         "processingVectors": "正在处理向量数据",
         "calculateVectors": "知识库计算（全量）",
-        "enableVectorDb": "启用向量数据库",
         "importMarkdown": "导入",
         "importing": "正在导入...",
         "importSuccess": "导入成功",
@@ -1621,6 +1945,30 @@
         "autoCalcDisabled": "已禁用自动向量计算",
         "settingFailed": "设置失败",
         "confirmDeleteVectors": "确定要删除 {count} 个文件的向量吗？"
+      },
+      "folderView": {
+        "vectorDbNotEnabled": "向量数据库未启用",
+        "calculateVectors": "计算向量",
+        "indexed": "已计算",
+        "vectorCount": "向量数",
+        "databaseSize": "数据库大小",
+        "lastCalculated": "最后计算",
+        "never": "从未",
+        "calculating": "计算中...",
+        "failed": "失败",
+        "recalculateVectors": "重新计算向量",
+        "skills": "Skills",
+        "skillNotFound": "Skill 未找到",
+        "skillNotFoundDesc": "无法找到 ID 为 {id} 的 Skill",
+        "loadingSkills": "加载 Skills...",
+        "loadingSkill": "加载 Skill...",
+        "globalSkills": "全局 Skills",
+        "workspaceSkills": "工作区 Skills",
+        "instructions": "指令",
+        "examples": "示例",
+        "scripts": "脚本",
+        "references": "参考文档",
+        "assets": "静态资源"
       },
       "error": {
         "fileExists": "文件名已存在"
@@ -1708,7 +2056,17 @@
           "tooltip": "翻译",
           "description": "将选中的文本进行翻译",
           "selectContent": "请先选择一段内容",
-          "promptTemplate": "将这段文字：\n{content}\n翻译为{language}语言，直接返回翻译后的结果。"
+          "promptTemplate": "将这段文字：\n{content}\n翻译为{language}语言，直接返回翻译后的结果。",
+          "fail": "翻译失败",
+          "failNoSelection": "请先选择要翻译的文本",
+          "translating": "翻译中",
+          "translatingTo": "正在翻译为 {language}...",
+          "success": "翻译完成",
+          "successTo": "已翻译为 {language}",
+          "customLanguage": "自定义语言...",
+          "customLanguagePlaceholder": "输入目标语言，如：英语、日语等",
+          "customLanguageEmpty": "请输入目标语言",
+          "customLanguageExample": "例如：英语、日语、法语等"
         }
       }
     },
@@ -1765,11 +2123,8 @@
         },
         "tools": {
           "title": "工具",
-          "clearContext": "清除上下文",
-          "clearContextDesc": "清除对话上下文，保留聊天记录",
-          "clearChat": "清空对话",
-          "clearChatDesc": "删除所有聊天记录",
-          "clear": "清除"
+          "newChat": "开始新对话",
+          "start": "开始"
         },
         "attachments": {
           "title": "附件",
@@ -1822,5 +2177,188 @@
   },
   "quickRecord": {
     "description": "点击选择记录工具，快速创建记录"
+  },
+  "editor": {
+    "placeholder": "输入 / 唤起菜单，或直接开始写作...",
+    "outline": {
+      "title": "大纲",
+      "open": "打开大纲",
+      "close": "关闭大纲"
+    },
+    "translation": {
+      "fail": "翻译失败",
+      "failNoSelection": "请先选择要翻译的文本",
+      "translating": "翻译中",
+      "translatingTo": "正在翻译为 {language}...",
+      "success": "翻译完成",
+      "successTo": "已翻译为 {language}",
+      "customLanguageEmpty": "请输入目标语言",
+      "customLanguageExample": "例如：英语、日语、法语等"
+    },
+    "quoteDisplay": {
+      "fromFile": "引用自 {fileName}",
+      "line": "引用自 {fileName} 第 {line} 行",
+      "lines": "引用自 {fileName} 第 {start}-{end} 行"
+    },
+    "bubbleMenu": {
+      "ai": "AI",
+      "polish": "润色",
+      "concise": "精简",
+      "expand": "扩展",
+      "translate": "翻译",
+      "translateSubtitle": "翻译为",
+      "quoteToChat": "引用到对话",
+      "link": "链接",
+      "linkPlaceholder": "输入链接地址",
+      "confirm": "确认",
+      "cancel": "取消",
+      "bold": "粗体",
+      "italic": "斜体",
+      "strike": "删除线",
+      "underline": "下划线",
+      "inlineCode": "行内代码",
+      "highlight": "高亮",
+      "blockquote": "引用",
+      "bulletList": "无序列表",
+      "orderedList": "有序列表",
+      "taskList": "任务列表",
+      "codeBlock": "代码块",
+      "languages": {
+        "English": "英语",
+        "Japanese": "日语",
+        "Korean": "韩语",
+        "French": "法语",
+        "German": "德语",
+        "Spanish": "西班牙语",
+        "Portuguese": "葡萄牙语",
+        "Russian": "俄语",
+        "Arabic": "阿拉伯语"
+      },
+      "customLanguagePlaceholder": "自定义语言..."
+    },
+    "aiSuggestion": {
+      "accept": "接受",
+      "reject": "拒绝",
+      "generating": "生成中...",
+      "abort": "终止"
+    },
+    "image": {
+      "insert": "插入图片",
+      "uploading": "上传中...",
+      "uploadSuccess": "图片已上传到图床",
+      "saveSuccess": "图片已保存到本地",
+      "uploadFailed": "插入图片失败",
+      "sizeSmall": "小 (25%)",
+      "sizeMedium": "中 (50%)",
+      "sizeLarge": "大 (75%)",
+      "sizeOriginal": "原始尺寸",
+      "editAlt": "编辑替代文本",
+      "editSrc": "编辑地址",
+      "altPlaceholder": "输入替代文本...",
+      "srcPlaceholder": "输入图片地址...",
+      "delete": "删除图片",
+      "confirm": "确认",
+      "cancel": "取消"
+    },
+    "mermaid": {
+      "rendering": "渲染中...",
+      "renderError": "渲染错误",
+      "clickToEdit": "点击编辑源码",
+      "clickToAdd": "点击添加图表代码",
+      "placeholder": "输入 Mermaid 图表代码...",
+      "preview": "预览",
+      "done": "完成",
+      "diagramTypes": {
+        "flowchart": "流程图",
+        "sequence": "时序图",
+        "classDiagram": "类图",
+        "stateDiagram": "状态图",
+        "er": "ER图",
+        "gantt": "甘特图",
+        "pie": "饼图",
+        "journey": "旅程图"
+      },
+      "templates": {
+        "flowchart": "graph TD\n    A[开始] --> B[处理]\n    B --> C[结束]",
+        "sequence": "sequenceDiagram\n    participant Alice\n    participant Bob\n    Alice->>Bob: 你好\n    Bob-->>Alice: 回复",
+        "classDiagram": "classDiagram\n    Animal <|-- Duck\n    Animal <|-- Fish\n    Animal : +int age\n    Animal : +String gender",
+        "stateDiagram": "stateDiagram-v2\n    [*] --> Active\n    Active --> [*]",
+        "er": "erDiagram\n    CUSTOMER ||--o{ ORDER : places\n    CUSTOMER ||--o{ DELIVERY-ADDRESS : uses",
+        "gantt": "gantt\n    title 项目计划\n    dateFormat YYYY-MM-DD\n    section 第一阶段\n    任务1 :a1, 2024-01-01, 30d\n    section 第二阶段\n    任务2 :after a1, 20d",
+        "pie": "pie title 资源分配\n    \"CPU\" : 45\n    \"内存\" : 30\n    \"存储\" : 25",
+        "journey": "journey\n    title 我的日常工作\n    section 上午\n    通勤 : 7:00, 5\n    工作 : 9:00, 8"
+      }
+    },
+    "slashCommand": {
+      "groups": {
+        "ai": "AI",
+        "heading": "标题",
+        "list": "列表",
+        "block": "块级",
+        "align": "对齐",
+        "embed": "嵌入",
+        "math": "数学",
+        "chart": "图表"
+      },
+      "items": {
+        "continue": "续写",
+        "continueDesc": "AI 续写内容",
+        "heading1": "标题1",
+        "heading1Desc": "大标题",
+        "heading2": "标题2",
+        "heading2Desc": "中标题",
+        "heading3": "标题3",
+        "heading3Desc": "小标题",
+        "bulletList": "无序列表",
+        "bulletListDesc": "创建简单的项目列表",
+        "orderedList": "有序列表",
+        "orderedListDesc": "创建带编号的列表",
+        "taskList": "任务列表",
+        "taskListDesc": "创建带复选框的任务列表",
+        "image": "图片",
+        "imageDesc": "插入本地图片或图床图片",
+        "table": "表格",
+        "tableDesc": "插入表格",
+        "blockquote": "引用",
+        "blockquoteDesc": "捕获引用内容",
+        "codeBlock": "代码块",
+        "codeBlockDesc": "捕获代码片段",
+        "divider": "分割线",
+        "dividerDesc": "在元素之间创建分隔线",
+        "inlineMath": "行内公式",
+        "inlineMathDesc": "插入行内 LaTeX 公式",
+        "blockMath": "块级公式",
+        "blockMathDesc": "插入块级 LaTeX 公式",
+        "flowchart": "流程图",
+        "flowchartDesc": "插入流程图",
+        "sequence": "时序图",
+        "sequenceDesc": "插入时序图",
+        "gantt": "甘特图",
+        "ganttDesc": "插入甘特图",
+        "classDiagram": "类图",
+        "classDiagramDesc": "插入类图",
+        "stateDiagram": "状态图",
+        "stateDiagramDesc": "插入状态图",
+        "pie": "饼图",
+        "pieDesc": "插入饼图",
+        "erDiagram": "ER图",
+        "erDiagramDesc": "插入实体关系图",
+        "journey": "旅程图",
+        "journeyDesc": "插入用户旅程图"
+      },
+      "imageUpload": {
+        "success": "上传成功",
+        "saveSuccess": "保存成功",
+        "savePath": "保存路径: __PATH__",
+        "failed": "插入图片失败"
+      }
+    }
+  },
+  "tabContext": {
+    "close": "关闭",
+    "closeOthers": "关闭其他",
+    "closeAll": "关闭全部",
+    "closeLeft": "关闭左侧",
+    "closeRight": "关闭右侧"
   }
 }

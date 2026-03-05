@@ -2,13 +2,17 @@
 
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { LeftSidebar } from "./left-sidebar"
-import { EditorWrapper } from '../article/editor-wrapper'
-import Chat from '../record/chat'
+import { EditorLayout } from './editor/editor-layout'
+import Chat from './chat'
 import dynamic from 'next/dynamic'
 import { useSidebarStore } from "@/stores/sidebar"
 import { useEffect, useState, useRef } from 'react'
 import { Store } from '@tauri-apps/plugin-store'
 import { ImperativePanelHandle } from 'react-resizable-panels'
+import { invoke } from "@tauri-apps/api/core"
+import { getCurrentWindow } from "@tauri-apps/api/window"
+import emitter from '@/lib/emitter'
+import { useRouter } from 'next/navigation'
 
 function getDefaultLayout(layoutKey: string) {
   const storageKey = `react-resizable-panels:main-layout:${layoutKey}`
@@ -155,9 +159,9 @@ function ResizableWrapper() {
     const panels = []
     let index = 0
 
-    // 左侧面板始终渲染，但通过折叠状态控制显示
+    // 左侧面板
     panels.push(
-      <ResizablePanel 
+      <ResizablePanel
         key="left"
         ref={leftPanelRef}
         defaultSize={actualLayout[index++]}
@@ -170,16 +174,18 @@ function ResizableWrapper() {
     )
 
     // 左侧和中间之间的分隔条
+    // 当中间面板可见时显示；当中间面板不可见但左右都可见时也显示（作为左右分隔条）
+    const shouldShowLeftHandle = leftSidebarVisible && (centerPanelVisible || rightSidebarVisible)
     panels.push(
-      <ResizableHandle 
-        key="handle-left-center" 
-        className={`${!leftSidebarVisible || !centerPanelVisible ? 'hidden' : ''}`}
+      <ResizableHandle
+        key="handle-left-center"
+        className={`${!shouldShowLeftHandle ? 'hidden' : ''}`}
       />
     )
 
     // 中间面板
     panels.push(
-      <ResizablePanel 
+      <ResizablePanel
         key="center"
         ref={centerPanelRef}
         defaultSize={actualLayout[index++]}
@@ -187,21 +193,22 @@ function ResizableWrapper() {
         collapsible={true}
         collapsedSize={0}
       >
-        <EditorWrapper />
+        <EditorLayout />
       </ResizablePanel>
     )
 
     // 中间和右侧之间的分隔条
+    // 只有当中间面板可见时才显示此分隔条
     panels.push(
-      <ResizableHandle 
-        key="handle-center-right" 
+      <ResizableHandle
+        key="handle-center-right"
         className={`${!centerPanelVisible || !rightSidebarVisible ? 'hidden' : ''}`}
       />
     )
 
     // 右侧面板
     panels.push(
-      <ResizablePanel 
+      <ResizablePanel
         key="right"
         ref={rightPanelRef}
         defaultSize={actualLayout[index++]}
@@ -228,6 +235,8 @@ function ResizableWrapper() {
 }
 
 function Page() {
+  const router = useRouter()
+
   useEffect(() => {
     // 保存当前页面路径
     async function saveCurrentPage() {
@@ -236,8 +245,40 @@ function Page() {
       await store.save()
     }
     saveCurrentPage()
-  }, [])
-  
+
+    // 监听托盘事件
+    const window = getCurrentWindow()
+    const unlistenTrayAction = window.listen<string>('tray-action', async (event) => {
+      const action = event.payload
+      switch (action) {
+        case 'screenshot':
+          await invoke('screenshot')
+          emitter.emit('screenshot-shortcut-register', undefined)
+          break
+        case 'text':
+          emitter.emit('text-shortcut-register', undefined)
+          break
+        case 'pin':
+          emitter.emit('window-pin-register', undefined)
+          break
+        case 'link':
+          emitter.emit('link-shortcut-register', undefined)
+          break
+      }
+    })
+
+    // 监听打开设置事件
+    const unlistenOpenSettings = window.listen<void>('open-settings', () => {
+      // 导航到设置页面
+      router.push('/core/setting')
+    })
+
+    return () => {
+      unlistenTrayAction.then(fn => fn())
+      unlistenOpenSettings.then(fn => fn())
+    }
+  }, [router])
+
   return <ResizableWrapper />
 }
 

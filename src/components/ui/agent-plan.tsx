@@ -15,9 +15,12 @@ import {
   Clock,
   XCircle,
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslations } from "next-intl";
+import { DiffViewer } from "@/components/ui/diff-viewer";
 
 // Type definitions from existing codebase
 interface ToolCall {
@@ -48,6 +51,7 @@ interface ReActStep {
     params: Record<string, any>;
   };
   observation?: string;
+  duration?: number;
 }
 
 // Props for the unified AgentPlan component
@@ -67,14 +71,12 @@ interface AgentPlanProps {
   pendingConfirmation?: {
     toolName: string;
     params: Record<string, any>;
+    originalContent?: string;
+    modifiedContent?: string;
+    filePath?: string;
   };
   confirmationHistory?: ConfirmationRecord[];
-  loadedSkills?: Array<{ // 加载的 Skills 信息
-    id: string;
-    name: string;
-    description?: string;
-  }>;
-  selectedSkills?: string[]; // AI 选择的 Skill ID 列表
+  currentStepStartTime?: number; // 当前步骤开始时间戳
 
   // Props for history mode
   historyJson?: string;
@@ -85,6 +87,9 @@ interface AgentPlanProps {
 
   // i18n namespace (optional, defaults to 'record.chat.input.agent')
   i18nNs?: string;
+
+  // Embedded mode: render without outer container (for use in combined panels)
+  embedded?: boolean;
 }
 
 // Internal step representation for unified display
@@ -99,6 +104,7 @@ interface DisplayStep {
   status: "completed" | "in-progress" | "pending" | "need-help" | "failed";
   confirmation?: ConfirmationRecord;
   tools?: string[];
+  duration?: number;  // 耗时（毫秒）
 }
 
 export function AgentPlan({
@@ -113,16 +119,37 @@ export function AgentPlan({
   toolCalls = [],
   pendingConfirmation,
   confirmationHistory = [],
-  loadedSkills = [],
-  selectedSkills,
+  currentStepStartTime,
   historyJson,
   onConfirm,
   onCancel,
   i18nNs = "record.chat.input.agent",
+  embedded = false,
 }: AgentPlanProps) {
   const t = useTranslations(i18nNs);
   const [expandedTasks, setExpandedTasks] = React.useState<string[]>([]);
   const contentRef = React.useRef<HTMLDivElement>(null);
+  const thoughtRefs = React.useRef<Map<string, HTMLParagraphElement>>(new Map());
+  const [currentStepDuration, setCurrentStepDuration] = React.useState<number>(0);
+  const [showDiff, setShowDiff] = React.useState(true);
+  const [autoScrollEnabled, setAutoScrollEnabled] = React.useState(true);
+
+  // 实时更新当前步骤的耗时
+  React.useEffect(() => {
+    if (mode === "live" && isRunning && currentStepStartTime) {
+      // 立即更新一次
+      setCurrentStepDuration(Date.now() - currentStepStartTime);
+
+      // 设置定时器，每 100ms 更新一次
+      const interval = setInterval(() => {
+        setCurrentStepDuration(Date.now() - currentStepStartTime);
+      }, 100);
+
+      return () => clearInterval(interval);
+    } else {
+      setCurrentStepDuration(0);
+    }
+  }, [mode, isRunning, currentStepStartTime]);
 
   // Parse history JSON in history mode
   const parseHistory = (): DisplayStep[] => {
@@ -139,7 +166,28 @@ export function AgentPlan({
           const toolCall = history.toolCalls?.[index];
           let status: DisplayStep["status"] = "completed";
 
-          if (step.observation) {
+          // 优先使用 toolCall 的实际执行状态，而不是通过文本匹配判断
+          if (toolCall?.result?.success !== undefined) {
+            status = toolCall.result.success ? "completed" : "failed";
+          } else if (toolCall?.status) {
+            switch (toolCall.status) {
+              case "success":
+                status = "completed";
+                break;
+              case "error":
+                status = "failed";
+                break;
+              default:
+                // 回退到文本匹配判断
+                if (step.observation) {
+                  status =
+                    step.observation.includes("失败") ||
+                    step.observation.includes("错误")
+                      ? "failed"
+                      : "completed";
+                }
+            }
+          } else if (step.observation) {
             status =
               step.observation.includes("失败") ||
               step.observation.includes("错误")
@@ -156,6 +204,7 @@ export function AgentPlan({
             action: step.action,
             observation: step.observation,
             status,
+            duration: step.duration,
             tools: toolCall ? [toolCall.toolName] : undefined,
           };
         });
@@ -183,11 +232,56 @@ export function AgentPlan({
 
     // 优先使用 completedSteps（包含完整的步骤信息）
     if (completedSteps && completedSteps.length > 0) {
+      // 跟踪已使用的 toolCalls 索引，避免重复匹配
+      const usedToolCallIndices = new Set<number>();
+
       completedSteps.forEach((step, index) => {
         const confirmation = confirmationHistory[index];
         let status: DisplayStep["status"] = "completed";
 
-        if (step.observation) {
+        // 通过工具名称匹配 toolCall（而不是索引匹配）
+        // 因为 completedSteps 和 toolCalls 的数量可能不一致
+        let toolCall: ToolCall | undefined = undefined;
+        if (step.action) {
+          // 从后往前查找，优先使用最新的未使用的 toolCall
+          for (let i = toolCalls.length - 1; i >= 0; i--) {
+            if (!usedToolCallIndices.has(i) && toolCalls[i].toolName === step.action.tool) {
+              toolCall = toolCalls[i];
+              usedToolCallIndices.add(i);
+              break;
+            }
+          }
+        }
+
+        // 优先使用 toolCall 的实际执行状态，而不是通过文本匹配判断
+        if (toolCall) {
+          switch (toolCall.status) {
+            case "success":
+              status = "completed";
+              break;
+            case "error":
+              status = "failed";
+              break;
+            case "running":
+              status = "in-progress";
+              break;
+            case "pending":
+              status = "pending";
+              break;
+            default:
+              // 如果 toolCall.status 无效，回退到文本匹配判断
+              if (step.observation) {
+                status =
+                  step.observation.includes("失败") ||
+                  step.observation.includes("错误")
+                    ? "failed"
+                    : "completed";
+              } else if (!step.action) {
+                status = "pending";
+              }
+          }
+        } else if (step.observation) {
+          // 如果没有对应的 toolCall，回退到文本匹配判断
           status =
             step.observation.includes("失败") ||
             step.observation.includes("错误")
@@ -203,6 +297,7 @@ export function AgentPlan({
           action: step.action,
           observation: step.observation,
           status,
+          duration: step.duration,
           confirmation,
         });
       });
@@ -243,6 +338,7 @@ export function AgentPlan({
         id: "current",
         thought: currentThought || "",
         status,
+        duration: currentStepDuration, // 使用实时计算的耗时
       };
 
       if (currentAction) {
@@ -273,6 +369,7 @@ export function AgentPlan({
         id: "thinking-placeholder",
         thought: "",
         status: "pending",
+        duration: currentStepDuration, // 使用实时计算的耗时
       });
     }
 
@@ -284,20 +381,48 @@ export function AgentPlan({
 
   // Auto-scroll to bottom when content changes in live mode
   React.useEffect(() => {
-    if (mode === "live" && (currentThought || currentObservation) && contentRef.current) {
+    if (mode === "live" && (currentThought || currentObservation) && contentRef.current && autoScrollEnabled) {
       contentRef.current.scrollTop = contentRef.current.scrollHeight;
     }
-  }, [currentThought, currentObservation, mode]);
+  }, [currentThought, currentObservation, currentStepDuration, mode, autoScrollEnabled]);
 
-  // Auto-expand current step in live mode
+  // Handle scroll to detect if user manually scrolled up
+  const handleScroll = React.useCallback(() => {
+    if (!contentRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = contentRef.current;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+    setAutoScrollEnabled(isAtBottom);
+  }, []);
+
+  // Auto-scroll thought paragraph to bottom when content updates
   React.useEffect(() => {
-    if (mode === "live" && displaySteps.length > 0) {
-      const currentStepId = displaySteps[displaySteps.length - 1]?.id;
-      if (currentStepId && !expandedTasks.includes(currentStepId)) {
-        setExpandedTasks((prev) => [...prev, currentStepId]);
+    if (mode === "live" && currentThought) {
+      const currentStepEl = thoughtRefs.current.get("current");
+      if (currentStepEl && autoScrollEnabled) {
+        currentStepEl.scrollTop = currentStepEl.scrollHeight;
       }
     }
-  }, [displaySteps.length, mode]);
+  }, [currentThought, mode, autoScrollEnabled]);
+
+  // Auto-expand current step in live mode - keep current step always expanded while running
+  React.useEffect(() => {
+    if (mode === "live" && displaySteps.length > 0 && isRunning) {
+      const currentStepId = displaySteps[displaySteps.length - 1]?.id;
+      if (currentStepId && !expandedTasks.includes(currentStepId)) {
+        setExpandedTasks((prev) => {
+          const newState = [...prev, currentStepId];
+          // 自动展开后滚动到该步骤
+          setTimeout(() => {
+            const el = document.getElementById(`step-${currentStepId}`);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            }
+          }, 50);
+          return newState;
+        });
+      }
+    }
+  }, [displaySteps.length, currentThought, currentObservation, isRunning, mode]);
 
   // Don't render if no content in history mode
   if (mode === "history" && displaySteps.length === 0) {
@@ -311,11 +436,29 @@ export function AgentPlan({
 
   // Toggle step expansion
   const toggleStepExpansion = (stepId: string) => {
-    setExpandedTasks((prev) =>
-      prev.includes(stepId)
+    // In live mode, prevent collapsing the current (in-progress) step
+    if (mode === "live" && isRunning) {
+      const currentStepId = displaySteps[displaySteps.length - 1]?.id;
+      if (stepId === currentStepId) {
+        // Don't allow collapsing the current step - keep it expanded
+        return;
+      }
+    }
+    setExpandedTasks((prev) => {
+      const isExpanding = !prev.includes(stepId);
+      if (isExpanding) {
+        // 展开时滚动到该步骤
+        setTimeout(() => {
+          const el = document.getElementById(`step-${stepId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+          }
+        }, 50);
+      }
+      return prev.includes(stepId)
         ? prev.filter((id) => id !== stepId)
-        : [...prev, stepId]
-    );
+        : [...prev, stepId];
+    });
   };
 
   // Handle confirmation
@@ -366,37 +509,48 @@ export function AgentPlan({
     const extractFromContent = (content: string): string => {
       if (!content || !content.trim()) return '';
 
-      const lines = content.split("\n").map(l => l.trim()).filter(l => l);
+      // 预处理：移除首尾的代码块标记 ``` 及其周围的空白行
+      let processedContent = content.trim();
+
+      // 移除所有 ``` 标记及其所在行
+      const lines = processedContent.split('\n');
+      const filteredLines = lines.filter(line => {
+        const trimmed = line.trim();
+        // 跳过 ``` 行（不管是否有语言标识符）
+        if (trimmed === '```' || trimmed.startsWith('```')) {
+          return false;
+        }
+        return true;
+      });
+      processedContent = filteredLines.join('\n').trim();
+
+      // 按行分割并过滤空行
+      const contentLines = processedContent.split("\n").map(l => l.trim()).filter(l => l);
 
       // 尝试从第一行获取
-      for (let i = 0; i < Math.min(lines.length, 5); i++) {
-        const line = lines[i];
-        const cleaned = cleanMarkdown(line);
+      for (let i = 0; i < Math.min(contentLines.length, 5); i++) {
+        const line = contentLines[i];
 
-        // 跳过纯代码块标记行（只有 ``` 的情况）
-        if (cleaned === '' || cleaned === '```') {
-          continue;
-        }
+        if (!line) continue;
 
-        // 如果是代码块开始，尝试获取下一行作为标题
-        if (line === '```' || line.startsWith('```')) {
-          if (i + 1 < lines.length) {
-            const nextLine = cleanMarkdown(lines[i + 1]);
-            if (nextLine && nextLine !== '```') {
-              return nextLine.length > 50 ? nextLine.substring(0, 50) + "..." : nextLine;
-            }
+        // 如果是标题（## 开头），保留标题格式，移除 # 标记
+        const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
+        if (headerMatch) {
+          const titleText = headerMatch[2].trim();
+          if (titleText) {
+            return titleText.length > 50 ? titleText.substring(0, 50) + "..." : titleText;
           }
-          continue;
         }
 
-        // 如果有有效内容，返回
+        const cleaned = cleanMarkdown(line);
         if (cleaned.length > 0) {
           return cleaned.length > 50 ? cleaned.substring(0, 50) + "..." : cleaned;
         }
       }
 
-      // 如果都没找到，返回第一行（即使是空的）
-      return lines[0] || '';
+      // 如果都没找到，返回第一行有效内容
+      const firstValidLine = contentLines.find(l => l && l.length > 0);
+      return firstValidLine || '';
     };
 
     // Use observation first - this contains the actual result of tool execution
@@ -441,271 +595,303 @@ export function AgentPlan({
     }
   };
 
-  // Show loading state in live mode
-  if (mode === "live" && isRunning && displaySteps.length === 0) {
-    // 获取选择的 Skills 详情
-    const selectedSkillsDetails = selectedSkills
-      ? loadedSkills?.filter(s => selectedSkills.includes(s.id)) || []
-      : []
+  // 格式化耗时显示
+  const formatDuration = (duration?: number): string => {
+    if (duration === undefined || duration === null) return "";
+    if (duration < 1000) return `${duration}ms`;
+    if (duration < 60000) return `${(duration / 1000).toFixed(1)}s`;
+    const minutes = Math.floor(duration / 60000);
+    const seconds = ((duration % 60000) / 1000).toFixed(0);
+    return `${minutes}m ${seconds}s`;
+  };
 
-    return (
-      <div className="w-full">
-        <div className="bg-card border-border rounded-lg border shadow overflow-hidden">
-          {/* Skills 横幅 - 显示选择的 Skills */}
-          {selectedSkillsDetails && selectedSkillsDetails.length > 0 ? (
-            <div className="border-b border-border/50 bg-muted/30 px-4 py-2">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium">已选择 {selectedSkillsDetails.length} 个 Skills:</span>
-                <div className="flex flex-wrap gap-1">
-                  {selectedSkillsDetails.map((skill) => (
-                    <span
-                      key={skill.id}
-                      className="bg-green-500/20 text-green-600 dark:text-green-400 rounded px-1.5 py-0.5 text-[10px] font-medium"
-                      title={skill.description}
-                    >
-                      {skill.name}
+  // 渲染步骤列表内容（用于 embedded 和非 embedded 模式）
+  const renderSteps = () => (
+    <>
+      {displaySteps.map((step, index) => {
+        const isLastStep = index === displaySteps.length - 1;
+        // In live mode, current (last) step is always expanded
+        const isExpanded = mode === "live" && isRunning && isLastStep
+          ? true
+          : expandedTasks.includes(step.id);
+        const isCompleted = step.status === "completed";
+        const isCurrentStep = mode === "live" && isRunning && isLastStep;
+        const canToggle = !isCurrentStep; // Current step cannot be toggled in live mode
+
+        return (
+          <li
+            key={step.id}
+            id={`step-${step.id}`}
+            className={`${index !== 0 ? "mt-1 pt-2" : ""}`}
+          >
+            {/* Step row */}
+            <div className="group flex items-center gap-2 py-1">
+              <div
+                className={`shrink-0 ${canToggle ? "cursor-pointer" : ""}`}
+                onClick={() => canToggle && toggleStepExpansion(step.id)}
+              >
+                <div className={canToggle ? "cursor-pointer" : ""}>
+                  {getStatusIcon(step.status)}
+                </div>
+              </div>
+
+              <div
+                className={`flex min-w-0 grow ${canToggle ? "cursor-pointer" : ""} items-center justify-between`}
+                onClick={() => canToggle && toggleStepExpansion(step.id)}
+              >
+                <div className="flex-1 truncate">
+                  <span
+                    className={`${
+                      isCompleted ? "text-muted-foreground" : ""
+                    }`}
+                  >
+                    {extractTitle(step)}
+                  </span>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-2">
+                  {/* 耗时显示 */}
+                  {step.duration !== undefined && (
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {formatDuration(step.duration)}
                     </span>
-                  ))}
+                  )}
+                  {canToggle && (
+                    <ChevronRight
+                      className={`size-4 text-muted-foreground shrink-0 transition-transform ${
+                        isExpanded ? "rotate-90" : ""
+                      }`}
+                    />
+                  )}
                 </div>
               </div>
             </div>
-          ) : loadedSkills && loadedSkills.length > 0 && !selectedSkills ? (
-            // 还没有选择 Skills 时，只显示数量
-            <div className="border-b border-border/50 bg-muted/30 px-4 py-2">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium">已加载 {loadedSkills.length} 个 Skills...</span>
+
+            {/* Expanded details */}
+            {isExpanded && (
+              <div className="border-muted mt-1 mr-2 mb-1.5 ml-6 space-y-2">
+                {/* Thought */}
+                {step.thought && (
+                  <div className="text-muted-foreground border-foreground/20 border-l border-dashed pl-3 text-xs">
+                    <div className="flex items-center gap-2 py-1">
+                      <Brain className="size-3.5 text-blue-500 shrink-0" />
+                      <span className="font-medium text-xs">
+                        {t("thought")}
+                      </span>
+                    </div>
+                    <p
+                      ref={(el) => {
+                        if (step.id) {
+                          if (el) thoughtRefs.current.set(step.id, el);
+                          else thoughtRefs.current.delete(step.id);
+                        }
+                      }}
+                      className="whitespace-pre-wrap max-h-40 overflow-y-auto wrap-break-word py-1"
+                    >
+                      {step.thought}
+                    </p>
+                  </div>
+                )}
+
+                {/* Action */}
+                {step.action && (
+                  <div className="text-muted-foreground border-foreground/20 border-l border-dashed pl-3 text-xs">
+                    <div className="flex items-center gap-2 py-1">
+                      <Zap className="size-3.5 text-yellow-500 shrink-0" />
+                      <span className="font-medium text-xs">
+                        {t("action")}
+                      </span>
+                    </div>
+                    <div className="text-xs font-mono truncate" title={JSON.stringify(step.action.params)}>
+                      {step.action.tool}
+                      {Object.keys(step.action.params).length > 0 ? '(...)' : '()'}
+                    </div>
+                  </div>
+                )}
+
+                {/* Observation */}
+                {step.observation && (
+                  <div className="text-muted-foreground border-foreground/20 border-l border-dashed pl-3 text-xs">
+                    <div className="flex items-center gap-2 py-1">
+                      <Eye className="size-3.5 text-green-500 shrink-0" />
+                      <span className="font-medium text-xs">
+                        {t("observation")}
+                      </span>
+                    </div>
+                    <p className="whitespace-pre-wrap wrap-break-word py-1">
+                      {step.observation}
+                    </p>
+                  </div>
+                )}
+
+                {/* Confirmation record */}
+                {step.confirmation && (
+                  <div className="flex items-center gap-2 py-1.5 px-3 border-t">
+                    {step.confirmation.status === "confirmed" ? (
+                      <CheckCircle className="size-4 text-green-500 shrink-0" />
+                    ) : (
+                      <XCircle className="size-4 text-red-500 shrink-0" />
+                    )}
+                    <code className="text-sm text-muted-foreground flex-1 wrap-break-word font-mono">
+                      {step.confirmation.toolName}
+                    </code>
+                  </div>
+                )}
+
+              </div>
+            )}
+          </li>
+        );
+      })}
+
+      {/* Current step confirmation (live mode only) */}
+      {mode === "live" && pendingConfirmation && (
+        <li className="mt-1 pt-2">
+          <div className="rounded-md border border-border/50 bg-muted/30 overflow-hidden">
+            {/* Confirmation header */}
+            <div className="flex items-center justify-between px-3 py-1.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <Clock className="size-4.5 text-orange-500 shrink-0 animate-pulse" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <code className="text-sm text-foreground font-mono truncate">
+                      {pendingConfirmation.toolName}
+                    </code>
+                    {pendingConfirmation.filePath && (
+                      <span className="text-xs text-muted-foreground truncate">
+                        {pendingConfirmation.filePath}
+                      </span>
+                    )}
+                  </div>
+                  {/* 显示操作参数 */}
+                  {pendingConfirmation.toolName === 'modify_current_note' && (() => {
+                    const params = pendingConfirmation.params
+                    let operationDesc = ''
+                    if (params.lineEdits) {
+                      const count = Array.isArray(params.lineEdits) ? params.lineEdits.length : 1
+                      operationDesc = `修改 ${count} 处行 (lineEdits)`
+                    } else if (params.searchReplace) {
+                      operationDesc = `搜索替换 "${params.searchReplace.searchPattern}"`
+                    } else if (params.insertLines) {
+                      operationDesc = `在第 ${params.insertLines.afterLine} 行后插入`
+                    } else if (params.deleteLines) {
+                      operationDesc = `删除第 ${params.deleteLines.startLine}-${params.deleteLines.endLine} 行`
+                    } else if (params.content) {
+                      operationDesc = '完整替换内容'
+                    }
+                    return operationDesc ? (
+                      <div className="text-xs text-muted-foreground mt-1 truncate" title={operationDesc}>
+                        {operationDesc}
+                      </div>
+                    ) : null
+                  })()}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {/* Show diff button */}
+                {pendingConfirmation.originalContent && pendingConfirmation.modifiedContent && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => setShowDiff(!showDiff)}
+                  >
+                    {showDiff ? (
+                      <ChevronUp className="size-4" />
+                    ) : (
+                      <ChevronDown className="size-4" />
+                    )}
+                    <span className="ml-1">Diff</span>
+                  </Button>
+                )}
               </div>
             </div>
-          ) : null}
-          <div className="p-4">
-            <div className="flex flex-col items-center justify-center py-8 space-y-4">
-              {/* 旋转的 loading 图标 */}
-              <div className="relative">
-                <div className="absolute inset-0 rounded-full border-2 border-border/30" />
-                <Loader2 className="size-8 animate-spin text-blue-500" />
-              </div>
 
-              {/* 状态文字 */}
-              <div className="text-center space-y-1">
-                <p className="text-sm font-medium text-foreground">
-                  {isThinking ? t("thinking") : t("running")}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {t("analyzingRequest")}
-                </p>
+            {/* Diff view */}
+            {showDiff && pendingConfirmation.originalContent && pendingConfirmation.modifiedContent && (
+              <div className="border-t border-border/50">
+                <DiffViewer
+                  original={pendingConfirmation.originalContent}
+                  modified={pendingConfirmation.modifiedContent}
+                  mode="lines"
+                  showLineNumbers={true}
+                  maxHeight={200}
+                  className="border-0 rounded-none"
+                />
               </div>
+            )}
 
-              {/* 脉冲动画点 */}
-              <div className="flex items-center gap-1.5">
-                <div className="size-2 rounded-full bg-blue-500/60 animate-pulse [animation-delay:0ms]" />
-                <div className="size-2 rounded-full bg-blue-500/60 animate-pulse [animation-delay:150ms]" />
-                <div className="size-2 rounded-full bg-blue-500/60 animate-pulse [animation-delay:300ms]" />
-              </div>
+            {/* Confirmation buttons */}
+            <div className="flex items-center justify-end gap-1 px-3 py-1.5 border-t border-border/50">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 w-6 p-0"
+                onClick={handleCancel}
+              >
+                <XCircle className="size-4 text-red-500" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 w-6 p-0"
+                onClick={handleConfirm}
+              >
+                <CheckCircle className="size-4 text-green-500" />
+              </Button>
             </div>
+          </div>
+        </li>
+      )}
+    </>
+  );
+
+  // Show loading state in live mode
+  if (mode === "live" && isRunning && displaySteps.length === 0) {
+    return (
+      <div className="w-full mb-4">
+        {/* Loading 状态 */}
+        <div className="flex flex-col items-center justify-center py-8 space-y-4">
+          {/* 旋转的 loading 图标 */}
+          <div className="relative">
+            <div className="absolute inset-0 rounded-full border-2 border-border/30" />
+            <Loader2 className="size-8 animate-spin text-blue-500" />
+          </div>
+
+          {/* 状态文字 */}
+          <div className="text-center space-y-1">
+            <p className="text-sm font-medium text-foreground">
+              {isThinking ? t("thinking") : t("running")}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t("analyzingRequest")}
+            </p>
+          </div>
+
+          {/* 脉冲动画点 */}
+          <div className="flex items-center gap-1.5">
+            <div className="size-2 rounded-full bg-blue-500/60 animate-pulse [animation-delay:0ms]" />
+            <div className="size-2 rounded-full bg-blue-500/60 animate-pulse [animation-delay:150ms]" />
+            <div className="size-2 rounded-full bg-blue-500/60 animate-pulse [animation-delay:300ms]" />
           </div>
         </div>
       </div>
     );
   }
 
+  // Embedded 模式：只返回 <li> 元素
+  if (embedded) {
+    return <>{renderSteps()}</>
+  }
+
+  // 标准模式：返回完整的容器
   return (
-    <div className="bg-background text-foreground h-full overflow-auto mb-2">
-      <div className="bg-card border-border rounded-lg border overflow-hidden">
-        {/* Skills 横幅（仅在 live 模式且有 Skills 时显示） */}
-        {mode === "live" && (
-          <>
-            {selectedSkills && selectedSkills.length > 0 ? (
-              // 显示选择的 Skills（绿色）
-              <div className="border-b border-border/50 bg-muted/30 px-4 py-2">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="font-medium">已选择 {selectedSkills.length} 个 Skills:</span>
-                  <div className="flex flex-wrap gap-1">
-                    {(loadedSkills?.filter(s => selectedSkills.includes(s.id)) || []).map((skill) => (
-                      <span
-                        key={skill.id}
-                        className="bg-green-500/20 text-green-600 dark:text-green-400 rounded px-1.5 py-0.5 text-[10px] font-medium"
-                        title={skill.description}
-                      >
-                        {skill.name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : loadedSkills && loadedSkills.length > 0 ? (
-              // 还没有选择 Skills 时，只显示数量
-              <div className="border-b border-border/50 bg-muted/30 px-4 py-2">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="font-medium">已加载 {loadedSkills.length} 个 Skills...</span>
-                </div>
-              </div>
-            ) : null}
-          </>
-        )}
-        <div className="p-2 overflow-hidden" ref={contentRef}>
-          <ul className="space-y-1">
-            {displaySteps.map((step, index) => {
-              const isExpanded = expandedTasks.includes(step.id);
-              const isCompleted = step.status === "completed";
-
-              return (
-                <li
-                  key={step.id}
-                  className={`${index !== 0 ? "mt-1 pt-2" : ""}`}
-                >
-                  {/* Step row */}
-                  <div className="group flex items-center px-3 py-1.5 rounded-md hover:bg-muted/50">
-                    <div
-                      className="mr-2 flex-shrink-0 cursor-pointer"
-                      onClick={() => toggleStepExpansion(step.id)}
-                    >
-                      <div className="cursor-pointer">
-                        {getStatusIcon(step.status)}
-                      </div>
-                    </div>
-
-                    <div
-                      className="flex min-w-0 flex-grow cursor-pointer items-center justify-between"
-                      onClick={() => toggleStepExpansion(step.id)}
-                    >
-                      <div className="mr-2 flex-1 truncate">
-                        <span
-                          className={`${
-                            isCompleted ? "text-muted-foreground" : ""
-                          }`}
-                        >
-                          {extractTitle(step)}
-                        </span>
-                      </div>
-
-                      <div className="flex flex-shrink-0 items-center">
-                        <ChevronRight
-                          className={`size-4 text-muted-foreground flex-shrink-0 transition-transform ${
-                            isExpanded ? "rotate-90" : ""
-                          }`}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Expanded details */}
-                  {isExpanded && (
-                    <div className="border-muted mt-1 mr-2 mb-1.5 ml-6 space-y-2">
-                      {/* Thought */}
-                      {step.thought && (
-                        <div className="text-muted-foreground border-foreground/20 border-l border-dashed pl-3 text-xs">
-                          <div className="flex items-center gap-2 py-1">
-                            <Brain className="size-3.5 text-blue-500 flex-shrink-0" />
-                            <span className="font-medium text-xs">
-                              {t("thought")}
-                            </span>
-                          </div>
-                          <p className="whitespace-pre-wrap break-words py-1">
-                            {step.thought}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Action */}
-                      {step.action && (
-                        <div className="text-muted-foreground border-foreground/20 border-l border-dashed pl-3 text-xs">
-                          <div className="flex items-center gap-2 py-1">
-                            <Zap className="size-3.5 text-yellow-500 flex-shrink-0" />
-                            <span className="font-medium text-xs">
-                              {t("action")}
-                            </span>
-                          </div>
-                          <div className="text-xs font-mono truncate" title={JSON.stringify(step.action.params)}>
-                            {step.action.tool}
-                            {Object.keys(step.action.params).length > 0 ? '(...)' : '()'}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Observation */}
-                      {step.observation && (
-                        <div className="text-muted-foreground border-foreground/20 border-l border-dashed pl-3 text-xs">
-                          <div className="flex items-center gap-2 py-1">
-                            <Eye className="size-3.5 text-green-500 flex-shrink-0" />
-                            <span className="font-medium text-xs">
-                              {t("observation")}
-                            </span>
-                          </div>
-                          <p className="whitespace-pre-wrap break-words py-1">
-                            {step.observation}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Confirmation record */}
-                      {step.confirmation && (
-                        <div className="flex items-center gap-2 py-1.5 px-3 border-t">
-                          {step.confirmation.status === "confirmed" ? (
-                            <CheckCircle className="size-4 text-green-500 flex-shrink-0" />
-                          ) : (
-                            <XCircle className="size-4 text-red-500 flex-shrink-0" />
-                          )}
-                          <code className="text-sm text-muted-foreground flex-1 break-words font-mono">
-                            {step.confirmation.toolName}
-                          </code>
-                        </div>
-                      )}
-
-                      {/* Tools */}
-                      {step.tools && step.tools.length > 0 && (
-                        <div className="mt-0.5 mb-1 flex flex-wrap items-center gap-1.5 pl-3">
-                          <span className="text-muted-foreground font-medium text-xs">
-                            Tools:
-                          </span>
-                          <div className="flex flex-wrap gap-1">
-                            {step.tools.map((tool, idx) => (
-                              <span
-                                key={idx}
-                                className="bg-secondary/40 text-secondary-foreground rounded px-1.5 py-0.5 text-[10px] font-medium shadow-sm"
-                              >
-                                {tool}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-
-            {/* Current step confirmation (live mode only) */}
-            {mode === "live" && pendingConfirmation && (
-              <li className="mt-1 pt-2">
-                <div className="group flex items-center px-3 py-1.5 rounded-md border border-border/50 bg-muted/30">
-                  <Clock className="mr-2 size-4.5 text-orange-500 flex-shrink-0 animate-pulse" />
-                  <code className="text-sm text-muted-foreground flex-1 truncate min-w-0 font-mono">
-                    {pendingConfirmation.toolName}
-                  </code>
-                  <div className="flex gap-1 flex-shrink-0">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 w-6 p-0"
-                      onClick={handleCancel}
-                    >
-                      <XCircle className="size-4 text-red-500" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 w-6 p-0"
-                      onClick={handleConfirm}
-                    >
-                      <CheckCircle className="size-4 text-green-500" />
-                    </Button>
-                  </div>
-                </div>
-              </li>
-            )}
-          </ul>
-        </div>
+    <div className="w-full mb-4">
+      {/* 步骤列表 */}
+      <div className="overflow-hidden" ref={contentRef} onScroll={handleScroll}>
+        <ul className="space-y-1">
+          {renderSteps()}
+        </ul>
       </div>
     </div>
   );

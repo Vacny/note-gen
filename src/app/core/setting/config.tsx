@@ -6,7 +6,6 @@ import {
   UserRoundCog,
   Drama,
   FolderOpen,
-  Package,
   Database,
   DatabaseBackup,
   ImageUp,
@@ -17,6 +16,9 @@ import {
   Settings,
   Puzzle,
   Sparkles,
+  MessageSquare,
+  PenTool,
+  Brain,
 } from "lucide-react"
 
 const baseConfig = [
@@ -27,6 +29,18 @@ const baseConfig = [
   {
     icon: <Settings className="size-4 md:size-6" />,
     anchor: 'general',
+  },
+  {
+    icon: <MessageSquare className="size-4 md:size-6" />,
+    anchor: 'chat',
+  },
+  {
+    icon: <FileCog className="size-4 md:size-6" />,
+    anchor: 'editor',
+  },
+  {
+    icon: <PenTool className="size-4 md:size-6" />,
+    anchor: 'record',
   },
   '-',
   {
@@ -47,10 +61,6 @@ const baseConfig = [
     anchor: 'ai',
   },
   {
-    icon: <Package className="size-4 md:size-6" />,
-    anchor: 'defaultModel',
-  },
-  {
     icon: <Book className="size-4 md:size-6" />,
     anchor: 'rag',
   },
@@ -67,6 +77,10 @@ const baseConfig = [
     anchor: 'prompt',
   },
   {
+    icon: <Brain className="size-4 md:size-6" />,
+    anchor: 'memories',
+  },
+  {
     icon: <LayoutTemplate className="size-4 md:size-6" />,
     anchor: 'template',
   },
@@ -74,10 +88,6 @@ const baseConfig = [
   {
     icon: <FolderOpen className="size-4 md:size-6" />,
     anchor: 'file',
-  },
-  {
-    icon: <FileCog className="size-4 md:size-6" />,
-    anchor: 'editor',
   },
   {
     icon: <KeyboardIcon className="size-4 md:size-6" />,

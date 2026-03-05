@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/drawer"
 import { useTranslations } from "next-intl"
 import { useState } from "react"
-import { FileSelector } from "@/app/core/record/chat/file-selector"
+import { FileSelector } from "@/app/core/main/chat/file-selector"
 import { MarkdownFile } from "@/lib/files"
 import useSettingStore from "@/stores/setting"
 import useChatStore from "@/stores/chat"

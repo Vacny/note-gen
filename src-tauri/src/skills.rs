@@ -1,7 +1,7 @@
-use std::process::Command;
 use std::path::Path;
 use std::fs;
 use tauri::{command, AppHandle, Manager};
+use zip::ZipArchive;
 
 #[command]
 pub async fn import_skill_zip(app_handle: AppHandle, zip_path: String) -> Result<String, String> {
@@ -26,18 +26,32 @@ pub async fn import_skill_zip(app_handle: AppHandle, zip_path: String) -> Result
     fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
-    // 解压到临时目录
-    let output = Command::new("unzip")
-        .arg("-o")  // 覆盖已存在的文件
-        .arg("-q")  // 静默模式
-        .arg(&zip_path)  // zip文件路径
-        .current_dir(&temp_dir)  // 设置工作目录为临时目录
-        .output()
-        .map_err(|e| format!("Failed to execute unzip command: {}", e))?;
+    // 使用 zip crate 解压到临时目录
+    let file = fs::File::open(&zip_path)
+        .map_err(|e| format!("Failed to open zip file: {}", e))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|e| format!("Failed to read zip archive: {}", e))?;
 
-    let stderr_msg = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success() {
-        return Err(format!("Unzip command failed: {}", stderr_msg));
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| format!("Failed to read zip entry: {}", e))?;
+        let outpath = temp_dir.join(file.mangled_name());
+
+        if file.name().ends_with('/') {
+            fs::create_dir_all(&outpath)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        } else {
+            if let Some(p) = outpath.parent() {
+                if !p.exists() {
+                    fs::create_dir_all(p)
+                        .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+                }
+            }
+            let mut outfile = fs::File::create(&outpath)
+                .map_err(|e| format!("Failed to create file: {}", e))?;
+            std::io::copy(&mut file, &mut outfile)
+                .map_err(|e| format!("Failed to extract file: {}", e))?;
+        }
     }
 
     // 查找解压后的目录

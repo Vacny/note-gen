@@ -17,12 +17,13 @@ import useSettingStore from '@/stores/setting'
 import useArticleStore from '@/stores/article'
 import useUpdateStore from '@/stores/update'
 import React from 'react'
-import { ControlText } from '@/app/core/record/mark/control-text'
-import { ControlRecording } from '@/app/core/record/mark/control-recording'
-import { ControlScan } from '@/app/core/record/mark/control-scan'
-import { ControlImage } from '@/app/core/record/mark/control-image'
-import { ControlLink } from '@/app/core/record/mark/control-link'
-import { ControlFile } from '@/app/core/record/mark/control-file'
+import { ControlText } from '@/app/core/main/mark/control-text'
+import { ControlRecording } from '@/app/core/main/mark/control-recording'
+import { ControlScan } from '@/app/core/main/mark/control-scan'
+import { ControlImage } from '@/app/core/main/mark/control-image'
+import { ControlLink } from '@/app/core/main/mark/control-link'
+import { ControlFile } from '@/app/core/main/mark/control-file'
+import { ControlTodo } from '@/app/core/main/mark/control-todo'
 import {
   DndContext,
   closestCenter,
@@ -214,6 +215,8 @@ export function TitleBar({ onSearchClick }: TitleBarProps) {
                             return <ControlLink />
                           case 'file':
                             return <ControlFile />
+                          case 'todo':
+                            return <ControlTodo />
                           default:
                             return null
                         }

@@ -193,70 +193,62 @@ const useMarkStore = create<MarkState>((set, get) => ({
     const filename = 'marks.json'
     const marks = await getAllMarks()
     const store = await Store.load('store.json');
-    const jsonToBase64 = (data: Mark[]) => {
-      return Buffer.from(JSON.stringify(data, null, 2)).toString('base64');
-    }
     const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github';
     let result = false
     let files: any;
     let res;
+    const fullPath = `${path}/${filename}`;
     switch (primaryBackupMethod) {
       case 'github':
         const githubRepoName = await getSyncRepoName('github')
-        files = await githubGetFiles({ path: `${path}/${filename}`, repo: githubRepoName })
+        files = await githubGetFiles({ path: fullPath, repo: githubRepoName })
         res = await uploadGithubFile({
-          ext: 'json',
-        file: jsonToBase64(marks),
-        repo: githubRepoName,
-        path,
-        filename,
-        sha: files?.sha,
-      })
-      break;
-    case 'gitee':
-      const giteeRepoName = await getSyncRepoName('gitee')
-      files = await giteeGetFiles({ path: `${path}/${filename}`, repo: giteeRepoName })
-      res = await uploadGiteeFile({
-        ext: 'json',
-        file: jsonToBase64(marks),
-        repo: giteeRepoName,
-        path,
-        filename,
-        sha: files?.sha,
-      })
-      if (res) {
-        result = true
-      }
-      break;
-    case 'gitlab':
-      const gitlabRepoName = await getSyncRepoName('gitlab')
-      files = await gitlabGetFiles({ path, repo: gitlabRepoName })
-      const markFile = Array.isArray(files)
-        ? files.find(file => file.name === filename)
-        : (files?.name === filename ? files : undefined)
-      res = await uploadGitlabFile({
-        ext: 'json',
-        file: jsonToBase64(marks),
-        repo: gitlabRepoName,
-        path,
-        filename,
-        sha: markFile?.sha || '',
-      })
-      break;
-    case 'gitea':
-      const giteaRepoName = await getSyncRepoName('gitea')
-      files = await giteaGetFiles({ path, repo: giteaRepoName })
-      const giteaMarkFile = Array.isArray(files)
-        ? files.find(file => file.name === filename)
-        : (files?.name === filename ? files : undefined)
-      res = await uploadGiteaFile({
-        ext: 'json',
-        file: jsonToBase64(marks),
-        repo: giteaRepoName,
-        path,
-        filename,
-        sha: giteaMarkFile?.sha || '',
-      })
+          file: JSON.stringify(marks),
+          repo: githubRepoName,
+          path: fullPath,
+          sha: files?.sha,
+        })
+        break;
+      case 'gitee':
+        const giteeRepoName = await getSyncRepoName('gitee')
+        files = await giteeGetFiles({ path: fullPath, repo: giteeRepoName })
+        res = await uploadGiteeFile({
+          file: JSON.stringify(marks),
+          repo: giteeRepoName,
+          path: fullPath,
+          sha: files?.sha,
+        })
+        if (res) {
+          result = true
+        }
+        break;
+      case 'gitlab':
+        const gitlabRepoName = await getSyncRepoName('gitlab')
+        files = await gitlabGetFiles({ path, repo: gitlabRepoName })
+        const markFile = Array.isArray(files)
+          ? files.find(file => file.name === filename)
+          : (files?.name === filename ? files : undefined)
+        res = await uploadGitlabFile({
+          file: JSON.stringify(marks),
+          repo: gitlabRepoName,
+          path,
+          filename,
+          sha: markFile?.sha || '',
+        })
+        break;
+      case 'gitea':
+        const giteaRepoName = await getSyncRepoName('gitea')
+        files = await giteaGetFiles({ path, repo: giteaRepoName })
+        const giteaMarkFile = Array.isArray(files)
+          ? files.find(file => file.name === filename)
+          : (files?.name === filename ? files : undefined)
+        res = await uploadGiteaFile({
+          file: JSON.stringify(marks),
+          repo: giteaRepoName,
+          path,
+          filename,
+          sha: giteaMarkFile?.sha || '',
+        })
       break;
     }
     if (res) {

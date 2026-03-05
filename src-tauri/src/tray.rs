@@ -1,123 +1,67 @@
 use tauri::{
-    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Manager, menu::{Menu, MenuItem}, AppHandle,
+    image::Image,
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+    AppHandle, Manager, Runtime,
 };
-use std::sync::Mutex;
+use tauri::Emitter;
 
-static mut TRAY_ENABLED: bool = true;
+pub const ID_SHOW_MAIN: &str = "show-main";
+pub const ID_SETTINGS: &str = "settings";
+pub const ID_QUIT: &str = "quit";
 
-#[derive(Debug, Clone)]
-pub struct TraySettings {
-    pub enabled: bool,
-}
+pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::tray::TrayIcon<R>> {
+    let show_main = MenuItem::with_id(app, ID_SHOW_MAIN, "显示主窗口", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, ID_SETTINGS, "设置", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, ID_QUIT, "退出应用", true, None::<&str>)?;
 
-impl Default for TraySettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-        }
-    }
-}
+    let menu = Menu::with_items(app, &[&show_main, &settings, &quit])?;
 
-pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let settings = TraySettings::default();
-    
-    // 创建托盘菜单
-    let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+    let icon = Image::from_bytes(include_bytes!("../icons/icon.png"))?;
 
-    let _tray = TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+    let tray = TrayIconBuilder::new()
+        .icon(icon)
         .menu(&menu)
-        .on_menu_event(handle_tray_menu_event)
-        .on_tray_icon_event(handle_tray_icon_event)
+        .tooltip("NoteGen")
+        .on_menu_event(move |app, event| {
+            handle_menu_event(app, event.id.0.as_str());
+        })
+        .on_tray_icon_event(move |tray, event| {
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                ..
+            } = event
+            {
+                let app_handle = tray.app_handle();
+                if let Some(webview) = app_handle.get_webview_window("main") {
+                    let _ = webview.show();
+                    let _ = webview.set_focus();
+                }
+            }
+        })
         .build(app)?;
 
-    // 存储托盘设置到应用状态
-    app.manage(Mutex::new(settings));
-
-    Ok(())
+    Ok(tray)
 }
 
-pub fn update_tray_setting(app: &AppHandle, enabled: bool) {
-    unsafe {
-        TRAY_ENABLED = enabled;
-    }
-    
-    if let Some(settings) = app.try_state::<Mutex<TraySettings>>() {
-        if let Ok(mut settings) = settings.lock() {
-            settings.enabled = enabled;
+fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
+    match id {
+        ID_SHOW_MAIN => {
+            if let Some(webview) = app.get_webview_window("main") {
+                let _ = webview.show();
+                let _ = webview.set_focus();
+            }
         }
-    }
-}
-
-#[tauri::command]
-pub fn update_tray_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
-    update_tray_setting(&app, enabled);
-    Ok(())
-}
-
-fn handle_tray_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
-    match event.id.as_ref() {
-        "show" => {
-            show_main_window(app);
+        ID_SETTINGS => {
+            if let Some(webview) = app.get_webview_window("main") {
+                let _ = webview.show();
+                let _ = webview.set_focus();
+                let _ = webview.emit("open-settings", "");
+            }
         }
-        "quit" => {
+        ID_QUIT => {
             app.exit(0);
         }
         _ => {}
-    }
-}
-
-fn handle_tray_icon_event(tray: &tauri::tray::TrayIcon, event: TrayIconEvent) {
-    unsafe {
-        if !TRAY_ENABLED {
-            return;
-        }
-    }
-    
-    match event {
-        TrayIconEvent::Click {
-            button: MouseButton::Left,
-            ..
-        } => {
-            // 默认的切换窗口行为
-            toggle_main_window(tray);
-        }
-        _ => {}
-    }
-}
-
-fn toggle_main_window(tray: &tauri::tray::TrayIcon) {
-    if let Some(window) = tray.app_handle().get_webview_window("main") {
-        let is_visible = window.is_visible().unwrap_or(false);
-        if is_visible {
-            let _ = window.hide();
-            #[cfg(target_os = "macos")]
-            let _ = tray.app_handle().hide();
-        } else {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
-            #[cfg(target_os = "macos")]
-            let _ = tray.app_handle().show();
-        }
-    }
-}
-
-pub fn show_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-        #[cfg(target_os = "macos")]
-        let _ = app.show();
-    }
-}
-
-pub fn is_tray_enabled(_app: &AppHandle) -> bool {
-    unsafe {
-        TRAY_ENABLED
     }
 }

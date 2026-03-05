@@ -1,7 +1,5 @@
 'use client'
 import { Input } from "@/components/ui/input";
-import { FormItem } from "../components/setting-base";
-import { Item, ItemContent, ItemTitle, ItemDescription, ItemActions, ItemMedia } from '@/components/ui/item';
 import { useEffect, useState } from "react";
 import { useTranslations } from 'next-intl';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -9,7 +7,6 @@ import useSettingStore from "@/stores/setting";
 import { Store } from "@tauri-apps/plugin-store";
 import useSyncStore from "@/stores/sync";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { OpenBroswer } from "@/components/open-broswer";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
@@ -17,24 +14,20 @@ import { Button } from "@/components/ui/button";
 import { checkSyncRepoState, createSyncRepo, getUserInfo } from "@/lib/sync/gitea";
 import { RepoNames, SyncStateEnum } from "@/lib/sync/github.types";
 import { GiteaInstanceType, GITEA_INSTANCES } from "@/lib/sync/gitea.types";
-import { DatabaseBackup, Eye, EyeOff, Globe, Server, Plus, RefreshCcw } from "lucide-react";
+import { Eye, EyeOff, Globe, Server, Plus, RefreshCcw } from "lucide-react";
 import { Avatar, AvatarImage } from "@/components/ui/avatar";
 
 dayjs.extend(relativeTime)
 
 export function GiteaSync() {
   const t = useTranslations();
-  const { 
+  const {
     giteaInstanceType,
     setGiteaInstanceType,
     giteaCustomUrl,
     setGiteaCustomUrl,
     giteaAccessToken,
     setGiteaAccessToken,
-    giteaAutoSync,
-    setGiteaAutoSync,
-    primaryBackupMethod,
-    setPrimaryBackupMethod,
     giteaCustomSyncRepo,
     setGiteaCustomSyncRepo
   } = useSettingStore()
@@ -159,14 +152,6 @@ export function GiteaSync() {
     return `${instance.baseUrl}/user/settings/applications`
   }
 
-  // 获取当前实例显示名称
-  function getInstanceDisplayName() {
-    if (giteaInstanceType === GiteaInstanceType.SELF_HOSTED) {
-      return giteaCustomUrl || '自建实例'
-    }
-    return GITEA_INSTANCES[giteaInstanceType].name
-  }
-
   useEffect(() => {
     async function init() {
       const store = await Store.load('store.json');
@@ -199,8 +184,20 @@ export function GiteaSync() {
 
 
   return (
-    <div className="space-y-8">
-      <FormItem title={t('settings.sync.giteaInstanceType')} desc={t('settings.sync.giteaInstanceTypeDesc')}>
+    <div className="rounded-md border p-4">
+      <div className="flex justify-between items-center mb-2">
+        <div className="flex gap-2 items-center">
+          <span className="font-semibold">Gitea {t('settings.sync.settings')}</span>
+        </div>
+        <Badge className={`${giteaSyncRepoState === SyncStateEnum.success ? 'bg-green-600' : 'bg-zinc-500'}`}>
+          {giteaSyncRepoState === SyncStateEnum.success ? 'Connected' : giteaSyncRepoState === SyncStateEnum.checking ? 'Checking' : giteaSyncRepoState === SyncStateEnum.creating ? 'Creating' : 'Not Connected'}
+        </Badge>
+      </div>
+      <p className="text-sm text-muted-foreground mb-4">{t('settings.sync.platformDesc')}</p>
+
+      {/* 实例类型选择 */}
+      <div className="space-y-2 mb-4">
+        <label className="text-sm font-medium">{t('settings.sync.giteaInstanceType')}</label>
         <Select value={giteaInstanceType} onValueChange={instanceTypeChangeHandler}>
           <SelectTrigger className="w-full">
             <SelectValue placeholder={t('settings.sync.giteaInstanceTypePlaceholder')} />
@@ -224,149 +221,110 @@ export function GiteaSync() {
             </SelectItem>
           </SelectContent>
         </Select>
-      </FormItem>
+        <p className="text-xs text-muted-foreground">{t('settings.sync.giteaInstanceTypeDesc')}</p>
+      </div>
+
+      {/* 自定义 URL（自建实例时显示） */}
       {giteaInstanceType === GiteaInstanceType.SELF_HOSTED && (
-        <FormItem title="Gitea URL" desc={t('settings.sync.giteaInstanceTypeOptions.selfHostedDesc')}>
-          <Input 
-            value={giteaCustomUrl} 
-            onChange={customUrlChangeHandler} 
+        <div className="space-y-2 mb-4">
+          <label className="text-sm font-medium">Gitea URL</label>
+          <Input
+            value={giteaCustomUrl}
+            onChange={customUrlChangeHandler}
             placeholder="https://gitea.example.com"
             type="url"
           />
-        </FormItem>
+          <p className="text-xs text-muted-foreground">{t('settings.sync.giteaInstanceTypeOptions.selfHostedDesc')}</p>
+        </div>
       )}
 
-      <FormItem title="Gitea Access Token" desc={t('settings.sync.giteaAccessTokenDesc', { instanceDisplayName: getInstanceDisplayName() })}>
-        <OpenBroswer 
-          url={getTokenCreateUrl()} 
-          title={t('settings.sync.newToken')} 
-          className="mb-2" 
-        />
+      {/* Token 输入 */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Gitea Access Token</label>
         <div className="flex gap-2">
-          <Input 
-            value={giteaAccessToken} 
-            onChange={tokenChangeHandler} 
-            type={giteaAccessTokenVisible ? 'text' : 'password'} 
+          <Input
+            value={giteaAccessToken}
+            onChange={tokenChangeHandler}
+            type={giteaAccessTokenVisible ? 'text' : 'password'}
+            placeholder={t('settings.sync.enterToken')}
           />
           <Button variant="outline" size="icon" onClick={() => setGiteaAccessTokenVisible(!giteaAccessTokenVisible)}>
-            {giteaAccessTokenVisible ? <Eye /> : <EyeOff />}
+            {giteaAccessTokenVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
           </Button>
         </div>
-      </FormItem>
-      <FormItem title={t('settings.sync.customSyncRepo')} desc={t('settings.sync.customSyncRepoDesc')}>
-        <Input 
-          value={giteaCustomSyncRepo} 
-          onChange={(e) => {
-            setGiteaCustomSyncRepo(e.target.value)
-          }}
+        <OpenBroswer
+          url={getTokenCreateUrl()}
+          title={t('settings.sync.newToken')}
+          className="text-sm text-blue-500 hover:underline"
+        />
+      </div>
+
+      {/* 自定义仓库 */}
+      <div className="mt-4 space-y-2">
+        <label className="text-sm font-medium">{t('settings.sync.customSyncRepo')}</label>
+        <Input
+          value={giteaCustomSyncRepo}
+          onChange={(e) => setGiteaCustomSyncRepo(e.target.value)}
           placeholder={RepoNames.sync}
         />
-      </FormItem>
-      <FormItem title={t('settings.sync.repoStatus')}>
-        <Card>
-          <CardHeader className={`${giteaSyncRepoInfo ? 'border-b' : ''}`}>
-            <CardTitle className="flex justify-between items-center">
-              <div className="flex gap-2 items-center">
-                <DatabaseBackup className="size-4" />
-                {getRepoName()}（{giteaSyncRepoInfo?.private ? t('settings.sync.private') : t('settings.sync.public')}）
-              </div>
-              <Badge className={`${giteaSyncRepoState === SyncStateEnum.success ? 'bg-green-800' : 'bg-red-800'}`}>
-                {giteaSyncRepoState}
-              </Badge>
-            </CardTitle>
-            <CardDescription>
-              <span>{t('settings.sync.syncRepoDesc')}</span>
-            </CardDescription>
-            {/* 手动检测和创建按钮 */}
-            {giteaAccessToken && (
-              <div className="mt-3 flex gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={checkRepoState}
-                  disabled={giteaSyncRepoState === SyncStateEnum.checking}
-                >
-                  <RefreshCcw className="size-4 mr-1" />
-                  {giteaSyncRepoState === SyncStateEnum.checking ? t('settings.sync.checking') : t('settings.sync.checkRepo')}
-                </Button>
-                {giteaSyncRepoState === SyncStateEnum.fail && (
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={createGiteaRepo}
-                  >
-                    <Plus className="size-4 mr-1" />
-                    {t('settings.sync.createRepo')}
-                  </Button>
-                )}
-              </div>
-            )}
-          </CardHeader>
-          {
-            giteaSyncRepoInfo &&
-            <CardContent className="flex items-center gap-4 mt-4">
-              <Avatar className="size-12">
-                <AvatarImage src={giteaUserInfo?.avatar_url || ''} />
-              </Avatar>
-              <div>
-                <h3 className="text-xl font-bold mb-1">
-                  <OpenBroswer title={giteaSyncRepoInfo?.full_name || ''} url={giteaSyncRepoInfo?.html_url || ''} />
-                </h3>
-                <CardDescription className="flex">
-                  <p className="text-zinc-500 leading-6">{t('settings.sync.createdAt', { time: dayjs(giteaSyncRepoInfo?.created_at).fromNow() })}，</p>
-                  <p className="text-zinc-500 leading-6">{t('settings.sync.updatedAt', { time: dayjs(giteaSyncRepoInfo?.updated_at).fromNow() })}。</p>
-                </CardDescription>
-              </div>
-            </CardContent>
-          }
-        </Card>
-      </FormItem>
-      {
-        giteaSyncRepoInfo &&
-        <FormItem title={t('settings.others')}>
-          <Item variant="outline">
-            <ItemMedia variant="icon"><RefreshCcw className="size-4" /></ItemMedia>
-            <ItemContent>
-              <ItemTitle>{t('settings.sync.autoSync')}</ItemTitle>
-              <ItemDescription>{t('settings.sync.autoSyncDesc')}</ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Select
-                value={giteaAutoSync}
-                onValueChange={(value) => setGiteaAutoSync(value)}
-                disabled={!giteaAccessToken || giteaSyncRepoState !== SyncStateEnum.success}
-              >
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder={t('settings.sync.autoSyncOptions.placeholder')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="disabled">{t('settings.sync.autoSyncOptions.disabled')}</SelectItem>
-                  <SelectItem value="10">{t('settings.sync.autoSyncOptions.10s')}</SelectItem>
-                  <SelectItem value="30">{t('settings.sync.autoSyncOptions.30s')}</SelectItem>
-                  <SelectItem value="60">{t('settings.sync.autoSyncOptions.1m')}</SelectItem>
-                  <SelectItem value="300">{t('settings.sync.autoSyncOptions.5m')}</SelectItem>
-                  <SelectItem value="1800">{t('settings.sync.autoSyncOptions.30m')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </ItemActions>
-          </Item>
-        </FormItem>
-      }
+        <p className="text-xs text-muted-foreground">{t('settings.sync.customSyncRepoDesc')}</p>
+      </div>
 
-      {/* 主要备份方式设置 */}
-        {primaryBackupMethod === 'gitea' ? (
-          <Button disabled variant="outline">
-            {t('settings.sync.isPrimaryBackup', { type: 'Gitea' })}
-          </Button>
+      {/* 操作按钮 */}
+      <div className="mt-4 flex gap-2 flex-wrap">
+        {giteaAccessToken ? (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={checkRepoState}
+              disabled={giteaSyncRepoState === SyncStateEnum.checking || giteaSyncRepoState === SyncStateEnum.creating}
+            >
+              {giteaSyncRepoState === SyncStateEnum.checking || giteaSyncRepoState === SyncStateEnum.creating ? (
+                <>
+                  <RefreshCcw className="size-4 mr-1 animate-spin" />
+                  {giteaSyncRepoState === SyncStateEnum.checking ? t('settings.sync.checking') : t('settings.sync.creating')}
+                </>
+              ) : (
+                <>
+                  <RefreshCcw className="size-4 mr-1" />
+                  {t('settings.sync.checkRepo')}
+                </>
+              )}
+            </Button>
+            {giteaSyncRepoState === SyncStateEnum.fail && (
+              <Button variant="outline" size="sm" onClick={createGiteaRepo}>
+                <Plus className="size-4 mr-1" />
+                {t('settings.sync.createRepo')}
+              </Button>
+            )}
+          </>
         ) : (
-          <Button 
-            variant="outline" 
-            onClick={() => setPrimaryBackupMethod('gitea')}
-            disabled={!giteaAccessToken || giteaSyncRepoState !== SyncStateEnum.success}
-          >
-            {t('settings.sync.setPrimaryBackup')}
-          </Button>
+          <div className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400">
+            <RefreshCcw className="size-4" />
+            {t('settings.sync.enterTokenHint')}
+          </div>
         )}
+      </div>
+
+      {/* 仓库信息 */}
+      {giteaSyncRepoInfo && (
+        <div className="border-t mt-4 pt-4">
+          <div className="flex items-center gap-4">
+            <Avatar className="size-10">
+              <AvatarImage src={giteaUserInfo?.avatar_url || ''} />
+            </Avatar>
+            <div>
+              <h3 className="text-xl font-bold mb-1">
+                <OpenBroswer title={giteaSyncRepoInfo?.full_name || ''} url={giteaSyncRepoInfo?.html_url || ''} />
+              </h3>
+              <p className="text-sm text-zinc-500">
+                {giteaSyncRepoInfo?.private ? t('settings.sync.private') : t('settings.sync.public')} · {t('settings.sync.createdAt', { time: dayjs(giteaSyncRepoInfo?.created_at).fromNow() })} · {t('settings.sync.updatedAt', { time: dayjs(giteaSyncRepoInfo?.updated_at).fromNow() })}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

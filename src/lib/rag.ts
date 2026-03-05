@@ -4,9 +4,12 @@ import {
   upsertVectorDocument,
   deleteVectorDocumentsByFilename,
   getSimilarDocuments,
-  initVectorDb
+  getVectorDocumentsByFilename,
+  initVectorDb,
+  VectorDocument
 } from "@/db/vector";
 import { invoke } from "@tauri-apps/api/core";
+import { BM25Document, initBM25Index, getBM25Index } from "./bm25";
 
 // 重新导出initVectorDb，使其可在其他模块中导入
 export { initVectorDb };
@@ -171,6 +174,271 @@ export function chunkText(
 }
 
 /**
+ * 初始化 BM25 索引
+ * 从工作区的 Markdown 文件构建 BM25 索引
+ */
+export async function initBM25Search(): Promise<void> {
+  try {
+    // 收集所有 Markdown 文件内容
+    const items = await collectMarkdownContents();
+
+    // 转换为 BM25Document 格式
+    const documents: BM25Document[] = items.map(item => ({
+      id: item.id || item.title || 'unknown',
+      content: item.title + '\n\n' + item.article // 包含标题和内容
+    }));
+
+    // 初始化索引
+    initBM25Index(documents);
+  } catch (error) {
+    console.error('初始化 BM25 索引失败:', error);
+  }
+}
+
+/**
+ * 常用虚词/停用词列表
+ * 这些词在搜索时应该被过滤或降权，因为它们在文档中出现频率过高
+ */
+const STOP_WORDS = new Set([
+  // 中文虚词
+  '的', '了', '是', '在', '有', '和', '就', '不', '人', '都', '一', '一个',
+  '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看',
+  '好', '自己', '这', '那', '里', '就是', '为', '与', '之', '用', '可以',
+  '但', '而', '或', '及', '等', '对', '把', '被', '让', '给', '从', '向',
+
+  // 英文停用词
+  'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+  'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'been',
+  'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+  'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those'
+]);
+
+/**
+ * 同义词词典
+ * 用于查询转换优化，生成查询变体
+ */
+const SYNONYM_DICT: Record<string, string[]> = {
+  // AI/技术术语
+  'ai': ['人工智能', 'artificial intelligence', '机器学习', 'ml'],
+  'llm': ['大语言模型', 'large language model', '语言模型'],
+  'rag': ['检索增强生成', 'retrieval augmented generation'],
+  'agent': ['智能体', '代理', '助手'],
+  'embedding': ['嵌入', '向量', '向量化'],
+  'vector': ['向量', '矢量'],
+  'prompt': ['提示词', '提示', '指令'],
+
+  // 通用同义词
+  '如何': ['怎么', '怎样', '如何做', '方法'],
+  '怎么': ['如何', '怎样', '怎么操作'],
+  '怎样': ['如何', '怎么', '怎样做'],
+  '是什么': ['定义', '解释', '含义', '概念'],
+  '为什么': ['原因', '为何', '理由'],
+  '做什么': ['干什么', '做什么用', '作用'],
+  '使用': ['应用', '运用', '采用', '利用'],
+  '创建': ['建立', '新建', '生成', '构建'],
+  '获取': ['得到', '获得', '取得'],
+  '设置': ['配置', '设定', '修改'],
+  '问题': ['疑问', '困难', '难题'],
+  '解决': ['处理', '修复', '解答'],
+};
+
+/**
+ * 检查关键词是否为停用词
+ */
+function isStopWord(keyword: string): boolean {
+  const cleanKeyword = keyword.trim().toLowerCase();
+  return STOP_WORDS.has(cleanKeyword);
+}
+
+/**
+ * 查询转换接口
+ */
+interface QueryVariant {
+  original: string;  // 原始查询
+  transformed: string; // 转换后的查询
+  source: 'original' | 'synonym';
+}
+
+/**
+ * 基于同义词词典扩展查询
+ * @param query 原始查询
+ * @param maxVariants 最大变体数量
+ * @returns 查询变体列表
+ */
+function expandWithSynonyms(query: string, maxVariants: number = 3): QueryVariant[] {
+  const variants: QueryVariant[] = [
+    { original: query, transformed: query, source: 'original' }
+  ];
+
+  // 检查查询中的每个词是否在同义词词典中
+  const queryLower = query.toLowerCase();
+  const words = queryLower.split(/\s+/);
+
+  for (const word of words) {
+    // 移除标点符号
+    const cleanWord = word.replace(/[^\w\u4e00-\u9fa5]/g, '');
+
+    if (SYNONYM_DICT[cleanWord]) {
+      const synonyms = SYNONYM_DICT[cleanWord];
+
+      // 为每个同义词生成变体
+      for (const synonym of synonyms) {
+        if (variants.length >= maxVariants) break;
+
+        const transformed = queryLower.replace(new RegExp(cleanWord, 'gi'), synonym);
+
+        // 避免重复
+        if (!variants.some(v => v.transformed === transformed)) {
+          variants.push({
+            original: query,
+            transformed,
+            source: 'synonym'
+          });
+        }
+      }
+    }
+
+    if (variants.length >= maxVariants) break;
+  }
+
+  return variants;
+}
+
+/**
+ * 转换查询（生成多个变体）
+ * @param keywords 原始关键词列表
+ * @param enableExpansion 是否启用查询扩展
+ * @param maxVariants 每个关键词的最大变体数量
+ * @returns 扩展后的关键词列表
+ */
+function transformQueries(
+  keywords: Keyword[],
+  enableExpansion: boolean,
+  maxVariants: number
+): Keyword[] {
+  if (!enableExpansion) {
+    return keywords;
+  }
+
+  const expandedKeywords: Keyword[] = [];
+
+  for (const keyword of keywords) {
+    // 生成查询变体
+    const variants = expandWithSynonyms(keyword.text, maxVariants);
+
+    // 将变体添加到关键词列表
+    for (const variant of variants) {
+      // 避免重复
+      if (!expandedKeywords.some(k => k.text === variant.transformed)) {
+        expandedKeywords.push({
+          text: variant.transformed,
+          weight: keyword.weight // 保持原始权重
+        });
+      }
+    }
+  }
+
+  return expandedKeywords;
+}
+
+/**
+ * 扩展检索结果的句子窗口
+ * 为每个匹配的 chunk 获取同一文件中相邻的 chunk，提供更完整的上下文
+ *
+ * @param results 原始检索结果
+ * @param windowSize 窗口大小（前后各取 N 个 chunk）
+ * @returns 扩展后的检索结果
+ */
+async function expandWithSentenceWindow(
+  results: Array<{ id: number; filename: string; content: string; similarity?: number }>,
+  windowSize: number = 2
+): Promise<Array<{ id: number; filename: string; content: string; similarity?: number }>> {
+  // 按文件分组结果
+  const resultsByFile = new Map<string, typeof results>();
+  for (const result of results) {
+    if (!resultsByFile.has(result.filename)) {
+      resultsByFile.set(result.filename, []);
+    }
+    resultsByFile.get(result.filename)!.push(result);
+  }
+
+  const expandedResults: typeof results = [];
+
+  // 对每个文件的结果进行扩展
+  for (const [filename, fileResults] of resultsByFile.entries()) {
+    try {
+      // 获取该文件的所有向量文档（按 chunk_id 排序）
+      const allChunks = await getVectorDocumentsByFilename(filename);
+
+      // 创建 chunk_id 到文档的映射
+      const chunkMap = new Map<number, VectorDocument>();
+      for (const chunk of allChunks) {
+        chunkMap.set(chunk.chunk_id, chunk);
+      }
+
+      // 对每个结果进行窗口扩展
+      for (const result of fileResults) {
+        // 找到该结果对应的 chunk_id
+        let centerChunkId: number | undefined;
+
+        // 通过内容匹配找到 chunk_id
+        for (const [chunkId, chunk] of chunkMap.entries()) {
+          if (chunk.content === result.content) {
+            centerChunkId = chunkId;
+            break;
+          }
+        }
+
+        if (centerChunkId === undefined) {
+          // 如果找不到对应的 chunk，直接添加原结果
+          expandedResults.push(result);
+          continue;
+        }
+
+        // 获取窗口内的相邻 chunk
+        const windowContents: string[] = [];
+        for (let i = centerChunkId - windowSize; i <= centerChunkId + windowSize; i++) {
+          const chunk = chunkMap.get(i);
+          if (chunk) {
+            windowContents.push(chunk.content);
+          }
+        }
+
+        // 合并窗口内容
+        const expandedContent = windowContents.join('\n\n---\n\n');
+
+        expandedResults.push({
+          ...result,
+          content: expandedContent
+        });
+      }
+    } catch (error) {
+      console.error(`扩展文件 ${filename} 的句子窗口失败:`, error);
+      // 失败时保留原结果
+      expandedResults.push(...fileResults);
+    }
+  }
+
+  return expandedResults;
+}
+
+/**
+ * BM25 搜索辅助函数
+ * @param query 查询文本
+ * @param limit 返回结果数量
+ * @returns BM25 检索结果
+ */
+async function searchWithBM25(query: string, limit: number = 10): Promise<Array<{id: string, score: number}>> {
+  const index = getBM25Index();
+  if (!index) {
+    console.warn('BM25 索引未初始化，跳过 BM25 搜索');
+    return [];
+  }
+
+  return index.search(query, limit);
+}
+
+/**
  * 处理单个Markdown文件，计算向量并存储到数据库
  */
 export async function processMarkdownFile(
@@ -192,10 +460,19 @@ export async function processMarkdownFile(
       const { path, baseDir } = await getFilePathOptions(filePath)
       content = fileContent || await readTextFile(path, { baseDir })
     }
+    // 如果内容为空或只有空白字符，跳过处理
+    if (!content || content.trim().length === 0) {
+      return false;
+    }
+
     const store = await Store.load('store.json')
     const chunkSize = await store.get<number>('ragChunkSize');
     const chunkOverlap = await store.get<number>('ragChunkOverlap');
-    const chunks = chunkText(content, chunkSize, chunkOverlap);
+    const chunks = chunkText(content, chunkSize, chunkOverlap).filter(chunk => chunk.trim().length > 0);
+    // 如果没有有效的文本块，跳过处理
+    if (chunks.length === 0) {
+      return false;
+    }
     // 文件名（不含路径）
     const filename = filePath.split('/').pop() || filePath;
 
@@ -476,6 +753,19 @@ async function collectMarkdownContents(): Promise<SearchItem[]> {
 }
 
 /**
+ * 检索结果类型定义
+ */
+interface SearchResult {
+  filename: string;
+  filepath: string;
+  content: string;
+  rawScore: number;      // 原始分数（未归一化）
+  normalizedScore: number; // 归一化后的分数
+  keyword?: string;
+  type: 'fuzzy' | 'vector' | 'bm25';
+}
+
+/**
  * 关键词及其权重类型定义
  */
 export interface Keyword {
@@ -484,26 +774,58 @@ export interface Keyword {
 }
 
 /**
+ * RAG 来源详情类型定义
+ */
+export interface RagSource {
+  filepath: string;  // 文件的相对路径
+  filename: string;  // 文件名
+  content: string;   // 引用的文本片段
+}
+
+/**
  * 根据关键词数组获取相关上下文
  * @param keywords 关键词数组，每个元素包含关键词文本和权重
  * @returns 包含上下文文本和引用文件名的对象
  */
-export async function getContextForQuery(keywords: Keyword[]): Promise<{ context: string; sources: string[] }> {
+export async function getContextForQuery(keywords: Keyword[]): Promise<{
+  context: string;
+  sources: string[];
+  sourceDetails: RagSource[];
+}> {
   try {
     const store = await Store.load('store.json');
     const resultCount = await store.get<number>('ragResultCount') || 5;
-    const similarityThreshold = await store.get<number>('ragSimilarityThreshold') || 0.7;
-    // 存储所有相关上下文的结果集
-    const allContexts: { filename: string, content: string, score: number, keyword?: string, type?: string }[] = [];
-    
+    const similarityThreshold = await store.get<number>('ragSimilarityThreshold') || 0.25;
+
+    // 读取权重配置（新增配置项）
+    const fuzzyWeight = await store.get<number>('ragFuzzyWeight') ?? 0.2;
+    const vectorWeight = await store.get<number>('ragVectorWeight') ?? 0.7;
+    const bm25Weight = await store.get<number>('ragBm25Weight') ?? 0.1;
+
+    const weights = {
+      fuzzyWeight,
+      vectorWeight,
+      bm25Weight
+    };
+
+    // 存储所有检索结果（使用新的 SearchResult 类型）
+    const allResults: SearchResult[] = [];
+
     // 如果没有关键词，返回空结果
     if (!keywords || keywords.length === 0) {
-      return { context: '', sources: [] };
+      return { context: '', sources: [], sourceDetails: [] };
     }
-    
+
+    // 读取查询扩展配置
+    const enableQueryExpansion = await store.get<boolean>('ragEnableQueryExpansion') ?? true;
+    const maxQueryVariations = await store.get<number>('ragMaxQueryVariations') ?? 3;
+
+    // 应用查询转换（生成同义词变体）
+    const expandedKeywords = transformQueries(keywords, enableQueryExpansion, maxQueryVariations);
+
     // 将关键词按权重排序，优先考虑权重高的关键词
-    const sortedKeywords = [...keywords].sort((a, b) => b.weight - a.weight);
-    
+    const sortedKeywords = [...expandedKeywords].sort((a, b) => b.weight - a.weight);
+
     // 1. 使用逐个关键词进行模糊搜索找到相关文件内容
     try {
       // 收集所有Markdown文件内容
@@ -511,6 +833,11 @@ export async function getContextForQuery(keywords: Keyword[]): Promise<{ context
       if (items.length > 0) {
         // 为每个关键词单独进行搜索
         for (const keyword of sortedKeywords) {
+          // 跳过停用词的模糊搜索（这些词匹配太多低质量结果）
+          if (isStopWord(keyword.text)) {
+            continue;
+          }
+
           // 对每个关键词调用Rust的fuzzy_search函数
           const fuzzyResults: FuzzySearchResult[] = await invoke('fuzzy_search', {
             items,
@@ -520,7 +847,7 @@ export async function getContextForQuery(keywords: Keyword[]): Promise<{ context
             includeScore: true,
             includeMatches: true
           });
-          
+
           // 处理模糊搜索结果
           for (const result of fuzzyResults) {
             if (result.score > 0) {
@@ -531,7 +858,7 @@ export async function getContextForQuery(keywords: Keyword[]): Promise<{ context
                 // 使用匹配部分的上下文（周围大约500个字符）
                 const match = articleMatches[0];
                 const content = match.value;
-                
+
                 // 找到第一个匹配位置的索引
                 let startIdx = 0;
                 let endIdx = content.length;
@@ -540,17 +867,16 @@ export async function getContextForQuery(keywords: Keyword[]): Promise<{ context
                   startIdx = Math.max(0, firstMatch[0] - 250);
                   endIdx = Math.min(content.length, firstMatch[1] + 250);
                 }
-                
-                // 使用当前关键词的权重作为得分因子
-                const finalScore = result.score * keyword.weight;
-                
+
                 const contextSnippet = content.substring(startIdx, endIdx);
-                
-                allContexts.push({
+
+                allResults.push({
                   filename: item.title || '未命名文件',
+                  filepath: item.id || '',
                   content: contextSnippet,
-                  score: finalScore,
-                  keyword: keyword.text,  // 记录匹配的关键词
+                  rawScore: result.score * keyword.weight, // 保留原始分数
+                  normalizedScore: 0, // 稍后计算
+                  keyword: keyword.text,
                   type: 'fuzzy'
                 });
               }
@@ -564,28 +890,39 @@ export async function getContextForQuery(keywords: Keyword[]): Promise<{ context
 
     // 2. 使用向量搜索找到相关文档
     try {
+      // 读取窗口大小配置
+      const windowSize = await store.get<number>('ragWindowSize') ?? 2;
+
       // 为每个关键词生成向量并执行查询
       for (const keyword of sortedKeywords) {
         // 计算查询文本的向量
         const queryEmbedding = await fetchEmbedding(keyword.text);
-        if (queryEmbedding) {
-          // 查询最相关的文档
-          let similarDocs = await getSimilarDocuments(queryEmbedding, resultCount, similarityThreshold);
 
-          if (similarDocs.length > 0) {
-            // 如果配置了重排序模型，使用它进一步优化结果
-            similarDocs = await rerankDocuments(keyword.text, similarDocs);
+        if (!queryEmbedding) {
+          continue;
+        }
 
-            // 添加到结果集，考虑关键词权重
-            for (const doc of similarDocs) {
-              allContexts.push({
-                filename: doc.filename,
-                content: doc.content,
-                score: (doc.similarity || 0) * keyword.weight, // 用相似度乘以权重作为分数
-                keyword: keyword.text,  // 记录匹配的关键词
-                type: 'vector'
-              });
-            }
+        // 查询最相关的文档
+        let similarDocs = await getSimilarDocuments(queryEmbedding, resultCount * 2, similarityThreshold);
+
+        if (similarDocs.length > 0) {
+          // 如果配置了重排序模型，使用它进一步优化结果
+          similarDocs = await rerankDocuments(keyword.text, similarDocs);
+
+          // 应用句子窗口扩展（获取更多候选结果用于窗口扩展）
+          const expandedDocs = await expandWithSentenceWindow(similarDocs, windowSize);
+
+          // 添加到结果集
+          for (const doc of expandedDocs) {
+            allResults.push({
+              filename: doc.filename,
+              filepath: doc.filename,
+              content: doc.content,
+              rawScore: (doc.similarity || 0) * keyword.weight, // 保留原始分数
+              normalizedScore: 0, // 稍后计算
+              keyword: keyword.text,
+              type: 'vector'
+            });
           }
         }
       }
@@ -593,56 +930,84 @@ export async function getContextForQuery(keywords: Keyword[]): Promise<{ context
       handleRAGError(error, '向量搜索失败', false);
     }
 
-    // 如果没有找到任何相关上下文，返回空结果
-    if (allContexts.length === 0) {
-      return { context: '', sources: [] };
-    }
+    // 3. 使用 BM25 搜索找到相关文档
+    try {
+      // 收集所有 Markdown 文件内容用于 BM25 匹配后获取上下文
+      const items = await collectMarkdownContents();
+      const itemsMap = new Map(items.map(item => [item.id || item.title || '', item]));
 
-    // 改进的去重逻辑：使用哈希 + 内容相似度去重
-    const uniqueContexts: typeof allContexts = [];
-    const seenHashes = new Set<string>();
+      // 为每个关键词执行 BM25 搜索
+      for (const keyword of sortedKeywords) {
+        const bm25Results = await searchWithBM25(keyword.text, resultCount);
 
-    // 第一阶段：使用精确哈希去重完全相同的内容
-    for (const ctx of allContexts) {
-      const contentHash = generateContentHash(ctx.content);
-      const hashWithFile = `${ctx.filename}-${contentHash}`;
+        for (const result of bm25Results) {
+          const item = itemsMap.get(result.id);
+          if (!item || !item.article) continue;
 
-      if (!seenHashes.has(hashWithFile)) {
-        seenHashes.add(hashWithFile);
-        uniqueContexts.push(ctx);
-      } else {
-        // 如果哈希已存在，检查是否有更高的分数，如果有则更新
-        const existingIndex = uniqueContexts.findIndex(
-          existing => {
-            const existingHash = generateContentHash(existing.content);
-            return existing.filename === ctx.filename && existingHash === contentHash;
+          // 从匹配项中提取上下文（尝试找到关键词周围的内容）
+          const articleLower = item.article.toLowerCase();
+          const keywordLower = keyword.text.toLowerCase();
+          const keywordIndex = articleLower.indexOf(keywordLower);
+
+          let startIdx = 0;
+          let endIdx = item.article.length;
+
+          if (keywordIndex >= 0) {
+            startIdx = Math.max(0, keywordIndex - 250);
+            endIdx = Math.min(item.article.length, keywordIndex + keyword.text.length + 250);
+          } else {
+            // 如果没找到精确匹配，取中间部分
+            const mid = Math.floor(item.article.length / 2);
+            startIdx = Math.max(0, mid - 250);
+            endIdx = Math.min(item.article.length, mid + 250);
           }
-        );
-        if (existingIndex >= 0 && ctx.score > uniqueContexts[existingIndex].score) {
-          uniqueContexts[existingIndex] = ctx;
+
+          const contextSnippet = item.article.substring(startIdx, endIdx);
+
+          allResults.push({
+            filename: item.title || '未命名文件',
+            filepath: item.id || '',
+            content: contextSnippet,
+            rawScore: result.score * keyword.weight,
+            normalizedScore: 0,
+            keyword: keyword.text,
+            type: 'bm25'
+          });
         }
       }
+    } catch (error) {
+      handleRAGError(error, 'BM25 搜索失败', false);
     }
 
-    // 第二阶段：对相似内容进行合并（使用余弦相似度判断）
-    // 这里我们简化处理，只合并同一文件中高度重叠的内容
-    const finalUniqueContexts: typeof allContexts = [];
+    // 如果没有找到任何相关上下文，返回空结果
+    if (allResults.length === 0) {
+      return { context: '', sources: [], sourceDetails: [] };
+    }
+
+    // 3. 按文档合并结果，使用归一化和混合权重
+    const mergedResults = mergeResultsByDocument(allResults, weights);
+
+    // 4. 对相似内容进行合并（使用内容重叠度判断）
+    const finalUniqueResults: SearchResult[] = [];
     const mergedIndices = new Set<number>();
 
-    for (let i = 0; i < uniqueContexts.length; i++) {
+    for (let i = 0; i < mergedResults.length; i++) {
       if (mergedIndices.has(i)) continue;
 
-      const current = uniqueContexts[i];
-      let bestScore = current.score;
+      const current = mergedResults[i];
+      let bestScore = current.normalizedScore;
       let bestContent = current.content;
-      // eslint-disable-next-line prefer-const
-      let mergedKeywords = [current.keyword];
+      const mergedKeywords: string[] = [];
+
+      if (current.keyword) {
+        mergedKeywords.push(current.keyword);
+      }
 
       // 查找同一文件中高度重叠的内容
-      for (let j = i + 1; j < uniqueContexts.length; j++) {
+      for (let j = i + 1; j < mergedResults.length; j++) {
         if (mergedIndices.has(j)) continue;
 
-        const other = uniqueContexts[j];
+        const other = mergedResults[j];
         if (other.filename !== current.filename) continue;
 
         // 计算内容重叠度
@@ -652,8 +1017,8 @@ export async function getContextForQuery(keywords: Keyword[]): Promise<{ context
         if (overlap > 0.7) {
           mergedIndices.add(j);
           // 保留分数更高的
-          if (other.score > bestScore) {
-            bestScore = other.score;
+          if (other.normalizedScore > bestScore) {
+            bestScore = other.normalizedScore;
             bestContent = other.content;
           }
           if (other.keyword && !mergedKeywords.includes(other.keyword)) {
@@ -662,35 +1027,225 @@ export async function getContextForQuery(keywords: Keyword[]): Promise<{ context
         }
       }
 
-      finalUniqueContexts.push({
+      finalUniqueResults.push({
         ...current,
         content: bestContent,
-        score: bestScore,
+        normalizedScore: bestScore,
         keyword: mergedKeywords.join(', ')
       });
     }
 
     // 对所有上下文按相关性得分排序
-    finalUniqueContexts.sort((a, b) => b.score - a.score);
+    finalUniqueResults.sort((a: SearchResult, b: SearchResult) => b.normalizedScore - a.normalizedScore);
 
     // 限制结果数量
-    const finalContexts = finalUniqueContexts.slice(0, resultCount);
+    const finalResults = finalUniqueResults.slice(0, resultCount);
 
     // 提取唯一的文件名
-    const sources = Array.from(new Set(finalContexts.map(ctx => ctx.filename)));
+    const sources = Array.from(new Set(finalResults.map((ctx: SearchResult) => ctx.filename)));
+
+    // 构建 sourceDetails（去重，每个文件只保留最相关的一个片段）
+    const sourceDetailsMap = new Map<string, RagSource>();
+    for (const ctx of finalResults) {
+      if (!sourceDetailsMap.has(ctx.filename)) {
+        sourceDetailsMap.set(ctx.filename, {
+          filepath: ctx.filepath,
+          filename: ctx.filename,
+          content: ctx.content
+        });
+      }
+    }
+    const sourceDetails = Array.from(sourceDetailsMap.values());
 
     // 构建最终的上下文字符串
-    const context = finalContexts.map(ctx => {
+    const context = finalResults.map((ctx: SearchResult) => {
       return `文件：${ctx.filename}
 ${ctx.content}
 `;
     }).join('\n---\n\n');
 
-    return { context, sources };
+    return { context, sources, sourceDetails };
   } catch (error) {
     handleRAGError(error, '获取查询上下文失败', false);
-    return { context: '', sources: [] };
+    return { context: '', sources: [], sourceDetails: [] };
   }
+}
+
+/**
+ * 分数归一化配置
+ */
+interface NormalizationConfig {
+  minScore: number;
+  maxScore: number;
+}
+
+/**
+ * 归一化分数到 [0, 1] 区间
+ * @param score 原始分数
+ * @param type 分数类型（不同类型使用不同的归一化策略）
+ * @param allScores 同类型所有分数的数组（用于 min-max 归一化）
+ */
+function normalizeScore(
+  score: number,
+  type: 'fuzzy' | 'vector' | 'bm25',
+  allScores: number[] = []
+): number {
+  // 如果提供了该类型的所有分数，使用 min-max 归一化
+  if (allScores.length > 1) {
+    const min = Math.min(...allScores);
+    const max = Math.max(...allScores);
+    if (max - min < 0.0001) {
+      // 所有分数几乎相同，返回 0.5
+      return 0.5;
+    }
+    return (score - min) / (max - min);
+  }
+
+  // 否则使用预定义的范围进行归一化
+  const configs: Record<string, NormalizationConfig> = {
+    // fuzzy_search 分数通常在 [0, 1] 区间
+    fuzzy: { minScore: 0, maxScore: 1 },
+    // 向量相似度已经在 [0, 1] 区间（余弦相似度）
+    vector: { minScore: 0, maxScore: 1 },
+    // BM25 分数范围不固定，但通常在 [0, +∞)，使用 Sigmoid 压缩
+    bm25: { minScore: 0, maxScore: 10 }
+  };
+
+  const config = configs[type] || { minScore: 0, maxScore: 1 };
+
+  if (type === 'bm25') {
+    // BM25 使用 Sigmoid 函数压缩到 [0, 1]
+    return 1 / (1 + Math.exp(-score / 2));
+  }
+
+  // 简单的线性归一化
+  const normalized = (score - config.minScore) / (config.maxScore - config.minScore);
+  return Math.max(0, Math.min(1, normalized));
+}
+
+/**
+ * 计算混合分数（支持可配置权重）
+ * @param normalizedScores 各类型归一化后的分数
+ * @param weights 各类型的权重配置
+ */
+function calculateHybridScore(
+  normalizedScores: {
+    fuzzy?: number;
+    vector?: number;
+    bm25?: number;
+  },
+  weights: {
+    fuzzyWeight: number;
+    vectorWeight: number;
+    bm25Weight: number;
+  }
+): number {
+  let totalScore = 0;
+  let totalWeight = 0;
+
+  if (normalizedScores.fuzzy !== undefined && weights.fuzzyWeight > 0) {
+    totalScore += normalizedScores.fuzzy * weights.fuzzyWeight;
+    totalWeight += weights.fuzzyWeight;
+  }
+
+  if (normalizedScores.vector !== undefined && weights.vectorWeight > 0) {
+    totalScore += normalizedScores.vector * weights.vectorWeight;
+    totalWeight += weights.vectorWeight;
+  }
+
+  if (normalizedScores.bm25 !== undefined && weights.bm25Weight > 0) {
+    totalScore += normalizedScores.bm25 * weights.bm25Weight;
+    totalWeight += weights.bm25Weight;
+  }
+
+  // 如果没有任何有效分数，返回 0
+  if (totalWeight === 0) return 0;
+
+  return totalScore / totalWeight;
+}
+
+/**
+ * 合并相同文档的不同检索结果
+ * @param results 所有检索结果
+ * @param weights 权重配置
+ */
+function mergeResultsByDocument(
+  results: SearchResult[],
+  weights: {
+    fuzzyWeight: number;
+    vectorWeight: number;
+    bm25Weight: number;
+  }
+): SearchResult[] {
+  // 按文档分组
+  const docGroups = new Map<string, SearchResult[]>();
+
+  for (const result of results) {
+    const key = `${result.filename}-${generateContentHash(result.content)}`;
+    if (!docGroups.has(key)) {
+      docGroups.set(key, []);
+    }
+    docGroups.get(key)!.push(result);
+  }
+
+  // 对每个文档组，计算混合分数
+  const mergedResults: SearchResult[] = [];
+
+  for (const group of docGroups.values()) {
+    // 收集各类型的最高分数
+    const scoresByType: Record<string, number[]> = { fuzzy: [], vector: [], bm25: [] };
+
+    for (const result of group) {
+      if (!scoresByType[result.type]) {
+        scoresByType[result.type] = [];
+      }
+      scoresByType[result.type].push(result.rawScore);
+    }
+
+    // 计算归一化分数
+    let bestFuzzyScore = 0;
+    let bestVectorScore = 0;
+    let bestBm25Score = 0;
+
+    if (scoresByType.fuzzy.length > 0) {
+      const maxFuzzy = Math.max(...scoresByType.fuzzy);
+      bestFuzzyScore = normalizeScore(maxFuzzy, 'fuzzy');
+    }
+
+    if (scoresByType.vector.length > 0) {
+      const maxVector = Math.max(...scoresByType.vector);
+      bestVectorScore = normalizeScore(maxVector, 'vector');
+    }
+
+    if (scoresByType.bm25.length > 0) {
+      const maxBm25 = Math.max(...scoresByType.bm25);
+      bestBm25Score = normalizeScore(maxBm25, 'bm25');
+    }
+
+    // 计算混合分数
+    const hybridScore = calculateHybridScore(
+      {
+        fuzzy: bestFuzzyScore || undefined,
+        vector: bestVectorScore || undefined,
+        bm25: bestBm25Score || undefined
+      },
+      weights
+    );
+
+    // 选择分数最高的结果作为基础
+    const bestResult = group.reduce((best, current) =>
+      current.rawScore > best.rawScore ? current : best
+    );
+
+    mergedResults.push({
+      ...bestResult,
+      rawScore: hybridScore,
+      normalizedScore: hybridScore,
+      type: bestResult.type // 保留主要检索类型
+    });
+  }
+
+  return mergedResults;
 }
 
 /**
@@ -835,18 +1390,37 @@ async function collectMarkdownContentsInFolder(folderPath: string): Promise<Sear
 export async function getContextForQueryInFolder(
   keywords: Keyword[],
   folderPath: string
-): Promise<{ context: string; sources: string[] }> {
+): Promise<{ context: string; sources: string[]; sourceDetails: RagSource[] }> {
   try {
     const store = await Store.load('store.json');
     const resultCount = await store.get<number>('ragResultCount') || 5;
-    const similarityThreshold = await store.get<number>('ragSimilarityThreshold') || 0.7;
-    const allContexts: { filename: string, content: string, score: number, keyword?: string, type?: string }[] = [];
+    const similarityThreshold = await store.get<number>('ragSimilarityThreshold') || 0.25;
+
+    // 读取权重配置
+    const fuzzyWeight = await store.get<number>('ragFuzzyWeight') ?? 0.2;
+    const vectorWeight = await store.get<number>('ragVectorWeight') ?? 0.7;
+    const bm25Weight = await store.get<number>('ragBm25Weight') ?? 0.1;
+
+    const weights = {
+      fuzzyWeight,
+      vectorWeight,
+      bm25Weight
+    };
+
+    const allResults: SearchResult[] = [];
 
     if (!keywords || keywords.length === 0) {
-      return { context: '', sources: [] };
+      return { context: '', sources: [], sourceDetails: [] };
     }
 
-    const sortedKeywords = [...keywords].sort((a, b) => b.weight - a.weight);
+    // 读取查询扩展配置
+    const enableQueryExpansion = await store.get<boolean>('ragEnableQueryExpansion') ?? true;
+    const maxQueryVariations = await store.get<number>('ragMaxQueryVariations') ?? 3;
+
+    // 应用查询转换（生成同义词变体）
+    const expandedKeywords = transformQueries(keywords, enableQueryExpansion, maxQueryVariations);
+
+    const sortedKeywords = [...expandedKeywords].sort((a, b) => b.weight - a.weight);
 
     // 收集文件夹范围内的文件
     const items = await collectMarkdownContentsInFolder(folderPath);
@@ -856,6 +1430,11 @@ export async function getContextForQueryInFolder(
     try {
       if (items.length > 0) {
         for (const keyword of sortedKeywords) {
+          // 跳过停用词的模糊搜索
+          if (isStopWord(keyword.text)) {
+            continue;
+          }
+
           const fuzzyResults: FuzzySearchResult[] = await invoke('fuzzy_search', {
             items,
             query: keyword.text,
@@ -881,13 +1460,14 @@ export async function getContextForQueryInFolder(
                   endIdx = Math.min(content.length, firstMatch[1] + 250);
                 }
 
-                const finalScore = result.score * keyword.weight;
                 const contextSnippet = content.substring(startIdx, endIdx);
 
-                allContexts.push({
+                allResults.push({
                   filename: item.title || '未命名文件',
+                  filepath: item.id || '',
                   content: contextSnippet,
-                  score: finalScore,
+                  rawScore: result.score * keyword.weight,
+                  normalizedScore: 0,
                   keyword: keyword.text,
                   type: 'fuzzy'
                 });
@@ -902,21 +1482,28 @@ export async function getContextForQueryInFolder(
 
     // 2. 向量搜索 - 过滤到文件夹范围
     try {
+      const windowSize = await store.get<number>('ragWindowSize') ?? 2;
+
       for (const keyword of sortedKeywords) {
         const queryEmbedding = await fetchEmbedding(keyword.text);
         if (queryEmbedding) {
-          let similarDocs = await getSimilarDocuments(queryEmbedding, resultCount, similarityThreshold);
+          let similarDocs = await getSimilarDocuments(queryEmbedding, resultCount * 2, similarityThreshold);
           // 过滤：只保留文件夹内的文件
           similarDocs = similarDocs.filter(doc => folderFilenames.has(doc.filename));
 
           if (similarDocs.length > 0) {
             similarDocs = await rerankDocuments(keyword.text, similarDocs);
 
-            for (const doc of similarDocs) {
-              allContexts.push({
+            // 应用句子窗口扩展
+            const expandedDocs = await expandWithSentenceWindow(similarDocs, windowSize);
+
+            for (const doc of expandedDocs) {
+              allResults.push({
                 filename: doc.filename,
+                filepath: doc.filename,
                 content: doc.content,
-                score: (doc.similarity || 0) * keyword.weight,
+                rawScore: (doc.similarity || 0) * keyword.weight,
+                normalizedScore: 0,
                 keyword: keyword.text,
                 type: 'vector'
               });
@@ -928,60 +1515,89 @@ export async function getContextForQueryInFolder(
       handleRAGError(error, '向量搜索失败', false);
     }
 
-    // 去重和排序逻辑（与 getContextForQuery 相同）
-    if (allContexts.length === 0) {
-      return { context: '', sources: [] };
-    }
+    // 3. 使用 BM25 搜索找到相关文档（限定到文件夹范围）
+    try {
+      const itemsMap = new Map(items.map(item => [item.id || item.title || '', item]));
 
-    // 第一阶段：使用精确哈希去重完全相同的内容
-    const uniqueContexts: typeof allContexts = [];
-    const seenHashes = new Set<string>();
+      for (const keyword of sortedKeywords) {
+        const bm25Results = await searchWithBM25(keyword.text, resultCount);
 
-    for (const ctx of allContexts) {
-      const contentHash = generateContentHash(ctx.content);
-      const hashWithFile = `${ctx.filename}-${contentHash}`;
+        for (const result of bm25Results) {
+          const item = itemsMap.get(result.id);
+          if (!item || !item.article) continue;
 
-      if (!seenHashes.has(hashWithFile)) {
-        seenHashes.add(hashWithFile);
-        uniqueContexts.push(ctx);
-      } else {
-        const existingIndex = uniqueContexts.findIndex(
-          existing => {
-            const existingHash = generateContentHash(existing.content);
-            return existing.filename === ctx.filename && existingHash === contentHash;
+          // 验证文件在文件夹范围内
+          if (!folderFilenames.has(item.title || '')) continue;
+
+          const articleLower = item.article.toLowerCase();
+          const keywordLower = keyword.text.toLowerCase();
+          const keywordIndex = articleLower.indexOf(keywordLower);
+
+          let startIdx = 0;
+          let endIdx = item.article.length;
+
+          if (keywordIndex >= 0) {
+            startIdx = Math.max(0, keywordIndex - 250);
+            endIdx = Math.min(item.article.length, keywordIndex + keyword.text.length + 250);
+          } else {
+            const mid = Math.floor(item.article.length / 2);
+            startIdx = Math.max(0, mid - 250);
+            endIdx = Math.min(item.article.length, mid + 250);
           }
-        );
-        if (existingIndex >= 0 && ctx.score > uniqueContexts[existingIndex].score) {
-          uniqueContexts[existingIndex] = ctx;
+
+          const contextSnippet = item.article.substring(startIdx, endIdx);
+
+          allResults.push({
+            filename: item.title || '未命名文件',
+            filepath: item.id || '',
+            content: contextSnippet,
+            rawScore: result.score * keyword.weight,
+            normalizedScore: 0,
+            keyword: keyword.text,
+            type: 'bm25'
+          });
         }
       }
+    } catch (error) {
+      handleRAGError(error, 'BM25 搜索失败', false);
     }
 
-    // 第二阶段：对相似内容进行合并
-    const finalUniqueContexts: typeof allContexts = [];
+    // 如果没有找到任何相关上下文，返回空结果
+    if (allResults.length === 0) {
+      return { context: '', sources: [], sourceDetails: [] };
+    }
+
+    // 3. 按文档合并结果，使用归一化和混合权重
+    const mergedResults = mergeResultsByDocument(allResults, weights);
+
+    // 4. 对相似内容进行合并
+    const finalUniqueResults: SearchResult[] = [];
     const mergedIndices = new Set<number>();
 
-    for (let i = 0; i < uniqueContexts.length; i++) {
+    for (let i = 0; i < mergedResults.length; i++) {
       if (mergedIndices.has(i)) continue;
 
-      const current = uniqueContexts[i];
-      let bestScore = current.score;
+      const current = mergedResults[i];
+      let bestScore = current.normalizedScore;
       let bestContent = current.content;
-      // eslint-disable-next-line prefer-const
-      let mergedKeywords = [current.keyword];
+      const mergedKeywords: string[] = [];
 
-      for (let j = i + 1; j < uniqueContexts.length; j++) {
+      if (current.keyword) {
+        mergedKeywords.push(current.keyword);
+      }
+
+      for (let j = i + 1; j < mergedResults.length; j++) {
         if (mergedIndices.has(j)) continue;
 
-        const other = uniqueContexts[j];
+        const other = mergedResults[j];
         if (other.filename !== current.filename) continue;
 
         const overlap = calculateContentOverlap(current.content, other.content);
 
         if (overlap > 0.7) {
           mergedIndices.add(j);
-          if (other.score > bestScore) {
-            bestScore = other.score;
+          if (other.normalizedScore > bestScore) {
+            bestScore = other.normalizedScore;
             bestContent = other.content;
           }
           if (other.keyword && !mergedKeywords.includes(other.keyword)) {
@@ -990,27 +1606,41 @@ export async function getContextForQueryInFolder(
         }
       }
 
-      finalUniqueContexts.push({
+      finalUniqueResults.push({
         ...current,
         content: bestContent,
-        score: bestScore,
+        normalizedScore: bestScore,
         keyword: mergedKeywords.join(', ')
       });
     }
 
-    finalUniqueContexts.sort((a, b) => b.score - a.score);
-    const finalContexts = finalUniqueContexts.slice(0, resultCount);
-    const sources = Array.from(new Set(finalContexts.map(ctx => ctx.filename)));
+    finalUniqueResults.sort((a: SearchResult, b: SearchResult) => b.normalizedScore - a.normalizedScore);
+    const finalResults = finalUniqueResults.slice(0, resultCount);
 
-    const context = finalContexts.map(ctx => {
+    const sources = Array.from(new Set(finalResults.map((ctx: SearchResult) => ctx.filename)));
+
+    // 构建 sourceDetails
+    const sourceDetailsMap = new Map<string, RagSource>();
+    for (const ctx of finalResults) {
+      if (!sourceDetailsMap.has(ctx.filename)) {
+        sourceDetailsMap.set(ctx.filename, {
+          filepath: ctx.filepath,
+          filename: ctx.filename,
+          content: ctx.content
+        })
+      }
+    }
+    const sourceDetails = Array.from(sourceDetailsMap.values())
+
+    const context = finalResults.map((ctx: SearchResult) => {
       return `文件：${ctx.filename}
 ${ctx.content}
 `;
     }).join('\n---\n\n');
 
-    return { context, sources };
+    return { context, sources, sourceDetails };
   } catch (error) {
     handleRAGError(error, '获取文件夹查询上下文失败', false);
-    return { context: '', sources: [] };
+    return { context: '', sources: [], sourceDetails: [] };
   }
 }
