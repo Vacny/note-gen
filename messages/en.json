@@ -39,6 +39,9 @@
     "import": "Import",
     "refresh": "Refresh",
     "loading": "Loading...",
+    "all": "All",
+    "today": "Today",
+    "yesterday": "Yesterday",
     "warning": "Warning",
     "info": "Info",
     "configureSync": "Configure Sync"
@@ -306,7 +309,41 @@
       "jsonImportSuccess": "Successfully imported {count} server(s)",
       "jsonImportSkipped": "Skipped {count} existing server(s)",
       "jsonImportNoServers": "No servers were imported",
-      "import": "Import"
+      "import": "Import",
+      "mobileHttpOnlyTitle": "Desktop-only local command MCP",
+      "mobileHttpOnlyDesc": "Local command MCP servers are only supported on desktop. Mobile currently supports HTTP MCP only.",
+      "runtimeEnvironment": "Runtime Environment",
+      "runtimeEnvironmentDesc": "Check whether the required local runtime is available before testing the MCP server.",
+      "checkEnvironment": "Check Environment",
+      "recheckEnvironment": "Re-check Environment",
+      "runtimeCheckFailed": "Environment check failed",
+      "detectedLauncher": "Detected launcher",
+      "runtimeInstalled": "Installed",
+      "runtimeMissing": "Missing",
+      "runtimeVersion": "Version",
+      "runtimeInstalledSummary": "{installed}/{total} installed",
+      "showRuntimeDetails": "Show runtime details",
+      "hideRuntimeDetails": "Hide runtime details",
+      "runtimeNotChecked": "This runtime has not been checked yet.",
+      "runtimeCurrentUserScope": "Recommended command targets the current user environment when supported.",
+      "runtimeManualOnly": "Automatic install is not available for this runtime on the current platform. Please install it manually and run the check again.",
+      "installRuntime": "Install Runtime",
+      "runtimeInstallTitle": "Install runtime",
+      "runtimeInstallDesc": "NoteGen will run the following install command after confirmation.",
+      "runtimeInstallPreparing": "Preparing install",
+      "runtimeInstallRunning": "Installing",
+      "runtimeInstallCompleted": "Install completed",
+      "runtimeInstallCancelled": "Cancelled",
+      "runtimeInstallFailedState": "Install failed",
+      "runtimeInstallLogs": "Install logs",
+      "runtimeInstallWaitingLogs": "Waiting for install output...",
+      "runtimeInstallClose": "Close",
+      "runtimeInstallCancel": "Stop install",
+      "runtimeInstallCancelledByUser": "Cancellation requested by user.",
+      "runtimeInstallCancelFailed": "Failed to stop install",
+      "runtimeInstallSuccess": "Runtime installation completed",
+      "runtimeInstallFailed": "Runtime installation failed",
+      "runtimeNoGuidedSupport": "No guided runtime assistance is available for this command yet."
     },
     "skills": {
       "title": "Skills",
@@ -366,8 +403,8 @@
       "title": "Editor Settings",
       "interfaceSettings": "Interface Settings",
       "desc": "Here, you can customize the editor, creating a writing experience tailored to your needs.",
-      "typewriterMode": "Typewriter Mode",
-      "typewriterModeDesc": "In typewriter mode, the editor will simulate a typewriter effect, helping you better immerse in writing.",
+      "centeredContent": "Centered Content",
+      "centeredContentDesc": "When enabled, editor content will be centered with margins on both sides.",
       "outlineEnable": "Default outline enabled",
       "outlineEnableDesc": "Enabling it will make the outline visible by default.",
       "outlinePosition": "Outline position",
@@ -376,14 +413,8 @@
         "left": "Left",
         "right": "Right"
       },
-      "pageView": "Page view",
-      "pageViewDesc": "In immersive view, the editor will reserve a large amount of blank space on both sides, and in panorama view, the editor content will occupy the entire editing area.",
-      "pageViewOptions": {
-        "immersiveView": "Immersive view",
-        "panoramaView": "Panorama view"
-      },
-      "enableLineNumber": "Enable line number",
-      "enableLineNumberDesc": "Enabling it will make the line number visible in code blocks.",
+      "showUndoRedo": "Undo/Redo buttons",
+      "showUndoRedoDesc": "Show undo and redo buttons in the editor tab bar.",
       "completion": {
         "title": "Auto Completion",
         "model": {
@@ -620,12 +651,19 @@
     "audio": {
       "title": "Audio Settings",
       "desc": "Here, you can configure audio settings, including text-to-speech (TTS) and speech-to-text (STT) functions.",
+      "mode": {
+        "title": "Mode",
+        "auto": "Auto (Recommended)",
+        "local": "Local only",
+        "model": "Model only"
+      },
       "tts": {
         "title": "Text-to-Speech (TTS)",
         "desc": "Configure read aloud functionality to provide voice playback for chat content.",
+        "modeDesc": "Prefer browser and system voices by default, and use a model only when needed for a better experience.",
         "model": {
           "title": "TTS Model",
-          "desc": "Select the AI model for text-to-speech conversion, supporting various voice types and parameter configurations."
+          "desc": "Optional. Configure a model to enhance auto mode or to power model-only mode."
         },
         "speed": {
           "title": "Speech Rate",
@@ -635,15 +673,31 @@
       "stt": {
         "title": "Speech-to-Text (STT)",
         "desc": "Configure voice recognition to convert speech to text records.",
-        "mode": {
-          "title": "Recognition Mode",
-          "desc": "Choose between browser built-in recognition or AI model recognition",
-          "builtin": "Built-in",
-          "model": "AI Model"
-        },
+        "modeDesc": "Prefer native browser recognition by default, and fall back to a model when local support is unavailable.",
         "model": {
           "title": "STT Model",
-          "desc": "Select the AI model for speech recognition, supporting real-time voice-to-text conversion."
+          "desc": "Optional. Configure a model for auto fallback or for model-only mode."
+        }
+      }
+    },
+    "readAloud": {
+      "title": "Read Aloud",
+      "desc": "Configure read aloud behavior. System voices are preferred by default, with model speech as an enhancement.",
+      "options": {
+        "mode": {
+          "title": "Mode",
+          "desc": "Auto mode prefers system voices and only tries a model when local speech is unavailable.",
+          "auto": "Auto (Recommended)",
+          "local": "Local only",
+          "model": "Model only"
+        },
+        "audioModel": {
+          "title": "Read Aloud Model",
+          "desc": "Optional. Configure a model to enhance auto mode or to power model-only mode."
+        },
+        "speed": {
+          "title": "Speed",
+          "desc": "Adjust read aloud speed from 0.5x to 2x, with 1x as the default rate."
         }
       }
     },
@@ -678,6 +732,16 @@
       "syncRepoDesc": "Sync markdown files in writing",
       "imageRepo": "Image Repository",
       "imageRepoDesc": "Sync your images to repository, using jsdelivr for acceleration",
+      "status": {
+        "connected": "Connected",
+        "disconnected": "Disconnected",
+        "failed": "Connection Failed",
+        "unconfigured": "Not Configured"
+      },
+      "uploadRecords": "Upload Records & Config",
+      "downloadConfig": "Download Records & Config",
+      "cloudSync": "Records & Config Sync",
+      "localBackupAll": "Local Backup (All)",
       "private": "Private",
       "public": "Public",
       "createdAt": "Created {time}",
@@ -719,6 +783,52 @@
         "selfHostedDesc": "Enter your self-hosted Gitea server address (e.g., https://gitea.example.com)"
       },
       "giteaAccessTokenDesc": "Create a personal access token at {instanceDisplayName}, requires full repository permission",
+      "s3": {
+        "title": "S3 Sync",
+        "description": "Sync your notes using S3-compatible storage",
+        "status": "Connection Status",
+        "connected": "Connected",
+        "connecting": "Connecting",
+        "disconnected": "Disconnected",
+        "accessKeyId": "Access Key ID",
+        "accessKeyIdPlaceholder": "Please enter Access Key ID",
+        "secretAccessKey": "Secret Access Key",
+        "secretAccessKeyPlaceholder": "Please enter Secret Access Key",
+        "region": "Region",
+        "bucket": "Bucket",
+        "bucketPlaceholder": "Please enter bucket name",
+        "endpoint": "Endpoint",
+        "pathPrefix": "Path Prefix",
+        "pathPrefixPlaceholder": "Please enter path prefix",
+        "pathPrefixDesc": "Used to differentiate files between different users, similar to repository name",
+        "customDomain": "Custom Domain",
+        "testConnection": "Test Connection",
+        "testing": "Testing",
+        "saveConfig": "Save Config",
+        "saving": "Saving"
+      },
+      "webdav": {
+        "title": "WebDAV Sync",
+        "description": "Sync your notes using WebDAV protocol",
+        "status": "Connection Status",
+        "connected": "Connected",
+        "connecting": "Connecting",
+        "disconnected": "Disconnected",
+        "url": "Server URL",
+        "urlPlaceholder": "Please enter WebDAV server URL",
+        "urlDesc": "Supports Synology, QNAP, Nextcloud and other WebDAV services",
+        "username": "Username",
+        "usernamePlaceholder": "Please enter username",
+        "password": "Password",
+        "passwordPlaceholder": "Please enter password",
+        "pathPrefix": "Path Prefix",
+        "pathPrefixPlaceholder": "Please enter path prefix",
+        "pathPrefixDesc": "Used to differentiate files between different users",
+        "testConnection": "Test Connection",
+        "testing": "Testing",
+        "saveConfig": "Save Config",
+        "saving": "Saving"
+      },
       "autoSync": "Auto Sync",
       "autoSyncOptions": {
         "placeholder": "Select auto sync time",
@@ -732,6 +842,10 @@
         "1m": "1 minute",
         "2m": "2 minutes"
       },
+      "autoPullOnOpen": "Auto pull when opening files",
+      "autoPullOnOpenDesc": "When opening a file, automatically pull remote version if newer",
+      "autoPullOnSwitch": "Auto pull when switching files",
+      "autoPullOnSwitchDesc": "When switching to another file, automatically pull remote version if newer",
       "exclusions": {
         "title": "Sync Exclusion Configuration",
         "desc": "The following settings will not be synced across devices as they are device-specific",
@@ -762,9 +876,17 @@
       "isPrimaryBackup": "Current {type} primary image hosting method",
       "setPrimaryBackup": "Set as Primary Image Hosting",
       "smms": {
+        "title": "S.EE Image Hosting",
+        "description": "Use S.EE to upload and manage images",
+        "status": "Connection Status",
+        "connected": "Connected",
+        "connecting": "Checking",
+        "disconnected": "Disconnected",
         "token": {
-          "desc": "Please create and input SM.MS Token.",
-          "createToken": "Create Token"
+          "desc": "Please create and input S.EE Token.",
+          "createToken": "Open S.EE Developer Page",
+          "helper": "Enter your S.EE API Token. Existing configuration can continue to be reused.",
+          "placeholder": "Enter S.EE API Token"
         },
         "disk": "Disk Usage",
         "error": "Failed to get, please check network or Token is correct."
@@ -859,44 +981,6 @@
     "backupSync": {
       "title": "Backup Data",
       "desc": "Here, you can use other methods to backup your data, you can regularly backup to ensure data security.",
-      "webdav": {
-        "connectionState": {
-          "success": "Connected",
-          "checking": "Connecting",
-          "failed": "Not Connected"
-        },
-        "description": "WebDAV is only used as a backup solution and does not support auto-sync, history rollback, and other features.",
-        "backupTo": "Backup to WebDAV",
-        "syncFrom": "Sync from WebDAV",
-        "serverUrl": "WebDAV Server URL",
-        "serverUrlDesc": "Enter the URL of the WebDAV server No path included, e.g: https://dav.example.com http://192.8.8.88:9999",
-        "serverUrlPlaceholder": "https://dav.example.com",
-        "username": "Username",
-        "usernameDesc": "WebDAV server username",
-        "usernamePlaceholder": "Username",
-        "password": "Password",
-        "passwordDesc": "WebDAV server password",
-        "passwordPlaceholder": "Password",
-        "backupPath": "Backup Path",
-        "backupPathDesc": "Backup path on the WebDAV server, e.g: /backup/notes",
-        "backupPathPlaceholder": "/backup/notes",
-        "backupSuccess": "Backup Successful",
-        "backupSuccessDesc": "Backed up {count} files to WebDAV.",
-        "syncSuccess": "Sync Successful",
-        "syncSuccessDesc": "Synced {count} files from WebDAV to local.",
-        "syncFailed": "Sync Failed",
-        "backupFailed": "Backup Failed",
-        "directoryCreated": "Directory Created",
-        "directoryCreatedDesc": "Directory {path} created successfully.",
-        "createDir": "Create Directory",
-        "success": "Success",
-        "failed": "Failed",
-        "error": {
-          "pathNotFound": "Path not found or server inaccessible.",
-          "createDirFailed": "Failed to create directory",
-          "connectionTimeOut": "Connection timed out, please check network or server."
-        }
-      },
       "localBackup": {
         "tabTitle": "Local Backup",
         "export": {
@@ -1225,8 +1309,8 @@
       },
       "assets": {
         "title": "Assets Path",
-        "desc": "Set the path where resources (e.g. images, videos, files etc.) used in writing will be saved. Resources will be saved at the same level as the currently edited markdown file.",
-        "select": "Set the path where resources used in writing will be saved"
+        "desc": "Set the asset directory name. Local image insertion in the editor will use this directory name, such as `assets` or `images`.",
+        "select": "Set the asset directory name, for example: assets"
       }
     },
     "shortcuts": {
@@ -1253,6 +1337,7 @@
       "confirm": "Are you sure to empty the trash?",
       "records": "{count} records can be restored",
       "empty": "Empty",
+      "restoreAll": "Restore All",
       "close": "Close Trash"
     },
     "queue": {
@@ -1514,6 +1599,25 @@
       },
       "toolbar": {
         "search": "Search",
+        "filter": {
+          "title": "Filter",
+          "description": "Instantly narrow records by content, time, and type.",
+          "search": "Search",
+          "searchPlaceholder": "Search record text, description, or link",
+          "type": "Type",
+          "time": "Time",
+          "tag": "Tag",
+          "allTags": "All tags",
+          "clear": "Clear filters",
+          "selectAllTypes": "Select all types",
+          "clearTypes": "Clear type selection",
+          "timeOptions": {
+            "all": "All time",
+            "today": "Today",
+            "last7Days": "Last 7 days",
+            "last30Days": "Last 30 days"
+          }
+        },
         "trash": "Trash",
         "restore": "Restore",
         "delete": "Delete",
@@ -1535,6 +1639,7 @@
         "processingVectors": "Processing Vector Data",
         "calculateVectors": "Calculate Document Vectors",
         "multiSelect": "Multi Select",
+        "multiSelectMode": "Multi Select Mode",
         "exitMultiSelect": "Exit Multi Select",
         "organizeNotes": "Organize Notes",
         "organizeSuccess": "Notes organized successfully: {title}",
@@ -1551,12 +1656,31 @@
         "selectAll": "Select All",
         "deselectAll": "Deselect All",
         "selectedCount": "{count} items selected",
+        "visibleCount": "{count} records",
         "moveSelectedTags": "Move selected {count} items",
         "deleteSelected": "Delete selected {count} items",
-        "deleteSelectedForever": "Permanently delete selected {count} items"
+        "deleteSelectedForever": "Permanently delete selected {count} items",
+        "view": {
+          "list": "List view",
+          "compact": "Compact view",
+          "cards": "Card view"
+        }
       },
       "list": {
-        "title": "Records"
+        "title": "Records",
+        "emptyFiltered": "No matching records",
+        "emptyFilteredHint": "Try adjusting the search or filters",
+        "filteredLabel": "{count} filtered",
+        "filtered": "Filtered",
+        "filteredByTag": "tag",
+        "filteredByType": "{count} types",
+        "filteredSummary": "Showing {count} results · {filters}",
+        "searchChip": "Search: {value}",
+        "time": {
+          "today": "Today",
+          "last7Days": "Last 7 days",
+          "last30Days": "Last 30 days"
+        }
       },
       "note": {
         "organizeAs": "Organize as",
@@ -1707,7 +1831,7 @@
           "translate": "Translate mode"
         },
         "chatModeSelect": {
-          "chatDescription": "Quick conversation, read-only mode",
+          "chatDescription": "Quick conversation, analysis-first",
           "agentDescription": "Smart assistant, can execute actions"
         },
         "attachImage": "Attach images",
@@ -1729,6 +1853,10 @@
           "thought": "Thought",
           "action": "Action",
           "toolCalls": "Tool Calls",
+          "autoFinal": {
+            "createNote": "Created note \"{name}\".",
+            "createFile": "Created file \"{name}\"."
+          },
           "confirmation": {
             "title": "Confirm Action",
             "description": "The agent wants to perform the following action. Please confirm to continue.",
@@ -1737,7 +1865,59 @@
             "cancel": "Cancel",
             "confirm": "Confirm",
             "confirmed": "Confirmed",
-            "cancelled": "Cancelled"
+            "cancelled": "Cancelled",
+            "fallback": {
+              "title": "Review action",
+              "description": "Please confirm the target and content of this action."
+            },
+            "params": {
+              "filePath": "File path",
+              "content": "File content",
+              "sourcePath": "Source path",
+              "targetPath": "Target path",
+              "files": "Files",
+              "newName": "New name",
+              "scriptName": "Script name",
+              "command": "Command"
+            },
+            "tools": {
+              "create_file": {
+                "title": "Create file",
+                "description": "A new file will be created in the workspace."
+              },
+              "create_files_batch": {
+                "title": "Create files",
+                "description": "Multiple new files will be created in the workspace."
+              },
+              "rename_file": {
+                "title": "Rename file",
+                "description": "The selected file will be renamed."
+              },
+              "move_file": {
+                "title": "Move file",
+                "description": "The file will be moved to a new location."
+              },
+              "copy_file": {
+                "title": "Copy file",
+                "description": "A copy of the file will be created at the target location."
+              },
+              "replace_editor_content": {
+                "title": "Replace editor content",
+                "description": "The current editor content will be replaced."
+              },
+              "insert_at_cursor": {
+                "title": "Insert at cursor",
+                "description": "Content will be inserted at the current cursor position."
+              },
+              "delete_markdown_file": {
+                "title": "Delete file",
+                "description": "The selected file will be permanently deleted."
+              },
+              "execute_skill_script": {
+                "title": "Run script",
+                "description": "A skill-provided script or command will be executed."
+              }
+            }
           }
         },
         "fileLink": {
@@ -1834,6 +2014,7 @@
     "record": "Record",
     "quickRecord": "Quick Record",
     "write": "Write",
+    "me": "My",
     "search": "Search",
     "githubImageHosting": "Github Image Hosting",
     "login": "Login",
@@ -1841,6 +2022,7 @@
     "view": "View",
     "logout": "Logout",
     "setting": "Settings",
+    "activity": "Activity",
     "files": "Notes",
     "outline": "Outline",
     "showLeftSidebar": "Show Left Sidebar",
@@ -1850,6 +2032,42 @@
     "showRightSidebar": "Show Right Sidebar",
     "hideRightSidebar": "Hide Right Sidebar",
     "searchPlaceholder": "Search notes or records..."
+  },
+  "activity": {
+    "title": "Activity Calendar",
+    "description": "Review your daily records, chats, and writing activity in one place. This first version is derived from existing records, user chats, and note modification times.",
+    "drawer": {
+      "title": "Activity",
+      "description": "Quickly review today's status and your recent activity trend.",
+      "today": "Today"
+    },
+    "loading": "Loading activity data...",
+    "empty": "No activity data yet",
+    "refresh": "Refresh",
+    "summary": {
+      "totalCount": "Total Activity",
+      "activeDays": "Active Days",
+      "records": "Records",
+      "chats": "Chats",
+      "writing": "Writing"
+    },
+    "labels": {
+      "record": "Record",
+      "writing": "Writing",
+      "chat": "Chat"
+    },
+    "heatmap": {
+      "title": "Last 26 Weeks",
+      "range": "{startDate} - {endDate}",
+      "less": "Less",
+      "more": "More",
+      "dayCount": "activities",
+      "emptyDay": "No activity"
+    },
+    "detail": {
+      "title": "Day Details",
+      "empty": "Select a day to inspect its activity details."
+    }
   },
   "marks": {
     "types": {
@@ -1910,6 +2128,77 @@
         "openWorkspace": {
           "title": "Open Workspace",
           "desc": "Select or switch workspace directory"
+        }
+      },
+      "onboarding": {
+        "title": "Onboarding",
+        "subtitle": "Walk through these three tasks to learn the core NoteGen flow.",
+        "dismiss": "Skip onboarding",
+        "reopen": "Show onboarding again",
+        "start": "Start",
+        "viewHint": "Show hint",
+        "continue": "Continue",
+        "completed": "Done",
+        "allDone": "All getting-started tasks are complete. You've already tried the core NoteGen workflow.",
+        "stepLabel": "Task ({current}/{total})",
+        "stepCompletedLabel": "Completed Task ({current}/{total})",
+        "afterOrganizeDialog": {
+          "title": "Completed Task (2/3)",
+          "description": "You've turned the record into a note. Do you want to continue and use the AI Agent to turn this note into a bilingual version?",
+          "confirm": "Continue",
+          "cancel": "Not now"
+        },
+        "agentPrompt": {
+          "label": "Sample Prompt",
+          "use": "Use This Prompt",
+          "intro": "Please directly revise the note I just organized into a bilingual Chinese-English version.",
+          "requirement1": "",
+          "requirement2": "",
+          "requirement3": "",
+          "requirement4": "",
+          "outro": ""
+        },
+        "steps": {
+          "createRecord": {
+            "title": "Create your first record",
+            "desc": "Save a sample record and learn where quick capture lives."
+          },
+          "organizeNote": {
+            "title": "Organize it into a note",
+            "desc": "Turn that record into a structured note."
+          },
+          "aiPolish": {
+            "title": "Use Agent for bilingual translation",
+            "desc": "Use the AI Agent to turn the note you just organized into a bilingual version."
+          }
+        },
+        "completedStates": {
+          "create-record": {
+            "title": "Your first record is saved",
+            "desc": "You now know where quick capture lives."
+          },
+          "organize-note": {
+            "title": "Your record is now a note",
+            "desc": "Next, try using AI to revise the note."
+          },
+          "ai-polish": {
+            "title": "You used the Agent on the note",
+            "desc": "You've completed the flow from capture to note organization to Agent-assisted processing."
+          }
+        },
+        "spotlight": {
+          "create-record": {
+            "title": "This is the quick record entry",
+            "desc": "Click here to open text capture. We'll preload a sample record so you can save it right away."
+          },
+          "organize-note": {
+            "title": "This button organizes records into a note",
+            "desc": "Use it to turn your captured record into a full Markdown note."
+          },
+          "ai-polish": {
+            "title": "Use the Agent on the note you just created here",
+            "desc": "Insert the sample prompt into chat and send it. The Agent will generate a bilingual version based on the current note."
+          }
         }
       }
     },
@@ -2077,6 +2366,22 @@
         },
         "notSupported": "Operation not supported"
       },
+      "mobile": {
+        "cancel": "Cancel",
+        "create": "Create",
+        "save": "Save",
+        "emptyDir": "This folder is empty",
+        "root": "Root",
+        "openFiles": "Open files",
+        "remote": "Remote file",
+        "remoteFileNotPulled": "Cloud only · Tap to pull",
+        "remoteFolderOnly": "Cloud-only folder",
+        "file": "File",
+        "folder": "Folder",
+        "folderChildren": "{files} files · {folders} folders",
+        "filePlaceholder": "example.md",
+        "folderPlaceholder": "example-folder"
+      },
       "deleteConfirm": "Are you sure you want to delete this file?"
     },
     "editor": {
@@ -2214,6 +2519,48 @@
     }
   },
   "mobile": {
+    "me": {
+      "profile": {
+        "deviceName": "Sync Platform",
+        "deviceSubtitle": "Sync your records and settings",
+        "syncPlatform": "Sync Platform",
+        "gitSubtitle": "Connected to {provider} to sync your records and settings",
+        "storageSubtitle": "Currently using {provider} to sync your records and settings",
+        "unconfiguredSubtitle": "Sync is not configured yet. Your data is currently stored locally only",
+        "streak": "Active for {count} days in a row"
+      },
+      "activity": {
+        "tip": "Tap any day in the heatmap to open its activity timeline.",
+        "range": "Last {count} weeks",
+        "rangePlaceholder": "Last 16 weeks",
+        "drawerEmpty": "Choose a day to inspect its activity details.",
+        "drawerSummary": "{total} activities that day, including {record} records, {writing} writing events, and {chat} chats."
+      },
+      "sync": {
+        "title": "Sync",
+        "configured": "Connected",
+        "unconfigured": "Not configured",
+        "localOnly": "Local only"
+      },
+      "stats": {
+        "weekly": "This Week",
+        "weeklyHint": "Total activities this week",
+        "streak": "Current Streak",
+        "streakHint": "Consecutive active days"
+      },
+      "status": {
+        "title": "Current Setup",
+        "sync": "Backup Method",
+        "model": "Default Model",
+        "configured": "Connected",
+        "unconfigured": "Not configured",
+        "modelFallback": "No default model"
+      },
+      "settings": {
+        "title": "Settings",
+        "description": "Open each feature setting directly from here."
+      }
+    },
     "chat": {
       "drawer": {
         "settings": {
@@ -2259,11 +2606,18 @@
     "error": "Error",
     "success": "Success",
     "noModelConfigured": "Speech recognition model not configured, please configure in settings first",
+    "speechUnavailable": "The current speech recognition mode is unavailable. Check local speech support or model configuration.",
+    "fallbackToModel": "Local speech recognition is unavailable, so the app switched to model transcription automatically.",
     "startError": "Unable to start recording",
     "noAudioData": "No audio data recorded",
     "transcriptionSuccess": "Speech recognition completed",
     "transcriptionEmpty": "Recognition result is empty",
     "transcriptionError": "Speech recognition failed",
+    "configureModel": "Configure model",
+    "retryTranscription": "Retry transcription",
+    "retrying": "Retrying...",
+    "retrySuccess": "Transcription updated",
+    "retryError": "Retry transcription failed",
     "noContentDetected": "No content detected",
     "doubleClickToSelectFile": "Double click to select audio file",
     "mode": {

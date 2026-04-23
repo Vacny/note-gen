@@ -3,6 +3,8 @@ import useSettingStore from "@/stores/setting";
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useTheme } from 'next-themes'
 import MarkdownIt from 'markdown-it';
+import katex from '@traptitech/markdown-it-katex';
+import 'katex/dist/katex.min.css';
 import hljs from 'highlight.js/lib/core';
 import javascript from 'highlight.js/lib/languages/javascript';
 import typescript from 'highlight.js/lib/languages/typescript';
@@ -12,6 +14,7 @@ import xml from 'highlight.js/lib/languages/xml';
 import css from 'highlight.js/lib/languages/css';
 import 'highlight.js/styles/github.min.css';
 import './chat.css';
+import { advanceStreamingSmoother } from './streaming-smoother';
 
 type ThemeType = 'light' | 'dark' | 'system';
 
@@ -20,16 +23,21 @@ type ChatPreviewProps = {
   streaming?: boolean; // 是否为流式内容
 };
 
+const MIN_RENDER_INTERVAL_MS = 33;
+
 export default function ChatPreview({text, streaming = false}: ChatPreviewProps) {
   const previewRef = useRef<HTMLDivElement>(null);
   const { theme } = useTheme()
   const [mdTheme, setMdTheme] = useState<ThemeType>('light')
   const { codeTheme, contentTextScale } = useSettingStore()
   const [htmlContent, setHtmlContent] = useState<string>('');
-  const [displayedText, setDisplayedText] = useState<string>('');
+  const [, setDisplayedText] = useState<string>('');
   const animationRef = useRef<number | null>(null);
-  const lastTextRef = useRef<string>('');
-
+  const displayedTextRef = useRef('');
+  const targetTextRef = useRef('');
+  const carryCharsRef = useRef(0);
+  const lastFrameTimeRef = useRef<number | null>(null);
+  const lastRenderTimeRef = useRef(0);
   const md = useRef<MarkdownIt | null>(null);
 
   useEffect(() => {
@@ -55,12 +63,14 @@ export default function ChatPreview({text, streaming = false}: ChatPreviewProps)
             '</code></pre>';
           } catch {}
         }
-        // 使用通用高亮
         const themeClass = mdTheme === 'dark' ? 'hljs-dark' : 'hljs-light';
         return `<pre class="hljs ${themeClass}"><code>` +
           (md.current ? md.current.utils.escapeHtml(str) : str) +
           '</code></pre>';
       }
+    }).use(katex, {
+      throwOnError: false,
+      errorColor: '#cc0000'
     });
 
     md.current.renderer.rules.link_open = function (tokens, idx, options, _env, self) {
@@ -68,102 +78,118 @@ export default function ChatPreview({text, streaming = false}: ChatPreviewProps)
       tokens[idx].attrSet('rel', 'noopener noreferrer');
       return self.renderToken(tokens, idx, options);
     }
+
+    if (displayedTextRef.current) {
+      setHtmlContent(md.current.render(displayedTextRef.current));
+    } else {
+      setHtmlContent('');
+    }
   }, [mdTheme]);
 
-  // 打字机效果动画
-  const animateTypewriter = useCallback((targetText: string) => {
-    // 如果动画正在进行中，先取消
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
+  const renderDisplayedText = useCallback((nextText: string, force = false) => {
+    displayedTextRef.current = nextText;
+
+    if (!force) {
+      const now = performance.now();
+      if (now - lastRenderTimeRef.current < MIN_RENDER_INTERVAL_MS) {
+        return;
+      }
+      lastRenderTimeRef.current = now;
+    } else {
+      lastRenderTimeRef.current = performance.now();
     }
 
-    const startText = displayedText;
-    const startTime = performance.now();
-    const duration = 80; // 80ms 内平滑显示新内容
+    setDisplayedText(nextText);
+    if (md.current) {
+      setHtmlContent(md.current.render(nextText));
+    } else {
+      setHtmlContent(nextText);
+    }
+  }, []);
 
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / duration, 1);
+  const stopAnimation = useCallback(() => {
+    if (animationRef.current !== null) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+    lastFrameTimeRef.current = null;
+    carryCharsRef.current = 0;
+  }, []);
 
-      // 使用 easeOutQuad 使动画更平滑
-      const easeProgress = 1 - (1 - progress) * (1 - progress);
+  const tickStreaming = useCallback((frameTime: number) => {
+    const lastFrameTime = lastFrameTimeRef.current ?? frameTime;
+    const elapsedMs = frameTime - lastFrameTime;
+    lastFrameTimeRef.current = frameTime;
 
-      const newLength = Math.floor(startText.length + (targetText.length - startText.length) * easeProgress);
+    const next = advanceStreamingSmoother(
+      {
+        carryChars: carryCharsRef.current,
+        displayedLength: displayedTextRef.current.length,
+      },
+      targetTextRef.current.length,
+      elapsedMs,
+    );
 
-      if (newLength > displayedText.length && newLength <= targetText.length) {
-        const newText = targetText.slice(0, newLength);
-        if (md.current) {
-          setHtmlContent(md.current.render(newText));
-        }
-        setDisplayedText(newText);
-      }
+    carryCharsRef.current = next.carryChars;
 
-      if (progress < 1) {
-        animationRef.current = requestAnimationFrame(animate);
-      } else {
-        setDisplayedText(targetText);
-        if (md.current) {
-          setHtmlContent(md.current.render(targetText));
-        }
-      }
-    };
+    if (next.charsAdded > 0) {
+      renderDisplayedText(
+        targetTextRef.current.slice(0, next.displayedLength),
+      );
+    }
 
-    animationRef.current = requestAnimationFrame(animate);
-  }, [displayedText]);
+    if (next.displayedLength >= targetTextRef.current.length) {
+      animationRef.current = null;
+      lastFrameTimeRef.current = null;
+      carryCharsRef.current = 0;
+      renderDisplayedText(targetTextRef.current, true);
+      return;
+    }
+
+    animationRef.current = requestAnimationFrame(tickStreaming);
+  }, [renderDisplayedText]);
+
+  const ensureStreamingAnimation = useCallback(() => {
+    if (animationRef.current !== null) {
+      return;
+    }
+    lastFrameTimeRef.current = null;
+    animationRef.current = requestAnimationFrame(tickStreaming);
+  }, [tickStreaming]);
 
   // 处理流式内容更新
   useEffect(() => {
     if (!streaming) {
-      // 非流式内容，直接显示
-      if (text && md.current) {
-        setHtmlContent(md.current.render(text));
-        setDisplayedText(text);
-      } else if (!text) {
-        setHtmlContent('');
-        setDisplayedText('');
+      stopAnimation();
+      targetTextRef.current = text;
+      renderDisplayedText(text, true);
+      return;
+    }
+
+    targetTextRef.current = text;
+
+    if (text.length < displayedTextRef.current.length) {
+      stopAnimation();
+      renderDisplayedText(text, true);
+      return;
+    }
+
+    if (text.length === displayedTextRef.current.length) {
+      if (text !== displayedTextRef.current) {
+        renderDisplayedText(text, true);
       }
       return;
     }
 
-    // 流式内容
-    const newText = text;
-
-    // 检测是否是首次加载或文本被重置
-    if (!lastTextRef.current || newText.length < lastTextRef.current.length) {
-      // 重置或首次加载
-      setDisplayedText(newText);
-      if (md.current) {
-        setHtmlContent(md.current.render(newText));
-      }
-      lastTextRef.current = newText;
-      return;
-    }
-
-    // 有新内容到达
-    const addedContent = newText.slice(displayedText.length);
-
-    // 如果添加的内容不多，使用打字机效果
-    if (addedContent.length > 0 && addedContent.length <= 50) {
-      animateTypewriter(newText);
-    } else {
-      // 添加内容太多，直接显示
-      setDisplayedText(newText);
-      if (md.current) {
-        setHtmlContent(md.current.render(newText));
-      }
-    }
-
-    lastTextRef.current = newText;
-  }, [text, streaming, animateTypewriter]);
+    ensureStreamingAnimation();
+  }, [text, streaming, ensureStreamingAnimation, renderDisplayedText, stopAnimation]);
 
   // 清理动画
   useEffect(() => {
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
+      stopAnimation();
     };
-  }, []);
+  }, [stopAnimation]);
 
   useEffect(() => {
     if (theme === 'system') {

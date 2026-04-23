@@ -19,12 +19,25 @@ import {
 async function getGitlabApiBaseUrl(): Promise<string> {
   const store = await Store.load('store.json');
   const instanceType = await store.get<GitlabInstanceType>('gitlabInstanceType') || GitlabInstanceType.OFFICIAL;
-  
+
   if (instanceType === GitlabInstanceType.SELF_HOSTED) {
-    const customUrl = await store.get<string>('gitlabCustomUrl') || '';
+    let customUrl = await store.get<string>('gitlabCustomUrl') || '';
+    // 移除末尾的斜杠，避免双斜杠问题
+    customUrl = customUrl.replace(/\/+$/, '').trim();
+
+    // 验证自定义 URL 是否有效
+    if (!customUrl) {
+      throw new Error('自建 GitLab 实例的 URL 未配置，请先在设置中填写 GitLab URL');
+    }
+
+    // 确保 URL 包含协议
+    if (!customUrl.startsWith('http://') && !customUrl.startsWith('https://')) {
+      customUrl = 'https://' + customUrl;
+    }
+
     return `${customUrl}/api/v4`;
   }
-  
+
   const instance = GITLAB_INSTANCES[instanceType];
   return `${instance.baseUrl}/api/v4`;
 }
@@ -33,12 +46,16 @@ async function getGitlabApiBaseUrl(): Promise<string> {
 async function getCommonHeaders(): Promise<any> {
   const store = await Store.load('store.json');
   const accessToken = await store.get<string>('gitlabAccessToken');
-  
+
+  if (!accessToken) {
+    throw new Error('GitLab Access Token 未配置');
+  }
+
   const headers = {
     "Content-Type": 'application/json;charset=iso-8859-1',
     "PRIVATE-TOKEN": accessToken,
   };
-  
+
   return headers;
 }
 
@@ -68,6 +85,7 @@ export async function uploadFile({
   repo: string;
   path?: string;
 }) {
+  console.log('[gitlab uploadFile] file length:', file.length, 'filename:', filename, 'path:', path, 'sha:', sha)
   try {
     const store = await Store.load('store.json');
     const gitlabUsername = await store.get<string>('gitlabUsername');
@@ -80,11 +98,17 @@ export async function uploadFile({
     const id = uuid();
     let _filename = filename || id;
     // 将空格转换成下划线
-    _filename = encodeURIComponent(_filename.replace(/\s/g, '_'));
-    const _path = path ? `${path}/${_filename}` : _filename;
+    _filename = _filename.replace(/\s/g, '_');
 
-    // 对路径进行标准化处理
-    const normalizedPath = _path.split('/').map(p => encodeURIComponent(p)).join('/');
+    // path 是完整路径（如 notes/test.md），需要分离出目录和文件名
+    // 参考 Gitea 的处理方式
+    const _path = path ? `/${path}` : '';
+    // 先去掉开头的 /，再分割，然后去掉最后一个（文件名），最后重新组合
+    const pathParts = _path.split('/').filter(p => p); // 去掉空字符串
+    const encodedPath = pathParts.slice(0, -1).map(p => encodeURIComponent(p.replace(/\s/g, '_'))).join('/');
+    const normalizedPath = pathParts.length > 1 ? `${encodedPath}/${_filename}` : (pathParts.length === 1 ? `${pathParts[0]}/${_filename}` : _filename);
+
+    console.log('[gitlab uploadFile] path:', path, '_path:', _path, 'pathParts:', pathParts, 'normalizedPath:', normalizedPath)
 
     // 将内容转换为 Base64（GitLab API 要求）
     const base64Content = Buffer.from(file, 'utf-8').toString('base64')
@@ -119,28 +143,104 @@ export async function uploadFile({
     }
 
     const url = `${baseUrl}/projects/${projectId}/repository/files/${normalizedPath}`;
-    const method = sha ? 'PUT' : 'POST';
 
-    const response = await fetch(url, {
-      method,
+    // 首先尝试使用 Commits API 创建文件（会自动创建目录）
+    // GitLab Commits API 可以通过一次 commit 创建多个文件，包括父目录
+    const commitsApiUrl = `${baseUrl}/projects/${projectId}/repository/commits`;
+
+    const commitActions = [{
+      action: sha ? 'update' : 'create',
+      file_path: normalizedPath,
+      content: base64Content,
+      encoding: 'base64'
+    }];
+
+    const commitBody = {
+      branch: 'main',
+      commit_message: message || `Upload ${filename || id}`,
+      actions: commitActions
+    };
+
+    console.log('[gitlab uploadFile] Trying Commits API to create file, url:', commitsApiUrl)
+
+    const commitResponse = await fetch(commitsApiUrl, {
+      method: 'POST',
       headers,
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify(commitBody),
       proxy
     });
 
-    if (response.status >= 200 && response.status < 300) {
-      const data = await response.json();
+    console.log('[gitlab uploadFile] Commits API status:', commitResponse.status)
+
+    if (commitResponse.status >= 200 && commitResponse.status < 300) {
+      const data = await commitResponse.json();
+      console.log('[gitlab uploadFile] Commits API success:', data)
       return { data } as GitlabResponse<any>;
     }
 
-    if (response.status === 400) {
-      return null;
+    // 如果是 400 错误，可能文件已存在，尝试用 PUT 更新
+    if (commitResponse.status === 400) {
+      const commitErrorData = await commitResponse.json();
+      console.log('[gitlab uploadFile] Commits API error:', commitErrorData)
+
+      // 检查是否是文件已存在的错误
+      if (commitErrorData.error && commitErrorData.error.includes('already exists')) {
+        // 获取当前文件的 SHA
+        const fileUrl = `${baseUrl}/projects/${projectId}/repository/files/${normalizedPath}?ref=main`;
+        const fileResponse = await fetch(fileUrl, {
+          method: 'GET',
+          headers,
+          proxy
+        });
+
+        let fileSha = '';
+        if (fileResponse.ok) {
+          const fileData = await fileResponse.json();
+          fileSha = fileData.blob_id || fileData.sha;
+        }
+
+        // 使用 PUT 更新文件
+        const putBody = {
+          branch: 'main',
+          content: base64Content,
+          commit_message: message || `Update ${filename || id}`,
+          encoding: 'base64',
+          sha: fileSha
+        };
+
+        const putResponse = await fetch(url, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(putBody),
+          proxy
+        });
+
+        console.log('[gitlab uploadFile] PUT status:', putResponse.status)
+
+        if (putResponse.status >= 200 && putResponse.status < 300) {
+          const data = await putResponse.json();
+          return { data } as GitlabResponse<any>;
+        }
+
+        const putErrorData = await putResponse.json();
+        throw {
+          status: putResponse.status,
+          message: putErrorData.message || '更新文件失败'
+        } as GitlabError;
+      }
+
+      throw {
+        status: commitResponse.status,
+        message: commitErrorData.error || '同步失败'
+      } as GitlabError;
     }
 
-    const errorData = await response.json();
+    // 其他错误
+    const commitErrorData = await commitResponse.json();
+    console.log('[gitlab uploadFile] Commits API error:', commitErrorData)
     throw {
-      status: response.status,
-      message: errorData.message || '同步失败'
+      status: commitResponse.status,
+      message: commitErrorData.error || commitErrorData.message || '同步失败'
     } as GitlabError;
 
   } catch (error) {
@@ -158,27 +258,32 @@ export async function uploadFile({
  * @param params 查询参数
  */
 export async function getFiles({ path, repo }: { path: string; repo: string }) {
+  console.log('[gitlab getFiles] path:', path, 'repo:', repo)
   try {
     const store = await Store.load('store.json');
     const projectId = await store.get<string>(`gitlab_${repo}_project_id`);
-    
+    console.log('[gitlab getFiles] projectId:', projectId)
+
     if (!projectId) {
       throw new Error('项目 ID 未配置');
     }
 
     const baseUrl = await getGitlabApiBaseUrl();
+    console.log('[gitlab getFiles] baseUrl:', baseUrl)
     const headers = await getCommonHeaders();
     const proxy = await getProxyConfig();
 
     // 先尝试获取单个文件信息
     const fileUrl = `${baseUrl}/projects/${projectId}/repository/files/${encodeURIComponent(path)}?ref=main`;
-    
+    console.log('[gitlab getFiles] fileUrl:', fileUrl)
+
     try {
       const fileResponse = await fetch(fileUrl, {
         method: 'GET',
         headers,
         proxy
       });
+      console.log('[gitlab getFiles] fileResponse status:', fileResponse.status)
 
       if (fileResponse.status >= 200 && fileResponse.status < 300) {
         const fileData = await fileResponse.json();
@@ -190,21 +295,25 @@ export async function getFiles({ path, repo }: { path: string; repo: string }) {
           size: fileData.size,
         };
       }
-    } catch {
+    } catch (e) {
+      console.log('[gitlab getFiles] file fetch error:', e)
       // 如果获取单个文件失败，继续尝试获取目录列表
     }
 
     // 如果不是单个文件，尝试获取目录列表
     const url = `${baseUrl}/projects/${projectId}/repository/tree?path=${path}`;
+    console.log('[gitlab getFiles] treeUrl:', url)
 
     const response = await fetch(url, {
       method: 'GET',
       headers,
       proxy
     });
+    console.log('[gitlab getFiles] treeResponse status:', response.status)
 
     if (response.status >= 200 && response.status < 300) {
       const data = await response.json() as GitlabRepositoryFile[];
+      console.log('[gitlab getFiles] tree data:', data)
       return data.map(item => {
         return {
           name: item.name,
@@ -215,17 +324,27 @@ export async function getFiles({ path, repo }: { path: string; repo: string }) {
       })
     }
 
-    if (response.status >= 400 && response.status < 500) {
+    // 文件或目录不存在，返回 null
+    if (response.status === 404) {
       return null
     }
 
-    const errorData = await response.json();
-    throw {
-      status: response.status,
-      message: errorData.message || '获取文件列表失败'
-    } as GitlabError;
+    // 401 或其他客户端错误，抛出错误
+    if (response.status >= 400 && response.status < 500) {
+      const errorData = await response.json().catch(() => ({}));
+      throw {
+        status: response.status,
+        message: errorData.message || `获取文件列表失败: ${response.status}`
+      } as GitlabError;
+    }
 
-  } catch {
+    return null;
+
+  } catch (error) {
+    // 重新抛出已处理的错误，静默处理其他错误
+    if ((error as GitlabError).status) {
+      throw error;
+    }
     // 静默处理错误，不显示 toast，因为这可能只是文件不存在
     return null;
   }
@@ -248,8 +367,9 @@ export async function deleteFile({ path, repo }: { path: string; sha?: string; r
     const headers = await getCommonHeaders();
     const proxy = await getProxyConfig();
 
-    // 获取文件的最新提交 ID
-    const commitsUrl = `${baseUrl}/projects/${projectId}/repository/commits?path=${path}&per_page=1`;
+    // 获取文件的最新提交 ID，对 path 进行编码
+    const encodedPath = encodeURIComponent(path);
+    const commitsUrl = `${baseUrl}/projects/${projectId}/repository/commits?path=${encodedPath}&per_page=1`;
     const commitsResponse = await fetch(commitsUrl, {
       method: 'GET',
       headers,
@@ -314,7 +434,9 @@ export async function getFileCommits({ path, repo }: { path: string; repo: strin
     const headers = await getCommonHeaders();
     const proxy = await getProxyConfig();
 
-    const url = `${baseUrl}/projects/${projectId}/repository/commits?path=${path}&per_page=100`;
+    // 对 path 进行编码，避免特殊字符导致 404
+    const encodedPath = encodeURIComponent(path);
+    const url = `${baseUrl}/projects/${projectId}/repository/commits?path=${encodedPath}&per_page=100`;
 
     const response = await fetch(url, {
       method: 'GET',

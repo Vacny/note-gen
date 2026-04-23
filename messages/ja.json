@@ -303,6 +303,41 @@
       "jsonImportSkipped": "{count} 個の既存サーバーをスキップしました",
       "jsonImportNoServers": "サーバーがインポートされませんでした",
       "import": "インポート",
+      "mobileHttpOnlyTitle": "ローカルコマンド MCP はデスクトップ専用です",
+      "mobileHttpOnlyDesc": "ローカルコマンド型 MCP サーバーはデスクトップでのみ利用できます。モバイルでは現在 HTTP MCP のみサポートします。",
+      "runtimeEnvironment": "ランタイム環境",
+      "runtimeEnvironmentDesc": "MCP サーバーをテストする前に、必要なローカルランタイムが利用可能か確認します。",
+      "checkEnvironment": "環境を確認",
+      "recheckEnvironment": "再チェック",
+      "runtimeCheckFailed": "環境チェックに失敗しました",
+      "detectedLauncher": "検出されたランチャー",
+      "runtimeInstalled": "インストール済み",
+      "runtimeMissing": "未検出",
+      "runtimeVersion": "バージョン",
+      "runtimeInstalledSummary": "{installed}/{total} がインストール済み",
+      "showRuntimeDetails": "ランタイムの詳細を表示",
+      "hideRuntimeDetails": "ランタイムの詳細を隠す",
+      "runtimeNotChecked": "このランタイムはまだ確認していません。",
+      "runtimeCurrentUserScope": "対応している場合、推奨コマンドは現在のユーザー環境にインストールします。",
+      "runtimeManualOnly": "このプラットフォームでは自動インストールに対応していません。手動でインストールしてから再チェックしてください。",
+      "installRuntime": "ランタイムをインストール",
+      "runtimeInstallTitle": "ランタイムをインストール",
+      "runtimeInstallDesc": "確認後、NoteGen は以下のインストールコマンドを実行します。",
+      "runtimeInstallPreparing": "インストールを準備中",
+      "runtimeInstallRunning": "インストール中",
+      "runtimeInstallCompleted": "インストール完了",
+      "runtimeInstallCancelled": "キャンセル済み",
+      "runtimeInstallFailedState": "インストール失敗",
+      "runtimeInstallLogs": "インストールログ",
+      "runtimeInstallWaitingLogs": "インストール出力を待機中...",
+      "runtimeInstallClose": "閉じる",
+      "runtimeInstallCancel": "インストールを停止",
+      "runtimeInstallCancelledByUser": "ユーザーがインストールのキャンセルを要求しました。",
+      "runtimeInstallCancelFailed": "インストールの停止に失敗しました",
+      "runtimeInstallSuccess": "ランタイムのインストールが完了しました",
+      "runtimeInstallFailed": "ランタイムのインストールに失敗しました",
+      "runtimeNoGuidedSupport": "このコマンドにはまだガイド付きランタイム補助がありません。"
+      ,
       "enableTitle": "启用 MCP 功能",
       "enableDesc": "启用后，AI 可以调用配置的 MCP 服务器提供的工具。"
     },
@@ -310,8 +345,8 @@
       "title": "エディター設定",
       "interfaceSettings": "インターフェース設定",
       "desc": "ここでは、エディターをカスタマイズして、より適した書き込み体験を提供できます。",
-      "typewriterMode": "打字機モード",
-      "typewriterModeDesc": "打字機モード下、エディタは打字機の効果を模倣し、より深く浸かる書き込み体験を提供します。",
+      "centeredContent": "コンテンツを中央に表示",
+      "centeredContentDesc": "有効にすると、コンテンツを中央に表示し、両側に余白を設けます。",
       "outlineEnable": "アウトラインを有効にする",
       "outlineEnableDesc": "アウトラインを有効にすると、アウトラインが表示されます。",
       "outlinePosition": "アウトライン位置",
@@ -320,14 +355,8 @@
         "left": "左側",
         "right": "右側"
       },
-      "pageView": "ページビュー",
-      "pageViewDesc": "沉浸視图下、編集器の両側に大量の空白が残され、全景モード下、編集器の内容は編集領域を占めます。",
-      "pageViewOptions": {
-        "immersiveView": "沉浸視图",
-        "panoramaView": "全景視图"
-      },
-      "enableLineNumber": "コードブロック行番号",
-      "enableLineNumberDesc": "コードブロックに行番号を表示します。",
+      "showUndoRedo": "元に戻す/やり直しボタン",
+      "showUndoRedoDesc": "エディターのタブバーに元に戻すボタンとやり直しボタンを表示します。",
       "completion": {
         "title": "自動補完",
         "model": {
@@ -611,6 +640,16 @@
       "syncRepoDesc": "執筆中のMarkdownファイルを同期",
       "imageRepo": "画像ホスティング倉庫",
       "imageRepoDesc": "あなたの画像を画像ホスティングリポジトリに同期します。",
+      "status": {
+        "connected": "接続済み",
+        "disconnected": "未接続",
+        "failed": "接続失敗",
+        "unconfigured": "未設定"
+      },
+      "uploadRecords": "レコードと設定をアップロード",
+      "downloadConfig": "レコードと設定をダウンロード",
+      "cloudSync": "レコードと設定の同期",
+      "localBackupAll": "ローカルバックアップ（全て）",
       "private": "非公開",
       "public": "公開",
       "createdAt": "{time} に作成",
@@ -657,6 +696,10 @@
         "1m": "1 分",
         "2m": "2 分"
       },
+      "autoPullOnOpen": "ファイルを開く時に自動プル",
+      "autoPullOnOpenDesc": "ファイルを開く時、リモートに新しいバージョンがある場合は自動的にプルしてローカルを上書き",
+      "autoPullOnSwitch": "ファイルを切り替える時に自動プル",
+      "autoPullOnSwitchDesc": "他のファイルに切り替える時、リモートに新しいバージョンがある場合は自動的にプルしてローカルを上書き",
       "exclusions": {
         "title": "同期除外設定",
         "desc": "以下の設定はデバイス固有のものであるため、デバイス間で同期されません",
@@ -683,7 +726,53 @@
         "selfHosted": "自建实例",
         "selfHostedDesc": "输入您的自建 Gitea 服务器地址（如：https://gitea.example.com）"
       },
-      "giteaAccessTokenDesc": "在 {instanceDisplayName} 创建个人访问令牌，需要完整的 repository 权限"
+      "giteaAccessTokenDesc": "在 {instanceDisplayName} 创建个人访问令牌，需要完整的 repository 权限",
+      "s3": {
+        "title": "S3 同期",
+        "description": "S3互換ストレージを使用してノートを同期します",
+        "status": "接続状態",
+        "connected": "接続済み",
+        "connecting": "接続中",
+        "disconnected": "未接続",
+        "accessKeyId": "Access Key ID",
+        "accessKeyIdPlaceholder": "Access Key IDを入力してください",
+        "secretAccessKey": "Secret Access Key",
+        "secretAccessKeyPlaceholder": "Secret Access Keyを入力してください",
+        "region": "リージョン",
+        "bucket": "バケット",
+        "bucketPlaceholder": "バケット名を入力してください",
+        "endpoint": "エンドポイント",
+        "pathPrefix": "パスプレフィックス",
+        "pathPrefixPlaceholder": "パスプレフィックスを入力してください",
+        "pathPrefixDesc": "異なるユーザーのファイルを区別するために使用、リポジトリ名に類似",
+        "customDomain": "カスタムドメイン",
+        "testConnection": "接続テスト",
+        "testing": "テスト中",
+        "saveConfig": "設定を保存",
+        "saving": "保存中"
+      },
+      "webdav": {
+        "title": "WebDAV 同期",
+        "description": "WebDAVプロトコルを使用してノートを同期します",
+        "status": "接続状態",
+        "connected": "接続済み",
+        "connecting": "接続中",
+        "disconnected": "未接続",
+        "url": "サーバーURL",
+        "urlPlaceholder": "WebDAV サーバーURLを入力してください",
+        "urlDesc": "Synology、QNAP、Nextcloud などのWebDAVサービスをサポート",
+        "username": "ユーザー名",
+        "usernamePlaceholder": "ユーザー名を入力してください",
+        "password": "パスワード",
+        "passwordPlaceholder": "パスワードを入力してください",
+        "pathPrefix": "パスプレフィックス",
+        "pathPrefixPlaceholder": "パスプレフィックスを入力してください",
+        "pathPrefixDesc": "異なるユーザーのファイルを区別するために使用",
+        "testConnection": "接続テスト",
+        "testing": "テスト中",
+        "saveConfig": "設定を保存",
+        "saving": "保存中"
+      }
     },
     "imageHosting": {
       "title": "画像ホスティング",
@@ -695,9 +784,17 @@
       "isPrimaryBackup": "現在の {type} 主要バックアップ方法",
       "setPrimaryBackup": "主要バックアップ方法として設定",
       "smms": {
+        "title": "S.EE 画像ホスティング",
+        "description": "S.EE を使って画像をアップロードおよび管理します",
+        "status": "接続状態",
+        "connected": "接続済み",
+        "connecting": "確認中",
+        "disconnected": "未接続",
         "token": {
-          "desc": "SM.MS Token を入力してください。",
-          "createToken": "Token を作成"
+          "desc": "S.EE Token を入力してください。",
+          "createToken": "S.EE 開発者ページを開く",
+          "helper": "S.EE API Token を入力してください。既存の設定はそのまま再利用できます。",
+          "placeholder": "S.EE API Token を入力"
         },
         "disk": "磁盘使用",
         "error": "取得失敗、ネットワークや Token の正しさを確認してください。"
@@ -792,44 +889,6 @@
     "backupSync": {
       "title": "備用方案",
       "desc": "ここでは、他の方法でデータをバックアップすることができます。定期的にバックアップを取ることで、データの安全を確保できます。",
-      "webdav": {
-        "connectionState": {
-          "success": "接続済み",
-          "checking": "接続中",
-          "failed": "未接続"
-        },
-        "description": "WebDAVはバックアップソリューションとしてのみ使用され、自動同期や履歴ロールバックなどの機能はサポートしていません。",
-        "backupTo": "WebDAVにバックアップ",
-        "syncFrom": "WebDAVから同期",
-        "serverUrl": "WebDAVサーバーURL",
-        "serverUrlDesc": "WebDAVサーバーのURLを入力してくださいパスを含まない、例：https://dav.example.com http://192.8.8.88:9999 ",
-        "serverUrlPlaceholder": "https://dav.example.com",
-        "username": "ユーザー名",
-        "usernameDesc": "WebDAVサーバーのユーザー名",
-        "usernamePlaceholder": "ユーザー名",
-        "password": "パスワード",
-        "passwordDesc": "WebDAVサーバーのパスワード",
-        "passwordPlaceholder": "パスワード",
-        "backupPath": "バックアップパス",
-        "backupPathDesc": "WebDAVサーバー上のバックアップパス、例：/backup/notes",
-        "backupPathPlaceholder": "/backup/notes",
-        "backupSuccess": "バックアップ成功",
-        "backupSuccessDesc": "{count} 個のファイルをWebDAVにバックアップしました。",
-        "syncSuccess": "同期成功",
-        "syncSuccessDesc": "WebDAVからローカルに {count} 個のファイルを同期しました。",
-        "syncFailed": "同期失敗",
-        "backupFailed": "バックアップ失敗",
-        "directoryCreated": "ディレクトリが作成されました",
-        "directoryCreatedDesc": "ディレクトリ {path} が正常に作成されました。",
-        "createDir": "ディレクトリを作成",
-        "success": "成功",
-        "failed": "失敗",
-        "error": {
-          "pathNotFound": "パスが存在しないか、サーバーにアクセスできません。",
-          "createDirFailed": "ディレクトリの作成に失敗しました",
-          "connectionTimeOut": "接続タイムアウト、ネットワークまたはサーバーを確認してください。"
-        }
-      },
       "localBackup": {
         "tabTitle": "ローカルバックアップ",
         "export": {
@@ -1158,8 +1217,8 @@
       },
       "assets": {
         "title": "アセット",
-        "desc": "執筆中のリソース（例：画像、ビデオ、ファイル等）の保存パスを設定します。現在編集中の markdown ファイルと同じレベルに保存されます。",
-        "select": "執筆中のリソースの保存パスを設定してください"
+        "desc": "アセットディレクトリ名を設定します。エディタでローカル画像を挿入すると、このディレクトリ名（assets や images など）が使われます。",
+        "select": "アセットディレクトリ名を設定してください。例: assets"
       }
     },
     "shortcuts": {
@@ -1236,12 +1295,19 @@
     "audio": {
       "title": "语音设置",
       "desc": "在这里，你可以配置语音相关设置，包括文本转语音（朗读）和语音转文本（录音识别）功能。",
+      "mode": {
+        "title": "モード",
+        "auto": "自動（推奨）",
+        "local": "ローカルのみ",
+        "model": "モデルのみ"
+      },
       "tts": {
         "title": "文本转语音（TTS）",
         "desc": "配置朗读功能，为聊天内容提供语音播放。",
+        "modeDesc": "既定ではブラウザとシステム音声を優先し、必要な場合のみモデルを使って体験を強化します。",
         "model": {
           "title": "朗读模型",
-          "desc": "选择用于文本转语音的AI模型，支持多种语音类型和参数配置。"
+          "desc": "任意です。自動モードの強化やモデル専用モードで利用できます。"
         },
         "speed": {
           "title": "语速",
@@ -1251,15 +1317,31 @@
       "stt": {
         "title": "语音转文本（STT）",
         "desc": "配置录音识别功能，将语音转换为文字记录。",
-        "mode": {
-          "title": "识别方式",
-          "desc": "选择使用浏览器内置识别或大模型识别",
-          "builtin": "内置",
-          "model": "大模型"
-        },
+        "modeDesc": "既定ではブラウザ標準認識を優先し、ローカル利用不可時のみモデルへフォールバックします。",
         "model": {
           "title": "识别模型",
-          "desc": "选择用于语音识别的AI模型，支持实时语音转文字。"
+          "desc": "任意です。自動フォールバック用、またはモデル専用モードで使用できます。"
+        }
+      }
+    },
+    "readAloud": {
+      "title": "読み上げ",
+      "desc": "読み上げ方法を設定します。既定ではシステム音声を優先し、モデル音声は強化用として利用します。",
+      "options": {
+        "mode": {
+          "title": "モード",
+          "desc": "自動モードではシステム音声を優先し、ローカル音声が使えない場合のみモデルを試します。",
+          "auto": "自動（推奨）",
+          "local": "ローカルのみ",
+          "model": "モデルのみ"
+        },
+        "audioModel": {
+          "title": "読み上げモデル",
+          "desc": "任意です。自動モードの強化やモデル専用モードで利用できます。"
+        },
+        "speed": {
+          "title": "速度",
+          "desc": "読み上げ速度を0.5倍から2倍まで調整できます。既定値は1倍です。"
         }
       }
     }
@@ -1542,6 +1624,7 @@
         "viewFile": "元ファイルを表示",
         "deleteForever": "完全に削除",
         "multiSelect": "複数選択",
+        "multiSelectMode": "複数選択モード",
         "exitMultiSelect": "複数選択を終了",
         "selectAll": "すべて選択",
         "deselectAll": "すべて選択解除",
@@ -1680,7 +1763,7 @@
           "translate": "翻訳モード"
         },
         "chatModeSelect": {
-          "chatDescription": "クイック会話、読み取り専用モード",
+          "chatDescription": "クイック会話、分析優先",
           "agentDescription": "スマートアシスタント、アクション実行可能"
         },
         "attachImage": "画像を添付",
@@ -1691,6 +1774,10 @@
           "acting": "実行中",
           "observation": "観察結果",
           "toolCalls": "ツール呼び出し",
+          "autoFinal": {
+            "createNote": "ノート「{name}」を作成しました。",
+            "createFile": "ファイル「{name}」を作成しました。"
+          },
           "thought": "思考",
           "action": "行動",
           "confirmation": {
@@ -1829,6 +1916,7 @@
     "record": "記録",
     "quickRecord": "クイック記録",
     "write": "執筆",
+    "me": "マイ",
     "search": "検索",
     "githubImageHosting": "Github 画像ホスティング",
     "login": "ログイン",
@@ -1836,6 +1924,7 @@
     "view": "表示",
     "logout": "ログアウト",
     "setting": "設定",
+    "activity": "アクティビティ",
     "files": "ノート",
     "outline": "アウトライン",
     "hideLeftSidebar": "左サイドバーを非表示",
@@ -1845,6 +1934,42 @@
     "searchPlaceholder": "ノートまたは記録を検索...",
     "showCenterPanel": "显示编辑器",
     "hideCenterPanel": "隐藏编辑器"
+  },
+  "activity": {
+    "title": "アクティビティカレンダー",
+    "description": "記録、対話、執筆の活動を日ごとに確認できます。初版では既存の記録、ユーザー対話、ノート更新時刻をもとに集計します。",
+    "drawer": {
+      "title": "アクティビティ",
+      "description": "今日の状態と最近の活動傾向をすばやく確認できます。",
+      "today": "今日"
+    },
+    "loading": "アクティビティデータを読み込み中...",
+    "empty": "まだアクティビティデータがありません",
+    "refresh": "更新",
+    "summary": {
+      "totalCount": "総アクティビティ",
+      "activeDays": "活動日数",
+      "records": "記録回数",
+      "chats": "対話回数",
+      "writing": "執筆活動"
+    },
+    "labels": {
+      "record": "記録",
+      "writing": "執筆",
+      "chat": "対話"
+    },
+    "heatmap": {
+      "title": "直近 26 週間",
+      "range": "{startDate} - {endDate}",
+      "less": "少",
+      "more": "多",
+      "dayCount": "件の活動",
+      "emptyDay": "活動なし"
+    },
+    "detail": {
+      "title": "当日の詳細",
+      "empty": "日付を選択すると当日の活動詳細が表示されます。"
+    }
   },
   "chat": {
     "placeholder": {
@@ -2048,6 +2173,77 @@
         "openWorkspace": {
           "title": "ワークスペースを開く",
           "desc": "ワークスペースディレクトリを選択または切り替え"
+        }
+      },
+      "onboarding": {
+        "title": "初回ガイド",
+        "subtitle": "この 3 つのタスクで NoteGen の基本フローを体験できます。",
+        "dismiss": "オンボーディングをスキップ",
+        "reopen": "初回ガイドを再表示",
+        "start": "開始",
+        "viewHint": "ヒントを見る",
+        "continue": "次へ進む",
+        "completed": "完了",
+        "allDone": "スタートガイドのタスクはすべて完了しました。NoteGen の基本フローは体験済みです。",
+        "stepLabel": "タスク ({current}/{total})",
+        "stepCompletedLabel": "完了したタスク ({current}/{total})",
+        "afterOrganizeDialog": {
+          "title": "タスク完了 (2/3)",
+          "description": "記録をノートに整理できました。次は AI Agent を使って、このノートをバイリンガル版に翻訳してみますか？",
+          "confirm": "次へ進む",
+          "cancel": "今はしない"
+        },
+        "agentPrompt": {
+          "label": "サンプルプロンプト",
+          "use": "このプロンプトを使う",
+          "intro": "先ほど整理したこのノートを、中国語と英語のバイリンガル版に直接修正してください。",
+          "requirement1": "",
+          "requirement2": "",
+          "requirement3": "",
+          "requirement4": "",
+          "outro": ""
+        },
+        "steps": {
+          "createRecord": {
+            "title": "最初の記録を作成",
+            "desc": "サンプル記録を保存して、記録入口を覚えます。"
+          },
+          "organizeNote": {
+            "title": "ノートに整理",
+            "desc": "記録を正式なノートに整理します。"
+          },
+          "aiPolish": {
+            "title": "Agent でバイリンガル翻訳",
+            "desc": "AI Agent を使って、整理したノートをバイリンガル版に変換します。"
+          }
+        },
+        "completedStates": {
+          "create-record": {
+            "title": "最初の記録を作成しました",
+            "desc": "クイック記録の入口がどこにあるか分かりました。"
+          },
+          "organize-note": {
+            "title": "記録をノートに整理しました",
+            "desc": "次は AI でノートを編集してみましょう。"
+          },
+          "ai-polish": {
+            "title": "Agent でノートを処理しました",
+            "desc": "記録から整理、さらに Agent による処理まで、NoteGen の基本フローを体験できました。"
+          }
+        },
+        "spotlight": {
+          "create-record": {
+            "title": "ここからすぐに記録できます",
+            "desc": "この入口をクリックするとテキスト記録が開き、サンプル内容も自動で入ります。"
+          },
+          "organize-note": {
+            "title": "ここで記録をノートに整理します",
+            "desc": "このボタンで、保存した記録を Markdown ノートにまとめられます。"
+          },
+          "ai-polish": {
+            "title": "ここで今作成したノートを Agent に渡せます",
+            "desc": "サンプルプロンプトをチャットに入れて送信すると、Agent が現在のノートを元にバイリンガル版を生成します。"
+          }
         }
       }
     },
@@ -2315,6 +2511,40 @@
     }
   },
   "mobile": {
+    "me": {
+      "profile": {
+        "deviceName": "同期プラットフォーム",
+        "deviceSubtitle": "記録と設定を同期",
+        "syncPlatform": "同期プラットフォーム",
+        "gitSubtitle": "{provider} に接続して記録と設定を同期しています",
+        "storageSubtitle": "現在は {provider} を使って記録と設定を同期しています",
+        "unconfiguredSubtitle": "同期はまだ設定されていません。現在のデータはローカルのみに保存されています",
+        "streak": "{count}日連続でアクティブ"
+      },
+      "activity": {
+        "tip": "ヒートマップの日付をタップすると、その日のタイムラインを表示します。",
+        "range": "直近 {count} 週間",
+        "rangePlaceholder": "直近 16 週間",
+        "drawerEmpty": "日付を選択すると、その日の活動詳細を確認できます。",
+        "drawerSummary": "この日は合計 {total} 件の活動があり、記録 {record} 件、執筆 {writing} 件、対話 {chat} 件です。"
+      },
+      "sync": {
+        "title": "同期",
+        "configured": "接続済み",
+        "unconfigured": "未設定",
+        "localOnly": "ローカルのみ"
+      },
+      "stats": {
+        "weekly": "今週の活動",
+        "weeklyHint": "今週の累計活動回数",
+        "streak": "連続日数",
+        "streakHint": "連続して活動した日数"
+      },
+      "settings": {
+        "title": "設定",
+        "description": "ここから各機能の設定画面へ直接移動できます。"
+      }
+    },
     "chat": {
       "drawer": {
         "settings": {
@@ -2365,11 +2595,18 @@
     "error": "エラー",
     "success": "成功",
     "noModelConfigured": "音声認識モデルが設定されていません。設定で構成してください",
+    "speechUnavailable": "現在の認識モードは利用できません。ローカル音声対応またはモデル設定を確認してください。",
+    "fallbackToModel": "ローカル音声認識が利用できないため、自動的にモデル文字起こしへ切り替えました。",
     "startError": "録音を開始できません",
     "noAudioData": "音声データが録音されていません",
     "transcriptionSuccess": "音声認識完了",
     "transcriptionEmpty": "認識結果が空です",
     "transcriptionError": "音声認識に失敗しました",
+    "configureModel": "モデルを設定",
+    "retryTranscription": "再認識",
+    "retrying": "再認識中...",
+    "retrySuccess": "再認識が完了しました",
+    "retryError": "再認識に失敗しました",
     "noContentDetected": "コンテンツが検出されませんでした",
     "doubleClickToSelectFile": "ダブルクリックで音声ファイルを選択",
     "mode": {

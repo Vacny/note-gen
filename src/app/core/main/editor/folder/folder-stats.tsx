@@ -7,11 +7,11 @@ import { Progress } from '@/components/ui/progress'
 import { useTranslations } from 'next-intl'
 import useArticleStore from '@/stores/article'
 import { getVectorDocumentsByFilename } from '@/db/vector'
-import { readTextFile } from '@tauri-apps/plugin-fs'
-import { getFilePathOptions, getWorkspacePath } from '@/lib/workspace'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import 'dayjs/locale/zh-cn'
+import { calculateFolderVectors } from '@/lib/folder-vector'
+import { toast } from '@/hooks/use-toast'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
@@ -41,7 +41,7 @@ export function FolderStatsView({ folderPath, folderFiles }: FolderStatsViewProp
     currentFile: string
   } | null>(null)
 
-  const { vectorIndexedFiles, initVectorIndexedFiles } = useArticleStore()
+  const { vectorIndexedFiles, initVectorIndexedFiles, setVectorCalcStatus } = useArticleStore()
 
   const folderName = folderPath.split('/').pop() || folderPath
 
@@ -51,16 +51,12 @@ export function FolderStatsView({ folderPath, folderFiles }: FolderStatsViewProp
 
     try {
       const totalFiles = folderFiles.length
-      const indexedFiles = folderFiles.filter(file => {
-        const filename = file.split('/').pop() || file
-        return vectorIndexedFiles.has(filename)
-      }).length
+      const indexedFiles = folderFiles.filter(file => vectorIndexedFiles.has(file)).length
 
       let totalVectors = 0
       for (const file of folderFiles) {
-        const filename = file.split('/').pop() || file
-        if (vectorIndexedFiles.has(filename)) {
-          const docs = await getVectorDocumentsByFilename(filename)
+        if (vectorIndexedFiles.has(file)) {
+          const docs = await getVectorDocumentsByFilename(file)
           totalVectors += docs.length
         }
       }
@@ -108,70 +104,41 @@ export function FolderStatsView({ folderPath, folderFiles }: FolderStatsViewProp
 
   // Start batch recalculation
   const startRecalculation = useCallback(async () => {
-    const filesToProcess = folderFiles
-    if (filesToProcess.length === 0) return
-
-    let processed = 0
-    let failed = 0
+    if (folderFiles.length === 0) return
 
     setBatchProgress({
-      total: filesToProcess.length,
+      total: folderFiles.length,
       processed: 0,
       failed: 0,
       currentFile: ''
     })
 
-    const CONCURRENCY = 3
-    const queue = [...filesToProcess]
+    setVectorCalcStatus(folderPath, 'calculating')
 
-    while (queue.length > 0) {
-      const batch = queue.splice(0, CONCURRENCY)
+    const result = await calculateFolderVectors({
+      folderPath,
+      mode: 'recalculate',
+      setVectorCalcStatus,
+      onProgress: setBatchProgress
+    })
 
-      try {
-        await Promise.all(
-          batch.map(async (filePath) => {
-            try {
-              const filename = filePath.split('/').pop() || filePath
-              let content = ''
-
-              const workspace = await getWorkspacePath()
-              if (workspace.isCustom) {
-                content = await readTextFile(filePath)
-              } else {
-                const { path, baseDir } = await getFilePathOptions(filePath)
-                content = await readTextFile(path, { baseDir })
-              }
-
-              const { processMarkdownFile } = await import('@/lib/rag')
-              await processMarkdownFile(filePath, content)
-
-              processed++
-
-              setBatchProgress(prev => prev ? {
-                ...prev,
-                processed,
-                currentFile: filename
-              } : null)
-            } catch {
-              failed++
-              setBatchProgress(prev => prev ? {
-                ...prev,
-                failed,
-                processed: processed + 1
-              } : null)
-            }
-          })
-        )
-      } catch {
-        // Silently handle batch errors
-      }
+    if (!result.embeddingModelAvailable) {
+      toast({
+        title: '向量处理',
+        description: '未配置嵌入模型或模型不可用，请在AI设置中配置嵌入模型',
+        variant: 'destructive'
+      })
+      setVectorCalcStatus(folderPath, 'idle')
+      setBatchProgress(null)
+      return
     }
 
     // Refresh vector indexed files list for calculateStats to get latest data
     await useArticleStore.getState().initVectorIndexedFiles()
     await calculateStats()
+    setVectorCalcStatus(folderPath, result.failed > 0 ? 'idle' : 'completed')
     setBatchProgress(null)
-  }, [folderFiles, calculateStats])
+  }, [folderFiles, folderPath, calculateStats, setVectorCalcStatus])
 
   if (loadingStats && !stats) {
     return (

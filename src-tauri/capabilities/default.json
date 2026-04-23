@@ -148,6 +148,8 @@
           "path": "**"
         }
       ]
-    }
+    },
+    "opener:default",
+    "opener:allow-open-url"
   ]
 }

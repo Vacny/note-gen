@@ -1,9 +1,11 @@
 'use client'
 
 import { useCallback, useRef, useState, useEffect, memo } from 'react'
-import { X, FileText, Folder, Plus } from 'lucide-react'
+import { X, FileText, Folder, Plus, Undo2, Redo2 } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
+import emitter from '@/lib/emitter'
+import { TooltipButton } from '@/components/tooltip-button'
 import {
   DndContext,
   closestCenter,
@@ -29,6 +31,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/enhanced-context-menu'
 import { platform } from '@tauri-apps/plugin-os'
+import useSettingStore from '@/stores/setting'
 
 export interface TabInfo {
   id: string
@@ -47,6 +50,7 @@ interface TabBarProps {
   onCloseAllTabs: () => void
   onCloseLeftTabs: (path: string) => void
   onCloseRightTabs: (path: string) => void
+  showUndoRedo?: boolean // 保留这个 prop 以保持兼容性，但主要使用 store 中的值
 }
 
 // Sortable Tab with Context Menu
@@ -211,8 +215,40 @@ export function TabBar({
   onCloseLeftTabs,
   onCloseRightTabs,
 }: TabBarProps) {
+  const { showEditorUndoRedo } = useSettingStore()
+
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [scrollState, setScrollState] = useState({ left: 0, width: 0, scrollWidth: 0 })
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
+
+  // Query undo/redo capability from editor
+  const queryCanUndoRedo = useCallback(() => {
+    emitter.emit('editor-can-undo-redo', {
+      resolve: (can) => {
+        setCanUndo(can.undo)
+        setCanRedo(can.redo)
+      }
+    })
+  }, [])
+
+  // Query on mount and when activeTabId changes
+  useEffect(() => {
+    queryCanUndoRedo()
+  }, [activeTabId, queryCanUndoRedo])
+
+  // Listen for undo/redo state changes from editor
+  useEffect(() => {
+    const handleUndoRedoChanged = (can: { undo: boolean; redo: boolean }) => {
+      setCanUndo(can.undo)
+      setCanRedo(can.redo)
+    }
+
+    emitter.on('editor-undo-redo-changed', handleUndoRedoChanged)
+    return () => {
+      emitter.off('editor-undo-redo-changed', handleUndoRedoChanged)
+    }
+  }, [])
 
   // Get current platform
   const [currentPlatform, setCurrentPlatform] = useState<'macos' | 'windows' | 'linux' | 'unknown'>('unknown')
@@ -348,41 +384,72 @@ export function TabBar({
       onDragEnd={handleDragEnd}
     >
       <div className="relative tab-scrollbar-wrapper">
-        <div
-          ref={scrollContainerRef}
-          className="flex items-center h-12 px-1 bg-background border-b overflow-x-auto tab-scrollbar gap-1"
-          onWheel={handleWheel}
-        >
-          {/* Tabs */}
-          <SortableContext
-            items={tabs.map(t => t.id)}
-            strategy={horizontalListSortingStrategy}
-          >
-            {tabs.map((tab) => (
-              <MemoizedSortableTabWithMenu
-                key={tab.id}
-                tab={tab}
-                isActive={activeTabId === tab.id}
-                tabs={tabs}
-                modKey={modKey}
-                onTabSwitch={onTabSwitch}
-                onCloseTab={onCloseTab}
-                onCloseOtherTabs={onCloseOtherTabs}
-                onCloseAllTabs={onCloseAllTabs}
-                onCloseLeftTabs={onCloseLeftTabs}
-                onCloseRightTabs={onCloseRightTabs}
+        <div className="flex items-center h-12 bg-background border-b">
+          {/* Undo/Redo buttons - fixed on the left */}
+          {showEditorUndoRedo && (
+            <div className="flex items-center gap-0.5 px-2 border-r border-border shrink-0">
+              <TooltipButton
+                icon={<Undo2 className="w-4 h-4" />}
+                tooltipText={`撤销 (${modKey}+Z)`}
+                side="bottom"
+                onClick={() => {
+                  emitter.emit('editor-undo')
+                  // Update state after action
+                  setTimeout(queryCanUndoRedo, 0)
+                }}
+                disabled={!canUndo}
               />
-            ))}
-          </SortableContext>
+              <TooltipButton
+                icon={<Redo2 className="w-4 h-4" />}
+                tooltipText={`重做 (${modKey}+Shift+Z)`}
+                side="bottom"
+                onClick={() => {
+                  emitter.emit('editor-redo')
+                  // Update state after action
+                  setTimeout(queryCanUndoRedo, 0)
+                }}
+                disabled={!canRedo}
+              />
+            </div>
+          )}
 
-          {/* New tab button */}
-          <button
-            onClick={onNewTab}
-            className="flex items-center justify-center w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors shrink-0"
-            title={t('closeAll')}
+          {/* Tabs scroll container */}
+          <div
+            ref={scrollContainerRef}
+            className="flex items-center h-12 px-1 overflow-x-auto tab-scrollbar gap-1"
+            onWheel={handleWheel}
           >
-            <Plus className="w-4 h-4" />
-          </button>
+            {/* Tabs */}
+            <SortableContext
+              items={tabs.map(t => t.id)}
+              strategy={horizontalListSortingStrategy}
+            >
+              {tabs.map((tab) => (
+                <MemoizedSortableTabWithMenu
+                  key={tab.id}
+                  tab={tab}
+                  isActive={activeTabId === tab.id}
+                  tabs={tabs}
+                  modKey={modKey}
+                  onTabSwitch={onTabSwitch}
+                  onCloseTab={onCloseTab}
+                  onCloseOtherTabs={onCloseOtherTabs}
+                  onCloseAllTabs={onCloseAllTabs}
+                  onCloseLeftTabs={onCloseLeftTabs}
+                  onCloseRightTabs={onCloseRightTabs}
+                />
+              ))}
+            </SortableContext>
+
+            {/* New tab button */}
+            <button
+              onClick={onNewTab}
+              className="flex items-center justify-center w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors shrink-0"
+              title={t('closeAll')}
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Custom absolute scrollbar */}

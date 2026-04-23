@@ -9,6 +9,7 @@ import { ask } from '@tauri-apps/plugin-dialog';
 import { platform } from '@tauri-apps/plugin-os';
 import { Store } from '@tauri-apps/plugin-store';
 import { RepoNames } from "@/lib/sync/github.types";
+import { S3Config, WebDAVConfig } from "@/types/sync";
 import { cloneDeep } from "lodash-es";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { computedParentPath, getCurrentFolder } from "@/lib/path";
@@ -19,6 +20,10 @@ import { appDataDir, join } from '@tauri-apps/api/path';
 import { deleteFile } from "@/lib/sync/github";
 import { deleteFile as deleteGiteeFile } from "@/lib/sync/gitee";
 import { deleteFile as deleteGitlabFile } from "@/lib/sync/gitlab";
+import { deleteFile as deleteGiteaFile } from "@/lib/sync/gitea";
+import { s3Delete } from "@/lib/sync/s3";
+import { webdavDelete } from "@/lib/sync/webdav";
+import { getSyncRepoName } from "@/lib/sync/repo-utils";
 import { generateUniqueFilename } from "@/lib/default-filename";
 import { MobileActionMenu, MobileMenuItem, MobileSeparator } from "./mobile-action-menu";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -27,6 +32,32 @@ import { VectorKnowledgeMenu } from "./vector-knowledge-menu";
 import { isSkillsFolder } from "@/lib/skills/utils";
 
 type Platform = 'macos' | 'windows' | 'linux' | 'unknown'
+
+function shouldAutoSyncOnInitialRead(options?: { isNewFile?: boolean }) {
+  return options?.isNewFile !== true
+}
+
+function buildFileRenamePlan({
+  originalName,
+  currentPath,
+  enteredName,
+}: {
+  originalName: string
+  currentPath: string
+  enteredName: string
+}) {
+  const sanitizedName = enteredName.replace(/\s+/g, '_')
+  const needsMarkdownSuffix = originalName === '' && !sanitizedName.endsWith('.md')
+  const displayName = needsMarkdownSuffix ? `${sanitizedName}.md` : sanitizedName
+  const parentPath = currentPath.split('/').slice(0, -1).join('/')
+  const targetRelativePath = parentPath ? `${parentPath}/${displayName}` : displayName
+
+  return {
+    operation: originalName === '' ? 'create' : 'rename',
+    displayName,
+    targetRelativePath,
+  } as const
+}
 
 export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?: () => void }) {
   const [isEditing, setIsEditing] = useState(item.isEditing)
@@ -46,10 +77,12 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
     return parts.some(part => isSkillsFolder(part))
   }
 
+  const path = computedParentPath(item)
+
   // 向量状态更新回调
   const handleVectorUpdated = useCallback(() => {
-    checkFileVectorIndexed(item.name)
-  }, [item.name, checkFileVectorIndexed])
+    checkFileVectorIndexed(path)
+  }, [path, checkFileVectorIndexed])
 
   // 根据文字大小映射图标大小
   const getIconSize = (textSize: string) => {
@@ -65,13 +98,11 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
 
   const iconSize = getIconSize(fileManagerTextSize)
 
-  const path = computedParentPath(item)
-
   // 检查文件是否被剪切
   const isCut = clipboardOperation === 'cut' && clipboardItem?.path === path
 
   // 检查文件是否已计算向量（skills 文件夹下的文件不显示）
-  const hasVector = item.isFile && !isInSkillsFolder(path) && vectorIndexedFiles.has(item.name)
+  const hasVector = item.isFile && !isInSkillsFolder(path) && vectorIndexedFiles.has(path)
 
   // 向量计算状态图标
   const renderVectorIcon = () => {
@@ -228,10 +259,10 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
         // 删除向量数据库中的记录
         try {
           const { deleteVectorDocumentsByFilename } = await import('@/db/vector')
-          await deleteVectorDocumentsByFilename(item.name)
+          await deleteVectorDocumentsByFilename(path)
           // 从向量索引映射中移除
           const newMap = new Map(vectorIndexedFiles)
-          newMap.delete(item.name)
+          newMap.delete(path)
           setArticleState({ vectorIndexedFiles: newMap })
         } catch (error) {
           console.error(`删除文件 ${item.name} 的向量数据失败:`, error)
@@ -258,32 +289,69 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
     if (answer) {
       const currentPath = computedParentPath(item)
 
+      // 设置 loading 状态
+      const cacheTree = cloneDeep(fileTree)
+      const setLoadingStatus = (items: typeof cacheTree): boolean => {
+        for (const entry of items) {
+          const entryPath = computedParentPath(entry)
+          if (entryPath === currentPath && entry.isFile) {
+            entry.loading = true
+            return true
+          }
+          if (entry.children && setLoadingStatus(entry.children)) {
+            return true
+          }
+        }
+        return false
+      }
+      if (setLoadingStatus(cacheTree)) {
+        setFileTree(cacheTree)
+      }
+
       try {
         // 获取当前主要备份方式
         const store = await Store.load('store.json');
-        const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea'>('primaryBackupMethod') || 'github';
+        const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav'>('primaryBackupMethod') || 'github';
+        const repoName = backupMethod === 's3' || backupMethod === 'webdav'
+          ? RepoNames.sync
+          : await getSyncRepoName(backupMethod)
 
         let success = false
         switch (backupMethod) {
           case 'github': {
-            const result = await deleteFile({ path: currentPath, sha: item.sha as string, repo: RepoNames.sync });
+            const result = await deleteFile({ path: currentPath, sha: item.sha as string, repo: repoName });
             success = !!result
             break;
           }
           case 'gitee': {
-            const result = await deleteGiteeFile({ path: currentPath, sha: item.sha as string, repo: RepoNames.sync });
+            const result = await deleteGiteeFile({ path: currentPath, sha: item.sha as string, repo: repoName });
             success = result !== false
             break;
           }
           case 'gitlab': {
-            const result = await deleteGitlabFile({ path: currentPath, sha: item.sha as string, repo: RepoNames.sync });
+            const result = await deleteGitlabFile({ path: currentPath, sha: item.sha as string, repo: repoName });
             success = !!result
             break;
           }
           case 'gitea': {
-            const { deleteFile: deleteGiteaFile } = await import('@/lib/sync/gitea')
-            const result = await deleteGiteaFile({ path: currentPath, sha: item.sha as string, repo: RepoNames.sync });
+            const result = await deleteGiteaFile({ path: currentPath, sha: item.sha as string, repo: repoName });
             success = !!result
+            break;
+          }
+          case 's3': {
+            const s3Config = await store.get<S3Config>('s3SyncConfig')
+            if (s3Config) {
+              const result = await s3Delete(s3Config, currentPath)
+              success = result
+            }
+            break;
+          }
+          case 'webdav': {
+            const webdavConfig = await store.get<WebDAVConfig>('webdavSyncConfig')
+            if (webdavConfig) {
+              const result = await webdavDelete(webdavConfig, currentPath)
+              success = result
+            }
             break;
           }
         }
@@ -292,22 +360,30 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
           // 只更新当前文件的状态，不刷新整个文件树
           const cacheTree = cloneDeep(fileTree)
 
-          // 递归查找并更新文件状态
-          const updateFileStatus = (items: typeof cacheTree): boolean => {
-            for (const entry of items) {
+          // 递归查找并更新/删除文件
+          const updateOrRemoveFile = (items: typeof cacheTree): boolean => {
+            for (let i = 0; i < items.length; i++) {
+              const entry = items[i]
               const entryPath = computedParentPath(entry)
               if (entryPath === currentPath && entry.isFile) {
-                entry.sha = undefined // 清除远程 SHA
+                if (entry.isLocale) {
+                  // 本地存在：只清除远程 SHA
+                  entry.sha = undefined
+                  entry.loading = undefined
+                } else {
+                  // 本地不存在：从列表中移除
+                  items.splice(i, 1)
+                }
                 return true
               }
-              if (entry.children && updateFileStatus(entry.children)) {
+              if (entry.children && updateOrRemoveFile(entry.children)) {
                 return true
               }
             }
             return false
           }
 
-          if (updateFileStatus(cacheTree)) {
+          if (updateOrRemoveFile(cacheTree)) {
             setFileTree(cacheTree)
           }
 
@@ -316,9 +392,45 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
             description: t('context.deleteSyncFileSuccess'),
           });
         } else {
+          // 删除失败，清除 loading 状态
+          const cacheTree = cloneDeep(fileTree)
+          const clearLoadingStatus = (items: typeof cacheTree): boolean => {
+            for (const entry of items) {
+              const entryPath = computedParentPath(entry)
+              if (entryPath === currentPath && entry.isFile) {
+                entry.loading = undefined
+                return true
+              }
+              if (entry.children && clearLoadingStatus(entry.children)) {
+                return true
+              }
+            }
+            return false
+          }
+          if (clearLoadingStatus(cacheTree)) {
+            setFileTree(cacheTree)
+          }
           throw new Error('删除操作返回失败')
         }
       } catch (error) {
+        // 删除失败，清除 loading 状态
+        const cacheTree = cloneDeep(fileTree)
+        const clearLoadingStatus = (items: typeof cacheTree): boolean => {
+          for (const entry of items) {
+            const entryPath = computedParentPath(entry)
+            if (entryPath === currentPath && entry.isFile) {
+              entry.loading = undefined
+              return true
+            }
+            if (entry.children && clearLoadingStatus(entry.children)) {
+              return true
+            }
+          }
+          return false
+        }
+        if (clearLoadingStatus(cacheTree)) {
+          setFileTree(cacheTree)
+        }
         console.error('[handleDeleteSyncFile] 删除远程文件失败:', error);
         toast({
           title: t('context.delete'),
@@ -353,6 +465,9 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
     // 获取工作区路径信息
     const { getFilePathOptions, getWorkspacePath } = await import('@/lib/workspace')
     const workspace = await getWorkspacePath()
+    const originalName = item.name
+    const nextTree = cloneDeep(fileTree)
+    const nextFolder = getCurrentFolder(folderPath, nextTree)
     
     let finalName = name
     
@@ -367,38 +482,36 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
       setName(finalName)
     }
   
-    if (finalName && finalName.trim() !== '' && finalName !== item.name) {
-      // 确保新文件名如果需要.md后缀则添加后缀
-      let displayName = finalName;
-      if (item.name === '' && !displayName.endsWith('.md')) {
-        displayName += '.md';
-      }
+    if (finalName && finalName.trim() !== '' && finalName !== originalName) {
+      const renamePlan = buildFileRenamePlan({
+        originalName,
+        currentPath: path,
+        enteredName: finalName,
+      })
+      const { displayName, operation, targetRelativePath } = renamePlan
       
       // 更新缓存树中的名称
-      if (currentFolder && currentFolder.children) {
-        const fileIndex = currentFolder?.children?.findIndex(file => file.name === item.name)
+      if (nextFolder && nextFolder.children) {
+        const fileIndex = nextFolder?.children?.findIndex(file => file.name === originalName)
         if (fileIndex !== undefined && fileIndex !== -1) {
-          currentFolder.children[fileIndex].name = displayName
-          currentFolder.children[fileIndex].isEditing = false
+          nextFolder.children[fileIndex].name = displayName
+          nextFolder.children[fileIndex].isEditing = false
         }
       } else {
-        // 根目录文件：需要克隆 fileTree 来更新
-        const cacheTree = cloneDeep(fileTree)
-        const fileIndex = cacheTree.findIndex(file => file.name === item.name)
+        const fileIndex = nextTree.findIndex(file => file.name === originalName)
         if (fileIndex !== -1 && fileIndex !== undefined) {
-          cacheTree[fileIndex].name = displayName
-          cacheTree[fileIndex].isEditing = false
+          nextTree[fileIndex].name = displayName
+          nextTree[fileIndex].isEditing = false
         }
-        setFileTree(cacheTree)
       }
+      setFileTree(nextTree)
       
       // 确定是重命名现有文件还是创建新文件
-      if (item.name !== '') {
+      if (operation === 'rename') {
         // 重命名现有文件
         // 获取源路径和目标路径
         const oldPathOptions = await getFilePathOptions(path)
-        const newPathRelative = path.split('/').slice(0, -1).join('/') + '/' + displayName
-        const newPathOptions = await getFilePathOptions(newPathRelative)
+        const newPathOptions = await getFilePathOptions(targetRelativePath)
         
         // 根据工作区类型执行重命名操作
         if (workspace.isCustom) {
@@ -411,15 +524,7 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
         }
       } else {
         // 创建新文件
-        let newFilePath = finalName
-        if (!newFilePath.endsWith('.md')) {
-          newFilePath += '.md'
-        }
-        
-        // 获取新文件的完整路径
-        const parentPath = path.split('/').slice(0, -1).join('/')
-        const fullRelativePath = parentPath ? `${parentPath}/${newFilePath}` : newFilePath
-        const pathOptions = await getFilePathOptions(fullRelativePath)
+        const pathOptions = await getFilePathOptions(targetRelativePath)
         
         // 检查文件是否已存在
         let isExists = false
@@ -444,17 +549,17 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
       }
       
       // 构建新文件的完整路径用于激活文件
-      let newPath = path.split('/').slice(0, -1).join('/') + '/' + displayName
+      let newPath = targetRelativePath
       // 判断 newPath 是否以 / 开头
       if (newPath.startsWith('/')) {
         newPath = newPath.slice(1)
       }
       setActiveFilePath(newPath)
       // 新建文件后自动选择该文件并读取内容
-      readArticle(newPath, '', true)
+      readArticle(newPath, '', shouldAutoSyncOnInitialRead({ isNewFile: true }))
     } else {
       // 处理取消创建或无变更的情况
-      if (item.name === '') {
+      if (originalName === '') {
         // 只有当原文件名为空（新建文件）时才删除列表项
         if (currentFolder && currentFolder.children) {
           const index = currentFolder?.children?.findIndex(item => item.name === '')
@@ -699,7 +804,7 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
   useEffect(() => {
     if (item.isEditing) {
       setIsEditing(true)
-      setName(name)
+      setName(item.name)
       setTimeout(() => inputRef.current?.focus(), 300);
     }
   }, [item])
@@ -846,7 +951,13 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
                 <div className="flex flex-1 gap-1 select-none relative items-center">
                   <span className={item.parent ? 'size-0' : `${iconSize} ml-1`}></span>
                   <div className="relative flex items-center">
-                    { item.isLocale ? (item.sha ? <FileUp className={iconSize} /> : <File className={iconSize} />) : <FileDown className={iconSize} /> }
+                    { item.loading ? (
+                      <LoaderCircle className={`${iconSize} animate-spin`} />
+                    ) : item.isLocale ? (
+                      item.sha ? <FileUp className={iconSize} /> : <File className={iconSize} />
+                    ) : (
+                      <FileDown className={iconSize} />
+                    )}
                   </div>
                   <span className={`text-${fileManagerTextSize} flex-1 line-clamp-1`}>{item.name}</span>
                   {path === activeFilePath && renderVectorIcon()}

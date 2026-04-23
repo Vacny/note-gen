@@ -21,9 +21,9 @@ import { LocalImage } from "@/components/local-image";
 import { fetchAiDesc } from "@/lib/ai/description";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { appDataDir } from "@tauri-apps/api/path";
-import { ImageUp } from "lucide-react";
+import { CheckSquare, ImageUp, RefreshCw, Settings2, Square } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { open } from "@tauri-apps/plugin-shell";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Textarea } from "@/components/ui/textarea";
 import { AudioPlayer } from "@/components/audio-player";
 import { ImageViewer } from "@/components/image-viewer";
@@ -33,6 +33,14 @@ import { MarkMobileActions } from "./mark-mobile-actions";
 import { markToMarkdown } from "@/lib/mark-to-markdown";
 import useSettingStore from "@/stores/setting";
 import { TodoItemContent } from "./todo-item-content";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { BaseDirectory, readFile } from "@tauri-apps/plugin-fs";
+import { useRouter } from "next/navigation";
+import { NO_TRANSCRIPTION_MESSAGE, transcribeRecording } from "@/lib/audio";
+import { getMarkTypeListBadgeClasses } from "./mark-type-meta";
+import { getMarkListItemContent } from "./mark-list-item-content";
+import { TodoEditTrigger } from "./todo-edit-button";
+import { canOpenMarkSource, getMarkOpenAction } from "./mark-open-path";
 
 dayjs.extend(relativeTime)
 
@@ -66,7 +74,7 @@ const getWordCount = (text: string): number => {
   return text.replace(/\s/g, '').length;
 };
 
-const DetailViewer = React.memo(({mark, content, path}: {mark: Mark, content: string, path?: string}) => {
+const DetailViewer = React.memo(({mark, content, path, className}: {mark: Mark, content: string, path?: string, className?: string}) => {
   const [value, setValue] = useState('')
   const [descValue, setDescValue] = useState('')
   const { updateMark } = useMarkStore()
@@ -95,7 +103,7 @@ const DetailViewer = React.memo(({mark, content, path}: {mark: Mark, content: st
   return (
     <Sheet>
       <SheetTrigger asChild>
-        <span className={`line-clamp-2 ${lineHeight} mt-2 text-${recordTextSize} break-words cursor-pointer hover:underline`}>{content}</span>
+        <span className={className || `line-clamp-2 ${lineHeight} mt-2 text-${recordTextSize} break-words cursor-pointer hover:underline`}>{content}</span>
       </SheetTrigger>
       <SheetContent className="lg:min-w-[800px] w-full mt-[env(safe-area-inset-top)] p-0">
         <SheetHeader className="p-4 border-b">
@@ -137,16 +145,198 @@ const DetailViewer = React.memo(({mark, content, path}: {mark: Mark, content: st
 })
 DetailViewer.displayName = 'DetailViewer'
 
-export const MarkWrapper = React.memo(({mark}: {mark: Mark}) => {
+export type MarkItemVariant = 'list' | 'compact' | 'cards'
+
+export const MarkWrapper = React.memo(({mark, variant = 'list'}: {mark: Mark, variant?: MarkItemVariant}) => {
   const t = useTranslations('record.mark.type');
+  const todoT = useTranslations('record.mark.todo');
+  const recordingT = useTranslations('recording');
   const { isMultiSelectMode, selectedMarkIds, toggleMarkSelection } = useMarkStore();
-  const { recordTextSize } = useSettingStore();
+  const { recordTextSize, sttModel } = useSettingStore();
+  const { fetchMarks } = useMarkStore();
+  const router = useRouter();
+  const isMobile = useIsMobile();
+  const [isRetryingTranscription, setIsRetryingTranscription] = useState(false);
 
   const lineHeight = useMemo(() => getLineHeight(recordTextSize), [recordTextSize])
+  const shouldShowRecordingAction = mark.type === 'recording' && mark.content === NO_TRANSCRIPTION_MESSAGE
+  const itemContent = useMemo(() => getMarkListItemContent(mark), [mark])
+
+  const todoPriorityDotClass = itemContent.todo
+    ? itemContent.todo.priority === 'high'
+      ? 'bg-red-500'
+      : itemContent.todo.priority === 'low'
+        ? 'bg-green-500'
+        : 'bg-orange-500'
+    : ''
 
   const handleCheckboxChange = useCallback(() => {
     toggleMarkSelection(mark.id);
   }, [mark.id, toggleMarkSelection]);
+
+  const handleRecordingAction = useCallback(async () => {
+    if (!sttModel) {
+      router.push(isMobile ? '/mobile/setting/pages/audio' : '/core/setting/audio')
+      return
+    }
+
+    if (!mark.url || isRetryingTranscription) {
+      return
+    }
+
+    try {
+      setIsRetryingTranscription(true)
+      const fileData = await readFile(mark.url, { baseDir: BaseDirectory.AppData })
+      const extension = mark.url.split('.').pop()?.toLowerCase()
+      const mimeType = extension === 'wav' ? 'audio/wav' :
+        extension === 'mp3' ? 'audio/mpeg' :
+        extension === 'm4a' || extension === 'mp4' ? 'audio/mp4' :
+        extension === 'ogg' ? 'audio/ogg' :
+        extension === 'webm' ? 'audio/webm' :
+        'audio/webm'
+      const buffer = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength) as ArrayBuffer
+      const audioBlob = new Blob([buffer], { type: mimeType })
+      const transcription = await transcribeRecording(audioBlob)
+
+      if (!transcription.trim()) {
+        toast({
+          title: recordingT('error'),
+          description: recordingT('transcriptionEmpty'),
+          variant: 'destructive',
+        })
+        return
+      }
+
+      await updateMark({
+        ...mark,
+        desc: transcription.substring(0, 100),
+        content: transcription,
+      })
+      await fetchMarks()
+
+      toast({
+        title: recordingT('success'),
+        description: recordingT('retrySuccess'),
+      })
+    } catch (error) {
+      console.error('重新识别录音失败:', error)
+      toast({
+        title: recordingT('error'),
+        description: error instanceof Error ? error.message : recordingT('retryError'),
+        variant: 'destructive',
+      })
+    } finally {
+      setIsRetryingTranscription(false)
+    }
+  }, [fetchMarks, isMobile, isRetryingTranscription, mark, recordingT, router, sttModel])
+
+  if (variant === 'compact') {
+    return (
+      <div className="flex min-w-0 items-center gap-2">
+        {isMultiSelectMode && (
+          <div className="pr-1">
+            <Checkbox
+              checked={selectedMarkIds.has(mark.id)}
+              onCheckedChange={handleCheckboxChange}
+            />
+          </div>
+        )}
+        <span className={getMarkTypeListBadgeClasses(mark.type, 'xs')}>
+          {t(mark.type)}
+        </span>
+        {mark.type === 'todo' && itemContent.todo ? (
+          <span className={`size-2 shrink-0 rounded-full ${todoPriorityDotClass}`} />
+        ) : null}
+        <div className="min-w-0 flex-1">
+          {mark.type === 'todo' ? (
+            <TodoEditTrigger mark={mark} className={`block truncate text-${recordTextSize} font-medium hover:underline`}>
+              {itemContent.title || itemContent.preview || t(mark.type)}
+            </TodoEditTrigger>
+          ) : (
+            <DetailViewer
+              mark={mark}
+              content={itemContent.title || itemContent.preview || t(mark.type)}
+              path={mark.type === 'scan' ? 'screenshot' : mark.type === 'image' ? 'image' : undefined}
+              className={`block truncate text-${recordTextSize} font-medium hover:underline`}
+            />
+          )}
+        </div>
+        {mark.type === 'recording' && mark.url ? (
+          <AudioPlayer audioPath={mark.url} compact />
+        ) : null}
+        <span className="shrink-0 text-xs text-zinc-500">{dayjs(mark.createdAt).format('HH:mm')}</span>
+      </div>
+    )
+  }
+
+  if (variant === 'cards') {
+    const isImageCard = mark.type === 'image' || mark.type === 'scan'
+
+    return (
+      <div className="space-y-2.5">
+        <div className="flex items-center gap-2 text-zinc-500">
+          <span className={getMarkTypeListBadgeClasses(mark.type, 'xs')}>
+            {t(mark.type)}
+          </span>
+          {mark.type === 'todo' && itemContent.todo ? (
+            <span className={`size-2 shrink-0 rounded-full ${todoPriorityDotClass}`} />
+          ) : null}
+          <span className="ml-auto text-xs">{dayjs(mark.createdAt).format('MM-DD HH:mm')}</span>
+        </div>
+        {isImageCard && mark.url ? (
+          <div className="overflow-hidden rounded-md bg-zinc-100">
+            <ImageViewer
+              url={mark.url}
+              path={mark.type === 'scan' ? 'screenshot' : 'image'}
+              imageClassName="h-auto max-h-56 w-full object-cover"
+            />
+          </div>
+        ) : null}
+        <div className="space-y-1.5">
+          {mark.type === 'todo' ? (
+            <TodoEditTrigger mark={mark} className={`block truncate text-${recordTextSize} font-semibold hover:underline`}>
+              {itemContent.title || itemContent.preview || t(mark.type)}
+            </TodoEditTrigger>
+          ) : (
+            <DetailViewer
+              mark={mark}
+              content={itemContent.title || itemContent.preview || t(mark.type)}
+              path={mark.type === 'scan' ? 'screenshot' : mark.type === 'image' ? 'image' : undefined}
+              className={`block truncate text-${recordTextSize} font-semibold hover:underline`}
+            />
+          )}
+          {!isImageCard && itemContent.preview ? (
+            <p className={`line-clamp-6 text-${recordTextSize} ${lineHeight} text-muted-foreground`}>
+              {itemContent.preview}
+            </p>
+          ) : null}
+          {!isImageCard && mark.type === 'link' && mark.url ? (
+            <a
+              href={mark.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`block truncate text-xs text-blue-600 hover:underline`}
+            >
+              {mark.url}
+            </a>
+          ) : null}
+          {!isImageCard && mark.type === 'todo' && itemContent.todo ? (
+            <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <div className="flex items-center gap-2">
+                {itemContent.todo.completed ? <CheckSquare className="size-3.5 text-green-600" /> : <Square className="size-3.5 text-zinc-400" />}
+                <span>{itemContent.todo.completed ? todoT('completed') : todoT('uncompleted')}</span>
+              </div>
+            </div>
+          ) : null}
+          {!isImageCard && mark.type === 'recording' && mark.url ? (
+            <div className="pt-1">
+              <AudioPlayer audioPath={mark.url} />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
 
   const renderContent = () => {
     switch (mark.type) {
@@ -154,7 +344,7 @@ export const MarkWrapper = React.memo(({mark}: {mark: Mark}) => {
     return (
         <div className={`flex-1 overflow-hidden text-${recordTextSize} ${lineHeight} pr-10 md:pr-2`}>
           <div className="flex w-full items-center gap-2 text-zinc-500">
-            <span className={`flex items-center gap-1 bg-cyan-900 text-white px-1 rounded text-${recordTextSize}`}>
+            <span className={getMarkTypeListBadgeClasses(mark.type, 'xs')}>
               {t(mark.type)}
             </span>
             <span className={`ml-auto text-${recordTextSize}`}>{dayjs(mark.createdAt).fromNow()}</span>
@@ -166,7 +356,7 @@ export const MarkWrapper = React.memo(({mark}: {mark: Mark}) => {
     return (
         <div className={`flex-1 overflow-hidden text-${recordTextSize} ${lineHeight} pr-10 md:pr-2`}>
           <div className="flex w-full items-center gap-2 text-zinc-500">
-            <span className={`flex items-center gap-1 bg-fuchsia-900 text-white px-1 rounded text-${recordTextSize}`}>
+            <span className={getMarkTypeListBadgeClasses(mark.type, 'xs')}>
               {t(mark.type)}
             </span>
             {mark.url.includes('http') ? <ImageUp className="size-3 text-zinc-400" /> : null}
@@ -179,7 +369,7 @@ export const MarkWrapper = React.memo(({mark}: {mark: Mark}) => {
     return (
         <div className="flex-1 pr-10 md:pr-0">
           <div className={`flex w-full items-center gap-2 text-zinc-500 text-${recordTextSize} ${lineHeight}`}>
-            <span className="flex items-center gap-1 bg-blue-900 text-white px-1 rounded">
+            <span className={getMarkTypeListBadgeClasses(mark.type, 'xs')}>
               {t(mark.type)}
             </span>
             <span className={`ml-auto text-${recordTextSize}`}>{dayjs(mark.createdAt).fromNow()}</span>
@@ -201,7 +391,7 @@ export const MarkWrapper = React.memo(({mark}: {mark: Mark}) => {
       return (
           <div className="flex-1 pr-10 md:pr-0">
             <div className={`flex w-full items-center gap-2 text-zinc-500 text-${recordTextSize} ${lineHeight}`}>
-              <span className="flex items-center gap-1 bg-lime-900 text-white px-1 rounded">
+              <span className={getMarkTypeListBadgeClasses(mark.type, 'xs')}>
                 {t(mark.type)}
               </span>
               <span className={`ml-auto text-${recordTextSize}`}>{dayjs(mark.createdAt).fromNow()}</span>
@@ -213,9 +403,26 @@ export const MarkWrapper = React.memo(({mark}: {mark: Mark}) => {
       return (
           <div className="flex-1 pr-10 md:pr-0">
             <div className={`flex w-full items-center gap-2 text-zinc-500 text-${recordTextSize} ${lineHeight}`}>
-              <span className="flex items-center gap-1 bg-red-900 text-white px-1 rounded">
+              <span className={getMarkTypeListBadgeClasses(mark.type, 'xs')}>
                 {t(mark.type)}
               </span>
+              {shouldShowRecordingAction && (
+                <button
+                  type="button"
+                  className="shrink-0 text-zinc-500 transition-colors hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handleRecordingAction}
+                  disabled={isRetryingTranscription}
+                  title={sttModel
+                    ? (isRetryingTranscription ? recordingT('retrying') : recordingT('retryTranscription'))
+                    : recordingT('configureModel')}
+                >
+                  {sttModel ? (
+                    <RefreshCw className={`size-3.5 ${isRetryingTranscription ? 'animate-spin' : ''}`} />
+                  ) : (
+                    <Settings2 className="size-3.5" />
+                  )}
+                </button>
+              )}
               <span className={`ml-auto text-${recordTextSize}`}>{dayjs(mark.createdAt).fromNow()}</span>
             </div>
             <DetailViewer mark={mark} content={mark.content || ''} />
@@ -230,7 +437,7 @@ export const MarkWrapper = React.memo(({mark}: {mark: Mark}) => {
       return (
           <div className="flex-1 pr-10 md:pr-0">
             <div className={`flex w-full items-center gap-2 text-zinc-500 text-${recordTextSize} ${lineHeight}`}>
-              <span className="flex items-center gap-1 bg-orange-800 text-white px-1 rounded">
+              <span className={getMarkTypeListBadgeClasses(mark.type, 'xs')}>
                 {t(mark.type)}
               </span>
               <span className={`ml-auto text-${recordTextSize}`}>{dayjs(mark.createdAt).fromNow()}</span>
@@ -275,8 +482,9 @@ export const MarkWrapper = React.memo(({mark}: {mark: Mark}) => {
 })
 MarkWrapper.displayName = 'MarkWrapper'
 
-export const MarkItem = React.memo(({mark}: {mark: Mark}) => {
+export const MarkItem = React.memo(({mark, variant = 'list'}: {mark: Mark, variant?: MarkItemVariant}) => {
   const t = useTranslations();
+  const isMobile = useIsMobile()
   const {
     marks,
     fetchMarks,
@@ -284,7 +492,8 @@ export const MarkItem = React.memo(({mark}: {mark: Mark}) => {
     fetchAllTrashMarks,
     isMultiSelectMode,
     selectedMarkIds,
-    clearSelection
+    clearSelection,
+    highlightedMarkId,
   } = useMarkStore()
   const { tags, currentTagId, fetchTags, getCurrentTag } = useTagStore()
 
@@ -386,21 +595,40 @@ export const MarkItem = React.memo(({mark}: {mark: Mark}) => {
 
   const handelShowInFolder = useCallback(async (e?: React.MouseEvent) => {
     e?.stopPropagation()
-    const appDir = await appDataDir()
-    const path = mark.type === 'scan' ? 'screenshot' : 'image'
-    open(`${appDir}/${path}`)
-  }, [mark.type])
+    try {
+      const appDir = await appDataDir()
+      const action = getMarkOpenAction(mark, appDir, 'folder')
+
+      if (!action?.path) {
+        return
+      }
+
+      if (action.mode === 'reveal') {
+        await revealItemInDir(action.path)
+        return
+      }
+
+      await openPath(action.path)
+    } catch (error) {
+      console.error('Failed to open source folder:', error)
+    }
+  }, [mark])
 
   const handelShowInFile = useCallback(async (e?: React.MouseEvent) => {
     e?.stopPropagation()
-    const appDir = await appDataDir()
-    const path = mark.type === 'scan' ? 'screenshot' : 'image'
-    let filename = mark.url
-    if (mark.url.includes('http')) {
-      filename = mark.url.split('/').pop() || '';
+    try {
+      const appDir = await appDataDir()
+      const action = getMarkOpenAction(mark, appDir, 'file')
+
+      if (!action?.path) {
+        return
+      }
+
+      await openPath(action.path)
+    } catch (error) {
+      console.error('Failed to open source file:', error)
     }
-    open(`${appDir}/${path}/${filename}`)
-  }, [mark.type, mark.url])
+  }, [mark])
 
   const handleCopyLink = useCallback(async (e?: React.MouseEvent) => {
     e?.stopPropagation()
@@ -416,36 +644,51 @@ export const MarkItem = React.memo(({mark}: {mark: Mark}) => {
     [tags, currentTagId]
   )
 
+  const markCard = (
+    <div
+      data-mark-item="true"
+      data-mark-id={mark.id}
+      className={`relative transition-colors ${
+        variant === 'cards'
+          ? 'rounded-md border border-border/70 bg-background p-2.5'
+          : variant === 'compact'
+            ? 'rounded-md border border-border/60 bg-background px-3 py-2'
+            : 'rounded-lg border border-border/60 bg-background'
+      } ${highlightedMarkId === mark.id ? 'record-search-highlight border-amber-400/80 bg-amber-50/80 dark:border-amber-400/70 dark:bg-amber-500/10' : ''} ${isMobile ? 'cursor-default active:bg-accent/40' : 'cursor-move hover:bg-accent/50'}`}
+      draggable={!isMultiSelectMode && !isMobile}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <MarkWrapper mark={mark} variant={variant} />
+      <div className="absolute top-2 right-2">
+        <MarkMobileActions
+          mark={mark}
+          tags={tags}
+          currentTagId={currentTagId}
+          trashState={trashState}
+          isMultiSelectMode={isMultiSelectMode}
+          selectedMarkIds={selectedMarkIds}
+          onTransfer={handleTransfer}
+          onCopyLink={handleCopyLink}
+          onRegenerateDesc={regenerateDesc}
+          onShowInFolder={handelShowInFolder}
+          onShowInFile={handelShowInFile}
+          onRestore={handleRestore}
+          onDelete={handleDelMark}
+          onDeleteForever={handleDelForever}
+        />
+      </div>
+    </div>
+  )
+
+  if (isMobile) {
+    return markCard
+  }
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div
-          data-mark-item="true"
-          className="border-t relative cursor-move hover:bg-accent/50 transition-colors"
-          draggable={!isMultiSelectMode}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
-          <MarkWrapper mark={mark} />
-          <div className="absolute top-2 right-2">
-            <MarkMobileActions
-              mark={mark}
-              tags={tags}
-              currentTagId={currentTagId}
-              trashState={trashState}
-              isMultiSelectMode={isMultiSelectMode}
-              selectedMarkIds={selectedMarkIds}
-              onTransfer={handleTransfer}
-              onCopyLink={handleCopyLink}
-              onRegenerateDesc={regenerateDesc}
-              onShowInFolder={handelShowInFolder}
-              onShowInFile={handelShowInFile}
-              onRestore={handleRestore}
-              onDelete={handleDelMark}
-              onDeleteForever={handleDelForever}
-            />
-          </div>
-        </div>
+        {markCard}
       </ContextMenuTrigger>
       <ContextMenuContent>
         {
@@ -483,10 +726,10 @@ export const MarkItem = React.memo(({mark}: {mark: Mark}) => {
           {t('record.mark.toolbar.regenerateDesc')}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem inset disabled={isMultiSelectMode || mark.type === 'text'} onClick={handelShowInFolder} menuType="record">
+        <ContextMenuItem inset disabled={isMultiSelectMode || !canOpenMarkSource(mark)} onClick={handelShowInFolder} menuType="record">
           {t('record.mark.toolbar.viewFolder')}
         </ContextMenuItem>
-        <ContextMenuItem inset disabled={isMultiSelectMode || mark.type === 'text'} onClick={handelShowInFile} menuType="record">
+        <ContextMenuItem inset disabled={isMultiSelectMode || !canOpenMarkSource(mark)} onClick={handelShowInFile} menuType="record">
           {t('record.mark.toolbar.viewFile')}
         </ContextMenuItem>
         {

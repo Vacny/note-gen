@@ -67,7 +67,7 @@ function ResizableWrapper() {
   const centerPanelRef = useRef<ImperativePanelHandle>(null)
   const rightPanelRef = useRef<ImperativePanelHandle>(null)
   
-  const MIN_SIDEBAR_WIDTH_PX = 360
+  const MIN_SIDEBAR_WIDTH_PX = 280
   const MIN_EDITOR_WIDTH_PX = 400
   const [minSidebarSize, setMinSidebarSize] = useState(20)
   const [minEditorSize, setMinEditorSize] = useState(30)

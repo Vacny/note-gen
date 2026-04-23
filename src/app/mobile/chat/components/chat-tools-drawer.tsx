@@ -11,7 +11,8 @@ import {
 } from "@/components/ui/drawer"
 import { RagToggle } from "./rag-toggle"
 import { McpSelector } from "./mcp-selector"
-import { MobileNewChat } from "./new-chat"
+import { ModelSelector } from "./model-selector"
+import { PromptSelector } from "./prompt-selector"
 import { useTranslations } from "next-intl"
 
 export function ChatToolsDrawer() {
@@ -35,12 +36,17 @@ export function ChatToolsDrawer() {
         <div className="p-4 overflow-auto">
           <div className="divide-y">
             <div className="h-16 flex items-center w-full">
-              <RagToggle />
+              <ModelSelector />
+            </div>
+            <div className="h-16 flex items-center w-full">
+              <PromptSelector />
             </div>
             <div className="py-2">
               <McpSelector />
             </div>
-            <MobileNewChat />
+            <div className="h-16 flex items-center w-full">
+              <RagToggle />
+            </div>
           </div>
         </div>
       </DrawerContent>

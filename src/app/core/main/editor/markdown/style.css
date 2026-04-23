@@ -27,6 +27,14 @@
   height: 0;
 }
 
+.tiptap-editor .tiptap.ProseMirror > p {
+  margin: 0;
+}
+
+.tiptap-editor .tiptap.ProseMirror > p:not(.is-empty) + p:not(.is-empty) {
+  margin-top: 0.85em;
+}
+
 /* 基础样式覆盖 */
 .tiptap-editor .ProseMirror h1 {
   font-size: 2em;
@@ -182,12 +190,6 @@
    图片上传样式
    ======================== */
 
-/* 上传中的图片 */
-.tiptap-editor .ProseMirror img[data-upload-status="uploading"] {
-  opacity: 0.6;
-  filter: blur(2px);
-}
-
 /* 上传失败的图片 */
 .tiptap-editor .ProseMirror img[data-upload-status="error"] {
   border: 2px solid hsl(var(--destructive));
@@ -239,13 +241,16 @@
 .tiptap-editor .ProseMirror .tableWrapper {
   margin: 1em 0;
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .tiptap-editor .ProseMirror table {
   border-collapse: collapse;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
   margin: 0;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .tiptap-editor .ProseMirror table th,
@@ -255,6 +260,18 @@
   text-align: left;
   vertical-align: top;
   min-width: 100px;
+  empty-cells: hide;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* 表格空单元格使用空格替代 nbsp */
+/* TipTap 空单元格结构为 <td><p></p></td> */
+.tiptap-editor .ProseMirror table td:has(p:empty)::before,
+.tiptap-editor .ProseMirror table th:has(p:empty)::before {
+  content: " ";
+  visibility: hidden;
 }
 
 .tiptap-editor .ProseMirror table th {
@@ -367,29 +384,6 @@
 
 .dark .tiptap-editor .ProseMirror .selectedCell {
   background-color: hsl(var(--primary) / 0.25) !important;
-}
-
-/* 任务列表 */
-.tiptap-editor .ProseMirror table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 1em 0;
-}
-
-.tiptap-editor .ProseMirror table th,
-.tiptap-editor .ProseMirror table td {
-  border: 1px solid hsl(var(--border));
-  padding: 8px 12px;
-  text-align: left;
-}
-
-.tiptap-editor .ProseMirror table th {
-  background-color: hsl(var(--muted) / 0.3);
-  font-weight: 600;
-}
-
-.tiptap-editor .ProseMirror table tr:nth-child(2n) {
-  background-color: hsl(var(--muted) / 0.2);
 }
 
 /* 列表 */
@@ -535,6 +529,8 @@
   border: 2px solid currentColor !important;
   border-radius: 4px !important;
   padding: 1px 4px;
+  background: hsl(var(--primary) / 0.12);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.1);
   transition: border-color 0.2s ease;
 }
 
@@ -557,9 +553,15 @@
   border-radius: 2px !important;
 }
 
+/* 搜索替换插件的高亮 - 在 globals.css 中定义 */
+
 /* 选中文本时的背景 */
 .ProseMirror-focused::selection {
   background-color: hsl(var(--primary) / 0.3);
+}
+
+.tiptap-editor .ProseMirror ::selection {
+  background-color: hsl(var(--primary) / 0.24);
 }
 
 /* 暗色模式适配 */
@@ -743,10 +745,20 @@
 
 /* 移动端工具栏支持左右滑动 */
 @media (max-width: 768px) {
+  #mobile-writing .mobile-editor-context-bar {
+    position: sticky;
+    top: 0;
+    z-index: 35;
+  }
+
   /* 确保移动端写作页面的编辑器容器不会阻止滑动 */
   #mobile-writing .tiptap-editor .ProseMirror {
     touch-action: pan-x pan-y !important;
     -webkit-overflow-scrolling: touch !important;
+  }
+
+  #mobile-writing .tiptap-editor .ProseMirror ::selection {
+    background-color: hsl(var(--primary) / 0.34);
   }
 
   /* 移动端优化 FooterBar */

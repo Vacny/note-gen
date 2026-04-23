@@ -42,7 +42,7 @@ export const QuoteMark = Mark.create<QuoteOptions>({
     return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
       'data-quote': 'true',
       class: 'tiptap-quote-mark',
-      style: 'border: 2px solid currentColor !important; border-radius: 4px !important;'
+      style: 'border: 2px solid currentColor !important; border-radius: 4px !important; background: hsl(var(--primary) / 0.12);'
     }), 0]
   },
 

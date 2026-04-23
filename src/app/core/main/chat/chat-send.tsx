@@ -13,6 +13,8 @@ import { LinkedResource, isLinkedFolder } from "@/lib/files"
 import { readTextFile } from "@tauri-apps/plugin-fs"
 import { getFilePathOptions, getWorkspacePath } from "@/lib/workspace"
 import { AgentHandler } from "@/lib/agent/agent-handler"
+import { getToolByName } from "@/lib/agent/tools"
+import { getSessionApprovalScope, matchesSessionApproval } from "@/lib/agent/session-approval"
 import { ImageAttachment } from "./image-attachments"
 import type { RagSource } from "@/lib/rag"
 
@@ -22,6 +24,8 @@ interface QuoteData {
   fileName: string
   startLine: number
   endLine: number
+  from: number
+  to: number
   articlePath: string
 }
 
@@ -36,7 +40,15 @@ interface ChatSendProps {
 export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ inputValue, onSent, linkedResource, attachedImages = [], quoteData = null }, ref) => {
   const { primaryModel } = useSettingStore()
   const { currentTagId } = useTagStore()
-  const { insert, loading, setLoading, saveChat, setAgentState, maybeCondense, linkedResourcePreview } = useChatStore()
+  const {
+    insert,
+    loading,
+    setLoading,
+    saveChat,
+    setAgentState,
+    maybeCondense,
+    linkedResourcePreview,
+  } = useChatStore()
   const { isRagEnabled } = useVectorStore()
   const abortControllerRef = useRef<AbortController | null>(null)
   const agentHandlerRef = useRef<AgentHandler | null>(null)
@@ -81,6 +93,65 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
     })
   }
 
+  const shouldCarryUserHistoryForAgent = (input: string) => {
+    const normalized = input.trim().toLowerCase()
+    if (!normalized) {
+      return false
+    }
+
+    return /^(继续|接着|然后|再来|再生成|再做|顺便|另外|刚才|基于刚才|在此基础上|那个|这个|它|继续用|再用)/.test(normalized)
+      || /(继续|接着|然后|再来|再生成|再做|顺便|另外|刚才|基于刚才|在此基础上|那个|这个|它)/.test(normalized)
+  }
+
+  const buildPartialSuccessContent = (result: string, toolCalls: { result?: { success?: boolean; data?: any; error?: string } }[]) => {
+    const generatedOutputFiles = toolCalls.flatMap((toolCall) => {
+      const outputFiles = toolCall.result?.data?.output_files
+      return Array.isArray(outputFiles) ? outputFiles : []
+    })
+
+    const uniqueOutputFiles = Array.from(new Set(generatedOutputFiles.filter((file): file is string => typeof file === 'string' && file.trim().length > 0)))
+    if (uniqueOutputFiles.length === 0) {
+      return null
+    }
+
+    const failedToolCall = [...toolCalls].reverse().find((toolCall) => toolCall.result?.success === false)
+    const failureMessage = failedToolCall?.result?.error || result
+
+    return [
+      `已成功生成文件：`,
+      uniqueOutputFiles.map((file) => `- ${file}`).join('\n'),
+      '',
+      `后续校验或附加步骤失败：${failureMessage}`,
+    ].join('\n')
+  }
+
+  const sanitizeAgentFinalContent = (content: string) => {
+    const trimmed = content.trim()
+    if (!trimmed) {
+      return trimmed
+    }
+
+    const markers = ['\nThought:', '\nAction:', '\nAction Input:']
+    let cutoff = trimmed.length
+
+    for (const marker of markers) {
+      const index = trimmed.indexOf(marker)
+      if (index !== -1) {
+        cutoff = Math.min(cutoff, index)
+      }
+    }
+
+    const leadingActionIndex = trimmed.search(/^(Thought:|Action:|Action Input:)/)
+    if (leadingActionIndex === 0) {
+      const finalAnswerMatch = trimmed.match(/Final Answer[:：]\s*([\s\S]*)/i)
+      if (finalAnswerMatch) {
+        return finalAnswerMatch[1].trim()
+      }
+    }
+
+    return trimmed.slice(0, cutoff).trim()
+  }
+
   useImperativeHandle(ref, () => ({
     sendChat: handleSubmit
   }))
@@ -90,18 +161,41 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
     toolName: string,
     params: Record<string, any>,
     context?: {
+      previewParams?: Record<string, any>
       originalContent?: string
       modifiedContent?: string
       filePath?: string
     }
   ): Promise<boolean> => {
+    const tool = getToolByName(toolName)
+    const sessionApprovalScope = getSessionApprovalScope(toolName, tool, params)
+    const canApproveForSession = !!sessionApprovalScope
+
+    const currentChatState = useChatStore.getState()
+    const activeConversationId = currentChatState.currentConversationId
+    const autoApproveConversationId = currentChatState.agentAutoApproveConversationId
+    const autoApproveRuntimeSkillId = currentChatState.agentAutoApproveRuntimeSkillId
+
+    if (matchesSessionApproval(
+      autoApproveConversationId,
+      activeConversationId,
+      autoApproveRuntimeSkillId,
+      sessionApprovalScope
+    )) {
+      return Promise.resolve(true)
+    }
+
     return new Promise((resolve) => {
       // 将确认请求保存到 store，在对话中显示
       setAgentState({
         pendingConfirmation: {
           toolName,
           params,
-          ...context
+          previewParams: context?.previewParams,
+          ...context,
+          canApproveForSession,
+          sessionApprovalType: sessionApprovalScope?.type,
+          sessionApprovalSkillId: sessionApprovalScope?.skillId,
         }
       })
       
@@ -132,16 +226,33 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
 
     if (!placeholderMessage) return
 
+    setAgentState({
+      activeChatId: placeholderMessage.id,
+    })
+
     // 每次都创建新的 AgentHandler，使用当前的 placeholderMessage
     const agentHandler = new AgentHandler({
+      activeChatId: placeholderMessage.id,
       requestConfirmation,
+      currentQuote: quoteData
+        ? {
+            fileName: quoteData.fileName,
+            startLine: quoteData.startLine,
+            endLine: quoteData.endLine,
+            from: quoteData.from,
+            to: quoteData.to,
+            fullContent: quoteData.fullContent,
+          }
+        : undefined,
       onFinalAnswerRender: (markdownContent) => {
         // 检测到 Final Answer 时触发渲染
         setAgentState({
+          activeChatId: placeholderMessage.id,
           isFinalAnswerMode: true,
           finalAnswerContent: markdownContent
         })
       },
+      formatAutoFinalAnswer: (key, values) => t(key as any, values),
       onComplete: async (result, steps, stopped) => {
         // 获取 Agent 执行历史，保存完整的 ReAct 步骤
         const { agentState } = useChatStore.getState()
@@ -168,6 +279,15 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
           }
         }
 
+        if (!stopped) {
+          const partialSuccessContent = buildPartialSuccessContent(result, agentState.toolCalls)
+          if (partialSuccessContent && /^工具 .+执行失败：|^工具 .+执行出错：|^Error:/.test(finalContent.trim())) {
+            finalContent = partialSuccessContent
+          }
+        }
+
+        finalContent = sanitizeAgentFinalContent(finalContent)
+
         // 获取当前消息状态，保留 ragSources 和 ragSourceDetails
         const currentState = useChatStore.getState()
         const currentMessage = currentState.chats.find(c => c.id === placeholderMessage.id)
@@ -191,6 +311,7 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
 
         // 清空 Final Answer 模式状态
         setAgentState({
+          activeChatId: undefined,
           isFinalAnswerMode: false,
           finalAnswerContent: undefined
         })
@@ -220,6 +341,7 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
 
         // 清空 Final Answer 模式状态
         setAgentState({
+          activeChatId: undefined,
           isFinalAnswerMode: false,
           finalAnswerContent: undefined
         })
@@ -307,37 +429,36 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
         }, true)
       }
 
-      // 3. 如果有关联文件（非文件夹），使用行号预览
+      // 3. 如果有关联文件（非文件夹），始终注入完整内容作为 Agent 上下文
       if (linkedResource && !isLinkedFolder(linkedResource)) {
-        if (linkedResourcePreview) {
-          // 使用预生成的行号预览
-          context += `\n${linkedResourcePreview}\n`
-        } else {
-          // 回退：读取完整文件内容
-          try {
-            const workspace = await getWorkspacePath()
-            let linkedFileContent = ''
-            if (workspace.isCustom) {
-              linkedFileContent = await readTextFile(linkedResource.path)
-            } else {
-              const { path, baseDir } = await getFilePathOptions(linkedResource.path)
-              linkedFileContent = await readTextFile(path, { baseDir })
-            }
-
-            if (linkedFileContent) {
-              context += `\n## 关联文件内容\n\nThe following is the content of the linked file "${linkedResource.name}" (${linkedResource.relativePath}):\n${linkedFileContent}\n`
-            }
-          } catch (error) {
-            console.error('Failed to read linked file in Agent mode:', error)
+        try {
+          const workspace = await getWorkspacePath()
+          let linkedFileContent = ''
+          if (workspace.isCustom) {
+            linkedFileContent = await readTextFile(linkedResource.path)
+          } else {
+            const { path, baseDir } = await getFilePathOptions(linkedResource.path)
+            linkedFileContent = await readTextFile(path, { baseDir })
           }
+
+          if (linkedResourcePreview) {
+            context += `\n${linkedResourcePreview}\n`
+          }
+
+          if (linkedFileContent) {
+            context += `\n## 关联文件完整内容\n\nThe full content of the linked file "${linkedResource.name}" (${linkedResource.relativePath}) is already included below. Do not call tools to read or check this same file again unless the user explicitly asks to refresh it.\n\n---\n${linkedFileContent}\n---\n`
+          }
+        } catch (error) {
+          console.error('Failed to read linked file in Agent mode:', error)
         }
       }
 
       // 4. 如果有引用内容，添加引用上下文（在构建消息之前）
       if (quoteData) {
-        const { fileName, startLine, endLine, fullContent } = quoteData
+        const { fileName, startLine, endLine, fullContent, from, to } = quoteData
         let lineInfo = ''
         const hasValidLineNumbers = startLine !== -1 && endLine !== -1
+        const hasValidRange = from >= 0 && to >= from
 
         if (hasValidLineNumbers) {
           if (startLine === endLine) {
@@ -355,12 +476,54 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
 ${fullContent}
 ---
 
-${hasValidLineNumbers ? `**🚨 必须使用行号修改**: 当用户引用内容并要求修改时，你必须使用 replace_editor_content 工具的 line-based 模式，传入精确的行号：
+${hasValidRange ? `**仅在用户明确要求修改/改写/补充/插入时才允许编辑**。
+
+如果用户是在提问、解释、总结、分析、翻译、润色建议、代码说明，应该直接基于这段引用内容回答，**不要调用任何编辑工具**。
+
+**🚨 当且仅当用户明确要求修改时，必须精确替换用户选中的范围**: 当前引用内容来自编辑器选区，必须优先使用 replace_editor_content 的 position-based 模式，只替换这段选中的内容：
+- from: ${from}
+- to: ${to}
+- 使用 content 或 replaceContent 传入新内容
+- 只允许替换这个选区，禁止扩大到整篇文档或整段之外
+
+**如果用户说“在这段前面/后面/上面/下面插入、补充、添加”**:
+- 仍然使用 replace_editor_content
+- 基于当前引用范围整体替换
+- 前插: 新内容 + 原引用内容
+- 后插: 原引用内容 + 新内容
+- 不要使用 insert_at_cursor，因为聊天输入会让编辑器失焦，当前光标位置不可靠
+
+**如果用户明确要求“前面和后面都增加内容”**:
+- 仍然使用 replace_editor_content
+- 必须先分别生成前插内容和后插内容
+- 请在传给工具的 content 中使用这个精确格式：
+  <<BEFORE>>
+  [前插内容]
+  <<AFTER>>
+  [后插内容]
+- 系统会自动把它拼接成：前插内容 + 原引用内容 + 后插内容
+- 不要把前后内容合并成一整段普通文本
+
+**兜底行号信息**:
+- 单行修改: startLine: ${startLine}, endLine: ${endLine}
+- 多行范围: startLine: ${startLine}, endLine: ${endLine}
+
+**禁止**:
+- 禁止在解释/分析类请求中调用编辑工具
+- 禁止改动选区之外的内容
+- 禁止获取整个文档后再重写整篇
+- 禁止把 startLine/endLine 擅自改成 1/1` : hasValidLineNumbers ? `**🚨 必须使用行号修改**: 当用户引用内容并要求修改时，你必须使用 replace_editor_content 工具的 line-based 模式，传入精确的行号：
+` : hasValidLineNumbers ? `**仅在用户明确要求修改/改写/补充/插入时才允许编辑**。
+
+如果用户是在提问、解释、总结、分析、翻译、润色建议、代码说明，应该直接基于这段引用内容回答，**不要调用任何编辑工具**。
+
+**🚨 当且仅当用户明确要求修改时，必须使用行号修改**: 当用户引用内容并要求修改时，你必须使用 replace_editor_content 工具的 line-based 模式，传入精确的行号：
 - 单行修改: startLine: ${startLine}, endLine: ${endLine}
 - 多行范围: startLine: ${startLine}, endLine: ${endLine}
 - 必须使用 replaceContent 参数传入新内容
 
 **禁止**:
+- 禁止在解释/分析类请求中调用编辑工具
 - 禁止使用 from/to 位置参数
 - 禁止使用 searchContent 文本搜索模式
 - 禁止获取整个文档内容后再操作` : `**注意**: 此引用内容没有有效的行号信息。如果需要修改，请先使用 get_editor_selection 工具获取当前选中的行号信息。`}
@@ -381,7 +544,14 @@ ${hasValidLineNumbers ? `**🚨 必须使用行号修改**: 当用户引用内�
         chats,
         undefined, // systemPrompt - Agent 会自己构建
         context,   // additionalContext - 包含文章、RAG、关联文件、引用等
-        inputValue // currentUserInput - 当前用户输入
+        inputValue, // currentUserInput - 当前用户输入
+        {
+          // Agent 自己会在 think() 里重新注入当前请求，避免重复。
+          // 保留 assistant 历史，优先使用 condensedContent，避免丢失多轮上下文。
+          includeAssistantMessages: true,
+          includeLatestUserMessage: false,
+          maxUserMessages: shouldCarryUserHistoryForAgent(inputValue) ? 3 : 0,
+        }
       )
 
       await agentHandler.execute(inputValue, messages, imageUrls)

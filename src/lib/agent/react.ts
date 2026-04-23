@@ -1,7 +1,173 @@
 import { ReActStep, ToolCall, ToolResult } from './types'
 import { getToolByName, getToolDescriptions } from './tools'
 import { skillManager } from '@/lib/skills'
+import useChatStore from '@/stores/chat'
+import useArticleStore from '@/stores/article'
+import { isLinkedFolder } from '@/lib/files'
+import {
+  getAutoFinalAnswerDescriptor,
+  shouldRecoverWithAutoFinalAnswer,
+} from './auto-final-answer'
+import { parseActionInputJson } from './parse-action-input'
+import {
+  IntentPolicy,
+  deriveIntentPolicy,
+  evaluateIntentAwareToolPolicy,
+  formatIntentPolicyForPrompt,
+} from './tool-policy'
 import OpenAI from 'openai'
+
+function buildIterationUserMessage(
+  iteration: number,
+  userInput: string,
+  lastObservation?: string
+): string {
+  if (iteration <= 1) {
+    return `This is iteration ${iteration}, please give your Thought and Action (or Final Answer):\n\nUser Request: ${userInput}`
+  }
+
+  return `## User Request
+${userInput}
+
+## Previous Step Result
+${lastObservation || 'No previous result'}
+
+---
+Keep working toward the user request above.
+If the task is completed, respond with Final Answer.
+If you need to continue, provide your next Thought and Action.`
+}
+
+function normalizeLinkedCandidate(candidate: unknown): string {
+  return typeof candidate === 'string' ? candidate.trim() : ''
+}
+
+function getLinkedFileName(path: unknown): string {
+  const normalized = normalizeLinkedCandidate(path)
+  return normalized.split('/').pop() || normalized
+}
+
+function matchesLinkedFileCandidate(
+  candidate: unknown,
+  linkedResource: { relativePath?: string; name?: string; path?: string }
+): boolean {
+  const normalized = normalizeLinkedCandidate(candidate)
+  if (!normalized) {
+    return false
+  }
+
+  const linkedPaths = new Set([
+    linkedResource.relativePath,
+    linkedResource.name,
+    linkedResource.path,
+    getLinkedFileName(linkedResource.relativePath),
+    getLinkedFileName(linkedResource.path),
+  ].filter(Boolean))
+
+  return linkedPaths.has(normalized) || linkedPaths.has(getLinkedFileName(normalized))
+}
+
+function shouldBlockRedundantLinkedFileRead(
+  toolName: string,
+  params: Record<string, any>,
+  linkedResource: { relativePath?: string; name?: string; path?: string }
+): boolean {
+  if (toolName === 'read_markdown_file') {
+    return typeof params.filePath === 'string' && matchesLinkedFileCandidate(params.filePath, linkedResource)
+  }
+
+  if (toolName === 'read_markdown_files_batch') {
+    if (!Array.isArray(params.filePaths) || params.filePaths.length === 0) {
+      return false
+    }
+
+    return params.filePaths.every((filePath: unknown) =>
+      typeof filePath === 'string' && matchesLinkedFileCandidate(filePath, linkedResource)
+    )
+  }
+
+  if (toolName === 'check_folder_exists') {
+    return typeof params.folderPath === 'string' && matchesLinkedFileCandidate(params.folderPath, linkedResource)
+  }
+
+  return false
+}
+
+function isExplicitTagOrMarkIntent(userInput: string): boolean {
+  return /标签|標籤|tag|记录|紀錄|mark|摘录|摘錄|收集箱|inbox/i.test(userInput)
+}
+
+function shouldKeepFocusOnLinkedNote(
+  userInput: string,
+  linkedResource: { relativePath?: string; name?: string; path?: string },
+  toolName: string
+): boolean {
+  const tagMarkToolNames = new Set([
+    'list_tags',
+    'search_tags',
+    'read_marks',
+    'search_marks',
+    'search_all_marks',
+  ])
+
+  if (!tagMarkToolNames.has(toolName) || isExplicitTagOrMarkIntent(userInput)) {
+    return false
+  }
+
+  const linkedPath = linkedResource.relativePath || linkedResource.path || linkedResource.name || ''
+  return /\.md$/i.test(linkedPath)
+}
+
+function isSuccessfulObservation(observation?: string): boolean {
+  if (!observation) {
+    return false
+  }
+
+  return !observation.includes('失败') &&
+    !observation.includes('错误') &&
+    !observation.includes('阻止')
+}
+
+type CheckboxTargetState = 'checked' | 'unchecked'
+
+function getCheckboxTargetState(userInput: string): CheckboxTargetState | null {
+  if (/未完成|取消勾选|取消完成|unchecked|not completed|todo|待办/.test(userInput)) {
+    return 'unchecked'
+  }
+
+  if (/已完成|勾选|打勾|checked|completed|完成状态/.test(userInput)) {
+    return 'checked'
+  }
+
+  return null
+}
+
+function shouldBlockRepeatedNoteExploration(
+  toolName: string,
+  params: Record<string, any>,
+  steps: ReActStep[]
+): boolean {
+  const hasSuccessfulBatchRead = steps.some((step) =>
+    step.action?.tool === 'read_markdown_files_batch' &&
+    isSuccessfulObservation(step.observation) &&
+    step.observation?.includes('成功读取')
+  )
+
+  if (toolName === 'list_markdown_files' && hasSuccessfulBatchRead) {
+    return true
+  }
+
+  if (toolName !== 'read_markdown_files_batch') {
+    return false
+  }
+
+  const currentParams = JSON.stringify(params || {})
+  return steps.some((step) =>
+    step.action?.tool === 'read_markdown_files_batch' &&
+    JSON.stringify(step.action?.params || {}) === currentParams &&
+    isSuccessfulObservation(step.observation)
+  )
+}
 
 export interface ReActConfig {
   maxIterations: number
@@ -12,12 +178,22 @@ export interface ReActConfig {
   onIterationStart?: () => void
   onSkillsSelected?: (skillIds: string[]) => void  // 当 AI 选择 Skills 时调用
   onFinalAnswerRender?: (markdownContent: string) => void  // 当检测到 Final Answer 时立即渲染 Markdown
+  formatAutoFinalAnswer?: (key: string, values?: Record<string, string>) => string
   requestConfirmation?: (toolName: string, params: Record<string, any>, context?: {
+    previewParams?: Record<string, any>
     originalContent?: string
     modifiedContent?: string
     filePath?: string
   }) => Promise<boolean>
   activeSkills?: string[]  // 当前激活的 Skills
+  currentQuote?: {
+    fileName: string
+    startLine: number
+    endLine: number
+    from: number
+    to: number
+    fullContent?: string
+  }
 }
 
 export class ReActAgent {
@@ -28,6 +204,12 @@ export class ReActAgent {
   private stopped = false
   private abortController: AbortController | null = null
   private selectedSkills: Set<string> = new Set() // 记录 AI 选择的 Skills
+  private currentUserInput = ''
+  private intentPolicy: IntentPolicy = {
+    allowWrite: false,
+    allowDestructive: false,
+    allowExecute: false,
+  }
 
   constructor(config: ReActConfig) {
     this.config = config
@@ -59,6 +241,8 @@ export class ReActAgent {
     this.toolCallCounter = 0
     this.stopped = false
     this.selectedSkills.clear()
+    this.currentUserInput = userInput
+    this.intentPolicy = deriveIntentPolicy(userInput)
     // 创建新的 AbortController
     this.abortController = new AbortController()
 
@@ -94,6 +278,19 @@ export class ReActAgent {
         throw new Error('USER_STOPPED')
       }
 
+      const lastCompletedStep = this.steps[this.steps.length - 1]
+      if (lastCompletedStep?.action && shouldRecoverWithAutoFinalAnswer(thought)) {
+        const descriptor = getAutoFinalAnswerDescriptor({
+          toolName: lastCompletedStep.action.tool,
+          params: lastCompletedStep.action.params,
+          observation: lastCompletedStep.observation || '',
+        })
+        if (descriptor) {
+          finalAnswer = this.config.formatAutoFinalAnswer?.(descriptor.key, descriptor.values) || descriptor.fallback
+          break
+        }
+      }
+
       // 检查是否包含 Final Answer（支持多种格式，包括换行的情况）
       // 处理 "Action: Final\nAnswer:" 的特殊情况
       const normalizedThought = thought.replace(/\s+/g, ' ')
@@ -123,6 +320,19 @@ export class ReActAgent {
             finalAnswer = match[1].trim()
           }
         }
+
+        const finalAnswerValidation = this.validateFinalAnswerReadiness(userInput, finalAnswer || '')
+        if (!finalAnswerValidation.ok) {
+          const observation = finalAnswerValidation.reason || '最终答案校验未通过，请继续执行实际工具。'
+          this.config.onObservation?.(observation)
+          this.steps.push({
+            thought,
+            action: undefined,
+            observation,
+          })
+          finalAnswer = ''
+          continue
+        }
         break
       }
 
@@ -139,6 +349,17 @@ export class ReActAgent {
 
       const action = this.parseAction(thought)
       if (!action) {
+        if (thought.includes('Action:')) {
+          const observation = 'Action Input JSON 无法解析。请保持动作不变，并只重新输出一次有效的 JSON 参数。'
+          this.config.onObservation?.(observation)
+          this.steps.push({
+            thought,
+            action: undefined,
+            observation,
+          })
+          continue
+        }
+
         // 无法解析 Action，尝试从 thought 中提取答案
         // 检查是否 AI 想直接回答但忘记使用 Final Answer 格式
         const thoughtContent = thought.replace(/Thought:\s*/i, '').trim()
@@ -166,12 +387,16 @@ export class ReActAgent {
         // 检查是否是相同的工具和参数
         const isSameTool = lastStep.action.tool === action.tool
         const isSameParams = JSON.stringify(lastStep.action.params) === JSON.stringify(action.params)
+        const lastStepWasPolicyAdjustment = this.isPolicyAdjustmentObservation(lastStep.observation)
 
         if (isSameTool && isSameParams) {
-          // 检测到重复操作，给出警告并结束
-          console.warn(`检测到重复操作: ${action.tool}`, action.params)
-          finalAnswer = `操作已完成。${lastStep.observation}`
-          break
+          if (lastStepWasPolicyAdjustment) {
+          } else {
+            // 检测到重复操作，给出警告并结束
+            console.warn(`检测到重复操作: ${action.tool}`, action.params)
+            finalAnswer = `操作已完成。${lastStep.observation}`
+            break
+          }
         }
 
         // 检查是否连续多次执行完全相同的操作（超过 5 次且工具和参数都相同）
@@ -234,6 +459,7 @@ export class ReActAgent {
   private async buildSystemPrompt(): Promise<string> {
     const toolDescriptions = getToolDescriptions()
     const skillsInstructions = this.formatSkillsInstructions()
+    const intentPolicyPrompt = formatIntentPolicyForPrompt(this.intentPolicy)
 
     // Load user memories (preferences and knowledge)
     let memoryPrompt = ''
@@ -274,7 +500,7 @@ ${memoryPrompt ? `## User Memories\n\n${memoryPrompt}\n` : ''}
 
 **Efficiency**: Complete tasks with minimum steps, avoid unnecessary tool calls.
 **Direct Action**: If intent is clear and action is needed, execute without over-analysis.
-**Quick Finish**: Give Final Answer immediately after completing task, don't repeat operations.
+**Quick Finish**: Give Final Answer immediately after the task is actually complete. If the previous result shows there is still a required next step, continue with that next step instead of stopping early.
 
 ## Knowledge Base Search Guide
 
@@ -318,7 +544,9 @@ Before using any tools, you MUST understand the difference between these three c
 ### Decision Guide:
 | User Request | Concept | Tools to Use |
 |--------------|---------|--------------|
-| "List my notes" / "Read note files" | Note (file) | list_markdown_files, read_markdown_file |
+| "List my notes" | Note (file) | list_markdown_files |
+| "Read another saved note file" | Note (file) | read_markdown_file |
+| "Read the note currently open in the editor" | Note (file) | get_editor_content |
 | "Create a new note file" | Note (file) | create_file |
 | "Find/create tags" | Tag | list_tags, create_tag |
 | "List records in inbox" / "Create a bookmark" | Mark | read_marks, create_mark |
@@ -385,16 +613,30 @@ Final Answer: Done! I created a note called "React Knowledge Summary" which incl
 - NEVER use search tools when user is just asking a question without requesting search
 - For RAG mode (semantic search): only use when user explicitly asks for "语义搜索" or "AI搜索"
 
+**📁 File Existence Claims**:
+- NEVER claim a file/folder "does not exist", "was deleted", or "is missing" unless a read/check tool observation explicitly confirms it
+- Do NOT infer missing files from conversation history or your own assumptions
+- If uncertain, first use a read-only check tool or ask the user for the exact file/path
+- If the user asks to summarize/analyze a note and the exact file is unclear, prefer asking a clarifying question over inventing a missing-file reason
+- If the user needs the currently open note, use \`get_editor_content\` so you read the live editor state instead of saved disk content
+- If the target path ends with \`.md\` and it is not the current editor note, treat it as a note file: use \`read_markdown_file\` or \`read_markdown_files_batch\`, not \`check_folder_exists\`
+- If you are updating a saved note file after reading its metadata or content, include \`expectedModifiedAt\` with \`update_markdown_file\` whenever you know the file's last modified time
+- When editing the currently open note with \`replace_editor_content\`, prefer \`startLine\`/\`endLine\` + \`version\` for section/list/block edits; use \`from\`/\`to\` only when exact quoted positions are available, and keep \`searchContent\` as a fallback of last resort
+- If \`replace_editor_content\` fails because \`searchContent\` cannot be found, do not stop and do not claim success. Continue by getting fresh editor content and retrying with \`startLine\`/\`endLine\` + \`version\`
+- For checkbox/task-list edits in the current document: "已完成/勾选" means target state \`- [x]\`; "未完成/取消勾选" means target state \`- [ ]\`. Words like "改回" / "还是" / "恢复为" describe the desired target state, not the current state
+- Only use \`check_folder_exists\` for actual folders, never for Markdown note paths
+- If context already includes the full content of the linked file, do not call read/check tools for that same file again. Answer directly from context.
+
 **Technical Rules**:
 1. **Strict Format**: Thought → Action + Action Input or Final Answer
 2. **JSON Format**: Action Input must be valid JSON with double quotes
 3. **One Tool at a Time**: Only call one tool per iteration
-4. **✅ TASK COMPLETION (CRITICAL)**: After any successful tool execution, you MUST give Final Answer immediately - do NOT repeat the same or similar operations
-5. **Don't Repeat**: If operation succeeded, immediately give Final Answer - never create the same file twice or perform redundant actions
+4. **✅ TASK COMPLETION (CRITICAL)**: After a successful tool execution, decide whether the overall task is complete. If complete, give Final Answer immediately. If another required step remains, continue with that next step.
+5. **Don't Repeat**: Never repeat the same successful operation. Only continue when the previous observation clearly shows a different next step is still required.
 6. **Use Available Tools Only**: Don't make up tools or parameters
 7. **Concise Thinking**: Keep Thought brief, directly state what to do
 8. **🚨 Skills Are Not Tools**: NEVER use Action: skill_xxx, Skills are just guidance documents
-9. **📌 Use Quote Line Numbers**: When context includes "quoted content" with VALID line numbers (positive integers, NOT -1), ALWAYS use replace_editor_content with line-based mode (startLine/endLine). If line numbers are -1 or invalid, first use get_editor_selection to get valid line numbers. NEVER use from/to or searchContent.
+9. **📌 Quoted Content Rule**: If the user is asking to explain, summarize, analyze, translate, or discuss quoted content, answer directly and do NOT call editing tools. Only use replace_editor_content for quoted content when the user explicitly asks to modify, rewrite, insert, expand, or delete content.
 10. **📝 State-Based Reasoning**: Base your next action on the PREVIOUS observation result, not on the original user request - the context shows what you just did and the result
 
 ## 🚫 Common Errors (Avoid)
@@ -411,17 +653,27 @@ Final Answer: Done! I created a note called "React Knowledge Summary" which incl
 ❌ **Error 4**: Try to call Skill as a tool (like Action: style-detector)
 ✅ **Correct**: Understand Skill guidance, use actual tools (like Action: create_file) and follow Skill requirements in content
 
-❌ **Error 5**: Use invalid line numbers (e.g., -1) or use from/to/searchContent when valid positive line numbers are available
-✅ **Correct**: Only use line-based mode with VALID positive line numbers. If line numbers are -1 or invalid, first call get_editor_selection to get valid line numbers, then use replace_editor_content with those line numbers
+❌ **Error 5**: Treat any quoted content as an edit request and call replace_editor_content for explanation/analysis tasks
+✅ **Correct**: For explanation/summary/analysis requests, answer directly from the quoted content. For explicit edit requests, if quoted context provides \`from\` and \`to\`, use them directly with replace_editor_content. Otherwise prefer startLine/endLine + version for current-document edits, and use searchContent only as a last resort
 
 ❌ **Error 6**: Ignore the previous operation result and repeat the same action
-✅ **Correct**: Always base your next action on the PREVIOUS observation result - if the result shows success, give Final Answer immediately
+✅ **Correct**: Always base your next action on the PREVIOUS observation result - if the result shows the task is complete, give Final Answer; if it shows a different required next step, continue with that next step
 
 ❌ **Error 7**: Reconsider the original user request in every iteration instead of building on previous results
 ✅ **Correct**: Focus on the PREVIOUS step's result - the context shows what you just did and what happened
 
+❌ **Error 9**: After \`replace_editor_content\` fails to find \`searchContent\`, stop early or claim the edit already succeeded
+✅ **Correct**: Treat this as a recoverable failure. Read fresh editor content, then retry with \`startLine\`/\`endLine\` + \`version\` for the current document
+
+❌ **Error 10**: For checkbox edits, misread "改回未完成/还是未完成状态" as "no change needed"
+✅ **Correct**: Infer the target checkbox state from the user's words. If the document still shows the opposite state after \`get_editor_content\`, you MUST call \`replace_editor_content\` to change it
+
 ❌ **Error 8**: Use search tools when user is just asking a question without explicitly requesting search
 ✅ **Correct**: Only use search_markdown_files when user explicitly says "搜索", "查找", "帮我找". For regular questions like "What is React?", give Final Answer directly without searching
+
+## Runtime Tool Policy
+
+${intentPolicyPrompt}
 
 ## Example
 
@@ -522,7 +774,7 @@ Observation: ${step.observation}
       if (this.currentIteration === 1) {
         messagesForAI.push({
           role: 'user',
-          content: `This is iteration ${this.currentIteration}, please give your Thought and Action (or Final Answer):\n\nUser Request: ${userInput}`
+          content: buildIterationUserMessage(this.currentIteration, userInput)
         })
       } else {
         // 后续迭代：只发送上一步的结果
@@ -530,7 +782,7 @@ Observation: ${step.observation}
         const lastObservation = lastStep?.observation || 'No previous result'
         messagesForAI.push({
           role: 'user',
-          content: `## Previous Step Result\n${lastObservation}\n\n---\nIf the task is completed, respond with Final Answer.\nIf you need to continue, provide your next Thought and Action.`
+          content: buildIterationUserMessage(this.currentIteration, userInput, lastObservation)
         })
       }
 
@@ -575,32 +827,10 @@ Final Answer: Task was terminated by user`
           this.config.onThought?.(response)
         }
 
-        // 记录 AI 的思考内容，用于调试
-        const mentionedSkills = this.extractMentionedSkills(response)
-
-        // 第一次迭代后，处理 Skills 选择
+        // 第一次迭代后，不再根据文本提及自动选择 Skills。
+        // 只有显式调用 select_skill 工具才会生效，避免误命中无关 Skill。
         if (this.currentIteration === 1) {
-          const activeSkillIds = this.config.activeSkills || []
-          const selectedSkillIds: string[] = []
-
-          if (mentionedSkills.length > 0) {
-            // 将提到的 Skills ID 添加到已选择集合
-            for (const skillName of mentionedSkills) {
-              // 通过名称查找对应的 Skill ID
-              const skill = activeSkillIds
-                .map(id => skillManager.getSkill(id))
-                .filter((s): s is Exclude<typeof s, undefined> => s !== undefined)
-                .find(s => s.metadata.name === skillName)
-
-              if (skill) {
-                this.selectedSkills.add(skill.metadata.id)
-                selectedSkillIds.push(skill.metadata.id)
-              }
-            }
-          }
-
-          // 无论是否选择了 Skills，都要通知外部（空数组表示未选择）
-          this.config.onSkillsSelected?.(selectedSkillIds)
+          this.config.onSkillsSelected?.([])
         }
 
         return response
@@ -631,10 +861,7 @@ ${context ? `## 上下文信息\n${context}\n` : ''}
 ## 对话历史
 ${historyContext}
 
-## User Request
-${userInput}
-
-This is iteration ${this.currentIteration}, please give your Thought and Action (or Final Answer):`
+${buildIterationUserMessage(this.currentIteration, userInput)}`
     } else {
       // 后续迭代：只发送上一步的结果
       const lastStep = this.steps[this.steps.length - 1]
@@ -644,12 +871,7 @@ This is iteration ${this.currentIteration}, please give your Thought and Action 
 ## 已完成的步骤
 ${historyContext}
 
-## 上一步操作结果
-${lastObservation}
-
----
-如果任务已完成，请回复 Final Answer。
-如果需要继续操作，请提供你的 Thought 和 Action。`
+${buildIterationUserMessage(this.currentIteration, userInput, lastObservation)}`
     }
 
     // 调用实际的 LLM API
@@ -693,32 +915,10 @@ Final Answer: 任务已被用户终止`
         this.config.onThought?.(response)
       }
 
-      // 记录 AI 的思考内容，用于调试
-      const mentionedSkills = this.extractMentionedSkills(response)
-
-      // 第一次迭代后，处理 Skills 选择
+      // 第一次迭代后，不再根据文本提及自动选择 Skills。
+      // 只有显式调用 select_skill 工具才会生效，避免误命中无关 Skill。
       if (this.currentIteration === 1) {
-        const activeSkillIds = this.config.activeSkills || []
-        const selectedSkillIds: string[] = []
-
-        if (mentionedSkills.length > 0) {
-          // 将提到的 Skills ID 添加到已选择集合
-          for (const skillName of mentionedSkills) {
-            // 通过名称查找对应的 Skill ID
-            const skill = activeSkillIds
-              .map(id => skillManager.getSkill(id))
-              .filter((s): s is Exclude<typeof s, undefined> => s !== undefined)
-              .find(s => s.metadata.name === skillName)
-
-            if (skill) {
-              this.selectedSkills.add(skill.metadata.id)
-              selectedSkillIds.push(skill.metadata.id)
-            }
-          }
-        }
-
-        // 无论是否选择了 Skills，都要通知外部（空数组表示未选择）
-        this.config.onSkillsSelected?.(selectedSkillIds)
+        this.config.onSkillsSelected?.([])
       }
 
       return response
@@ -752,7 +952,9 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
       // 修改正则表达式，支持工具名称中的连字符、下划线等字符
       const actionMatch = thought.match(/Action:\s*([a-zA-Z0-9_-]+)/i)
 
-      if (!actionMatch) return null
+      if (!actionMatch) {
+        return null
+      }
 
       const tool = actionMatch[1]
       let params = {}
@@ -808,81 +1010,13 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
           jsonStr = jsonStr.substring(0, jsonEnd)
         }
         
-        try {
-          params = JSON.parse(jsonStr)
-        } catch {
-          // JSON 解析失败，尝试修复
-
-          // 使用栈来跟踪未闭合的结构
-          const stack: string[] = []
-          let inString = false
-          let escapeNext = false
-
-          for (let i = 0; i < jsonStr.length; i++) {
-            const char = jsonStr[i]
-
-            if (escapeNext) {
-              escapeNext = false
-              continue
-            }
-
-            if (char === '\\') {
-              escapeNext = true
-              continue
-            }
-
-            if (char === '"' && !escapeNext) {
-              inString = !inString
-              if (!inString && stack.length > 0 && stack[stack.length - 1] === '"') {
-                stack.pop() // 闭合字符串
-              } else if (inString) {
-                stack.push('"') // 进入字符串
-              }
-              continue
-            }
-
-            if (!inString) {
-              if (char === '{' || char === '[') {
-                stack.push(char)
-              } else if (char === '}') {
-                if (stack.length > 0 && stack[stack.length - 1] === '{') {
-                  stack.pop()
-                }
-              } else if (char === ']') {
-                if (stack.length > 0 && stack[stack.length - 1] === '[') {
-                  stack.pop()
-                }
-              }
-            }
-          }
-
-          // 如果在字符串中，先闭合字符串
-          if (inString) {
-            jsonStr += '"'
-          }
-
-          // 反向闭合栈中的结构
-          while (stack.length > 0) {
-            const open = stack.pop()
-            if (open === '"') {
-              jsonStr += '"'
-            } else if (open === '[') {
-              jsonStr += ']'
-            } else if (open === '{') {
-              jsonStr += '}'
-            }
-          }
-
-          try {
-            params = JSON.parse(jsonStr)
-          } catch (retryError) {
-            console.error('Failed to parse action input after repair:', retryError)
-            console.error('Original JSON:', inputMatch[1])
-            console.error('Repaired JSON:', jsonStr)
-            // 返回 null 而不是空对象，让调用方知道解析失败
-            return null
-          }
+        const parsed = parseActionInputJson(jsonStr)
+        if (!parsed) {
+          // 返回 null 而不是空对象，让调用方知道解析失败
+          return null
         }
+
+        params = parsed
       }
 
       return { tool, params }
@@ -899,6 +1033,8 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
       return `错误：未找到工具 "${toolName}"。请使用可用的工具列表中的工具。`
     }
 
+    params = this.normalizeToolParams(toolName, params)
+
     this.toolCallCounter++
     const toolCall: ToolCall = {
       id: `${Date.now()}-${this.toolCallCounter}-${Math.random().toString(36).substring(2, 11)}`,
@@ -906,6 +1042,20 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
       params,
       status: 'pending',
       timestamp: Date.now(),
+    }
+
+    const policyCheck = this.evaluateToolPolicy(toolName, tool, params)
+    if (!policyCheck.allowed) {
+      const blockedMessage = this.getPolicyAdjustmentMessage(toolName, policyCheck.reason || '已调整工具选择')
+      const isBenignAdjustment = Boolean(policyCheck.reason?.includes('完整内容已在上下文中'))
+      toolCall.status = isBenignAdjustment ? 'success' : 'error'
+      toolCall.result = {
+        success: isBenignAdjustment,
+        error: isBenignAdjustment ? undefined : `BLOCKED_BY_POLICY: ${policyCheck.reason}`,
+        message: blockedMessage,
+      }
+      this.config.onToolCall?.(toolCall)
+      return blockedMessage
     }
 
     // 查找哪个 Skill 授权了这个工具
@@ -924,15 +1074,89 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
 
     // 检查工具是否在当前激活的 Skills 中被授权
     const isAuthorized = this.isToolAuthorized(toolName)
-    const requiresConfirmation = tool.requiresConfirmation && !isAuthorized
+    const requiresConfirmation = policyCheck.requiresConfirmation || (tool.requiresConfirmation && !isAuthorized)
+
+    if (requiresConfirmation && !this.config.requestConfirmation) {
+      toolCall.status = 'error'
+      toolCall.result = {
+        success: false,
+        error: 'BLOCKED_BY_POLICY: 操作需要确认，但未配置确认回调',
+      }
+      this.config.onToolCall?.(toolCall)
+      return '这个操作需要你的确认，当前先不执行。'
+    }
 
     if (requiresConfirmation && this.config.requestConfirmation) {
       // 准备确认上下文信息（原始内容、修改后内容、文件路径）
       const confirmContext: {
+        previewParams?: Record<string, any>
         originalContent?: string
         modifiedContent?: string
         filePath?: string
       } = {}
+
+      if (toolName === 'delete_markdown_file' && typeof params.filePath === 'string') {
+        confirmContext.filePath = params.filePath
+        confirmContext.previewParams = {
+          filePath: params.filePath,
+        }
+      }
+
+      if (toolName === 'delete_markdown_files_batch' && Array.isArray(params.filePaths)) {
+        const filePaths = params.filePaths.filter((value): value is string => typeof value === 'string')
+        confirmContext.previewParams = {
+          count: filePaths.length,
+          filesPreview: filePaths.slice(0, 10),
+        }
+      }
+
+      if (toolName === 'delete_folder' && typeof params.folderPath === 'string') {
+        try {
+          const { getAllMarkdownFiles } = await import('@/lib/files')
+          const folderPath = params.folderPath.replace(/\/+$/, '')
+          const files = (await getAllMarkdownFiles())
+            .map((file) => file.relativePath)
+            .filter((path) => path === folderPath || path.startsWith(`${folderPath}/`))
+
+          confirmContext.filePath = folderPath
+          confirmContext.previewParams = {
+            folderPath,
+            fileCount: files.length,
+            filesPreview: files.slice(0, 10),
+          }
+        } catch (error) {
+          console.error('[Agent] Failed to prepare delete folder preview:', error)
+          confirmContext.previewParams = {
+            folderPath: params.folderPath,
+          }
+        }
+      }
+
+      if (toolName === 'delete_folders_batch' && Array.isArray(params.folderPaths)) {
+        try {
+          const { getAllMarkdownFiles } = await import('@/lib/files')
+          const folderPaths = params.folderPaths.filter((value): value is string => typeof value === 'string')
+          const files = (await getAllMarkdownFiles()).map((file) => file.relativePath)
+          const normalizedFolders = folderPaths.map((folderPath) => folderPath.replace(/\/+$/, ''))
+          const affectedFiles = files.filter((filePath) =>
+            normalizedFolders.some((folderPath) => filePath === folderPath || filePath.startsWith(`${folderPath}/`))
+          )
+
+          confirmContext.previewParams = {
+            count: normalizedFolders.length,
+            fileCount: affectedFiles.length,
+            foldersPreview: normalizedFolders.slice(0, 10),
+            filesPreview: affectedFiles.slice(0, 10),
+          }
+        } catch (error) {
+          console.error('[Agent] Failed to prepare delete folders batch preview:', error)
+          const folderPaths = params.folderPaths.filter((value): value is string => typeof value === 'string')
+          confirmContext.previewParams = {
+            count: folderPaths.length,
+            foldersPreview: folderPaths.slice(0, 10),
+          }
+        }
+      }
 
       // 对于 modify_current_note 工具，获取原始内容和修改后的内容用于 diff 显示
       if (toolName === 'modify_current_note') {
@@ -1072,7 +1296,7 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
       toolCall.result = result
       this.config.onToolCall?.(toolCall)
 
-      if (result.success) {
+        if (result.success) {
         // 特殊处理 select_skill 工具
         if (toolName === 'select_skill' && result.data?.selected_skills) {
           const selectedSkillIds: string[] = result.data.selected_skills
@@ -1089,7 +1313,7 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
         let observation = result.message || `工具 ${toolName} 执行成功。`
 
         // 如果有数据，根据数据类型进行格式化
-        if (result.data) {
+          if (result.data) {
           // 特殊处理 MCP 搜索结果（category 为 'mcp' 的工具）
           if (tool.category === 'mcp') {
             // 从思考内容中提取简短标题
@@ -1105,9 +1329,32 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
           }
         }
 
+        const previousObservation = this.steps[this.steps.length - 1]?.observation || ''
+        if (
+          toolName === 'get_editor_content' &&
+          previousObservation.includes('replace_editor_content 执行失败') &&
+          previousObservation.includes('找不到文本')
+        ) {
+          const checkboxTargetState = getCheckboxTargetState(this.currentUserInput)
+          if (checkboxTargetState === 'unchecked') {
+            observation += '\n\n这是一个复选框状态修改请求。用户的目标状态是未完成，也就是 `- [ ]`。如果当前文档里该项仍是 `- [x]`，下一步必须使用 replace_editor_content(startLine/endLine + version) 完成修改，不能直接结束。'
+          } else if (checkboxTargetState === 'checked') {
+            observation += '\n\n这是一个复选框状态修改请求。用户的目标状态是已完成，也就是 `- [x]`。如果当前文档里该项仍是 `- [ ]`，下一步必须使用 replace_editor_content(startLine/endLine + version) 完成修改，不能直接结束。'
+          }
+        }
+
         return observation
       } else {
         const errorMsg = result.error || '未知错误'
+        if (
+          toolName === 'replace_editor_content' &&
+          typeof result.error === 'string' &&
+          result.error.includes('找不到文本')
+        ) {
+          return `工具 ${toolName} 执行失败：${errorMsg}
+
+下一步不要直接结束，也不要声称编辑已完成。请先使用 get_editor_content 获取最新的 numberedLines 和 version，再用 startLine/endLine + version 重试当前编辑。`
+        }
         return `工具 ${toolName} 执行失败：${errorMsg}`
       }
     } catch (error) {
@@ -1120,6 +1367,184 @@ Final Answer: 无法完成任务，请稍后重试或检查 AI 配置`
       this.config.onToolCall?.(toolCall)
       return `工具 ${toolName} 执行出错：${errorStr}`
     }
+  }
+
+  private normalizeToolParams(toolName: string, params: Record<string, any>): Record<string, any> {
+    if (toolName === 'create_file') {
+      return this.normalizeCreateFileParams(params)
+    }
+
+    if (toolName !== 'replace_editor_content') {
+      return params
+    }
+
+    const currentQuote = this.config.currentQuote
+    if (!currentQuote) {
+      return params
+    }
+
+    if (currentQuote.from < 0 || currentQuote.to < currentQuote.from) {
+      return params
+    }
+
+    const normalizedParams = { ...params }
+    const insertDirective = this.getQuotedInsertDirective()
+    const rawContent = typeof normalizedParams.content === 'string'
+      ? normalizedParams.content
+      : typeof normalizedParams.replaceContent === 'string'
+        ? normalizedParams.replaceContent
+        : ''
+
+    if (insertDirective && rawContent.trim().length > 0) {
+      delete normalizedParams.startLine
+      delete normalizedParams.endLine
+      delete normalizedParams.searchContent
+      delete normalizedParams.occurrence
+      delete normalizedParams.replaceContent
+
+      normalizedParams.from = currentQuote.from
+      normalizedParams.to = currentQuote.to
+      normalizedParams.content = this.buildQuotedInsertContent(
+        insertDirective,
+        rawContent,
+        currentQuote.fullContent
+      )
+
+      return normalizedParams
+    }
+
+    delete normalizedParams.startLine
+    delete normalizedParams.endLine
+    delete normalizedParams.searchContent
+    delete normalizedParams.occurrence
+
+    normalizedParams.from = currentQuote.from
+    normalizedParams.to = currentQuote.to
+
+    if (normalizedParams.replaceContent !== undefined && normalizedParams.content === undefined) {
+      normalizedParams.content = normalizedParams.replaceContent
+    }
+
+    return normalizedParams
+  }
+
+  private normalizeCreateFileParams(params: Record<string, any>): Record<string, any> {
+    if (this.selectedSkills.size !== 1) {
+      return params
+    }
+
+    const rawFileName = typeof params.fileName === 'string' ? params.fileName.trim() : ''
+    if (!rawFileName) {
+      return params
+    }
+
+    const rawFolderPath = typeof params.folderPath === 'string' ? params.folderPath.trim() : ''
+    const scriptPattern = /\.(?:js|mjs|cjs|ts|py|sh|bash)$/i
+    const selectedSkillId = Array.from(this.selectedSkills)[0]
+    const runtimeFolder = `skills/${selectedSkillId}/runtime`
+    const runtimePrefix = `${runtimeFolder}/`
+
+    const fileNameLooksLikeScript = scriptPattern.test(rawFileName)
+    const folderLooksLikeScriptTarget = scriptPattern.test(rawFolderPath)
+    if (!fileNameLooksLikeScript && !folderLooksLikeScriptTarget) {
+      return params
+    }
+
+    const normalizedParams = { ...params }
+
+    if (rawFileName.startsWith(runtimePrefix)) {
+      normalizedParams.fileName = rawFileName.slice(runtimePrefix.length)
+      normalizedParams.folderPath = runtimeFolder
+    } else if (rawFileName.includes('/')) {
+      const segments = rawFileName.split('/').filter(Boolean)
+      const extractedFileName = segments.pop()
+      if (extractedFileName) {
+        normalizedParams.fileName = extractedFileName
+        normalizedParams.folderPath = segments.join('/')
+      }
+    }
+
+    const currentFolderPath = typeof normalizedParams.folderPath === 'string'
+      ? normalizedParams.folderPath.trim()
+      : ''
+
+    if (!currentFolderPath) {
+      normalizedParams.folderPath = runtimeFolder
+    } else if (currentFolderPath === `skills/${selectedSkillId}`) {
+      normalizedParams.folderPath = runtimeFolder
+    } else if (currentFolderPath === 'runtime') {
+      normalizedParams.folderPath = runtimeFolder
+    } else if (currentFolderPath.startsWith('runtime/')) {
+      normalizedParams.folderPath = `${runtimeFolder}/${currentFolderPath.slice('runtime/'.length)}`
+    }
+
+    return normalizedParams
+  }
+
+  private getQuotedInsertDirective(): 'before' | 'after' | 'around' | null {
+    if (!/插入|添加|补充|加入|增加/.test(this.currentUserInput)) {
+      return null
+    }
+
+    const hasBefore = /前面|前边|上面|之前|前方/.test(this.currentUserInput)
+    const hasAfter = /后面|后边|下面|之后|后方/.test(this.currentUserInput)
+
+    if (hasBefore && hasAfter) {
+      return 'around'
+    }
+
+    if (hasBefore) {
+      return 'before'
+    }
+
+    if (hasAfter) {
+      return 'after'
+    }
+
+    return null
+  }
+
+  private buildQuotedInsertContent(
+    directive: 'before' | 'after' | 'around',
+    insertedContent: string,
+    quoteContent?: string
+  ): string {
+    const normalizedInserted = insertedContent.trim()
+    const normalizedQuote = quoteContent?.trim()
+
+    if (!normalizedQuote) {
+      return normalizedInserted
+    }
+
+    if (normalizedInserted.includes(normalizedQuote)) {
+      return normalizedInserted
+    }
+
+    if (directive === 'before') {
+      return `${normalizedInserted}\n${normalizedQuote}`
+    }
+
+    if (directive === 'around') {
+      const structuredAround = normalizedInserted.match(
+        /^<<BEFORE>>\s*([\s\S]*?)\s*<<AFTER>>\s*([\s\S]*)$/i
+      )
+
+      if (structuredAround) {
+        const beforeContent = structuredAround[1].trim()
+        const afterContent = structuredAround[2].trim()
+
+        return [
+          beforeContent,
+          normalizedQuote,
+          afterContent,
+        ].filter(Boolean).join('\n\n')
+      }
+
+      // Fallback: preserve the quoted content and append the generated content once.
+      return `${normalizedQuote}\n\n${normalizedInserted}`
+    }
+
+    return `${normalizedQuote}\n${normalizedInserted}`
   }
 
   /**
@@ -1317,7 +1742,7 @@ ${skillsList.join('\n---\n\n')}
 2. **Understand Skill requirements, then apply directly to your work**
 3. **Don't ask user for confirmation** - Execute tasks directly following Skill guidance
 4. **Don't try to read additional files** - Skills already contain all necessary information
-5. **Use actual tools to complete tasks** - Like create_file, modify_current_note, etc.
+5. **Use actual tools to complete tasks** - Like create_file, update_markdown_file, replace_editor_content, etc.
 
 **⚠️ Important Reminders**:
 - Strictly follow above Skill requirements to execute tasks
@@ -1395,12 +1820,11 @@ ${skillsList.join('\n---\n\n')}
    * 检查工具是否在当前激活的 Skills 中被授权（移除 enabled 判断）
    */
   isToolAuthorized(toolName: string): boolean {
-    const activeSkillIds = this.config.activeSkills
-    if (!activeSkillIds || activeSkillIds.length === 0) {
+    if (this.selectedSkills.size === 0) {
       return false
     }
 
-    for (const skillId of activeSkillIds) {
+    for (const skillId of this.selectedSkills) {
       const skill = skillManager.getSkill(skillId)
       // 移除 enabled 判断，只要 Skill 存在且授权了工具就返回 true
       if (skill && skill.metadata.allowedTools?.includes(toolName)) {
@@ -1409,5 +1833,237 @@ ${skillsList.join('\n---\n\n')}
     }
 
     return false
+  }
+
+  private evaluateToolPolicy(
+    toolName: string,
+    tool: { category: string; requiresConfirmation: boolean },
+    params: Record<string, any> = {}
+  ): { allowed: boolean; requiresConfirmation: boolean; reason?: string } {
+    const folderPath = typeof params.folderPath === 'string' ? params.folderPath.trim() : ''
+    const filePath = typeof params.filePath === 'string' ? params.filePath.trim() : ''
+    const { linkedResource } = useChatStore.getState()
+    const articleStore = useArticleStore.getState()
+
+    if (toolName === 'check_folder_exists' && /\.md$/i.test(folderPath)) {
+      return {
+        allowed: false,
+        requiresConfirmation: false,
+        reason: 'Markdown 文件路径应使用 read_markdown_file，而不是 check_folder_exists',
+      }
+    }
+
+    if (toolName === 'update_markdown_file' && filePath && articleStore.activeFilePath === filePath) {
+      return {
+        allowed: false,
+        requiresConfirmation: false,
+        reason: '当前打开的文件应使用 replace_editor_content 进行修改，以避免覆盖编辑器中的实时内容',
+      }
+    }
+
+    if ((toolName === 'read_markdown_file' || toolName === 'read_markdown_files_batch') && articleStore.activeFilePath) {
+      const activePath = articleStore.activeFilePath
+
+      if (toolName === 'read_markdown_file' && filePath === activePath) {
+        return {
+          allowed: false,
+          requiresConfirmation: false,
+          reason: '当前打开的文件应使用 get_editor_content 读取，以避免读取到过时的磁盘内容',
+        }
+      }
+
+      if (toolName === 'read_markdown_files_batch' && Array.isArray(params.filePaths) && params.filePaths.includes(activePath)) {
+        return {
+          allowed: false,
+          requiresConfirmation: false,
+          reason: '批量读取包含当前打开的文件时，应先使用 get_editor_content 获取实时内容，再单独读取其他文件',
+        }
+      }
+    }
+
+    if (linkedResource && !isLinkedFolder(linkedResource) && shouldKeepFocusOnLinkedNote(this.currentUserInput, linkedResource, toolName)) {
+      return {
+        allowed: false,
+        requiresConfirmation: false,
+        reason: '当前任务应聚焦关联笔记文件内容，不应切换到标签或记录工具',
+      }
+    }
+
+    if (shouldBlockRepeatedNoteExploration(toolName, params, this.steps)) {
+      return {
+        allowed: false,
+        requiresConfirmation: false,
+        reason: '已经获得足够的笔记文件内容，无需重复列出或读取，请直接基于已有内容继续整理并给出最终答案',
+      }
+    }
+
+    if (this.isRedundantLinkedFileRead(toolName, params)) {
+      return {
+        allowed: false,
+        requiresConfirmation: false,
+        reason: '当前关联文件的完整内容已在上下文中，无需再次读取或检查',
+      }
+    }
+
+    return evaluateIntentAwareToolPolicy({
+      toolName,
+      category: tool.category,
+      intentPolicy: this.intentPolicy,
+    })
+  }
+
+  private getPolicyAdjustmentMessage(toolName: string, reason: string): string {
+    if (reason.includes('Markdown 文件路径')) {
+      return `已调整工具选择：Markdown 文件会按笔记文件读取，而不是按文件夹处理。不要再次调用 ${toolName}，请改用 read_markdown_file。`
+    }
+
+    if (reason.includes('完整内容已在上下文中')) {
+      return '已直接使用关联文件上下文：这篇笔记的完整内容已经在当前对话中，无需再次读取。'
+    }
+
+    if (reason.includes('聚焦关联笔记文件内容')) {
+      return '已保持任务聚焦：当前应先基于关联笔记文件继续分析或整理，不要切换到标签/记录工具。'
+    }
+
+    if (reason.includes('已经获得足够的笔记文件内容')) {
+      return '已避免重复探索：你已经拿到足够的笔记内容，请直接基于已读取内容继续整理，并给出 Final Answer。'
+    }
+
+    if (reason.includes('replace_editor_content')) {
+      return '已切换到编辑器写入路径：当前打开的文件请使用 replace_editor_content，而不是直接覆盖磁盘文件。'
+    }
+
+    if (reason.includes('get_editor_content')) {
+      return '已切换到编辑器读取路径：当前打开的文件请使用 get_editor_content，而不是读取可能过时的磁盘内容。'
+    }
+
+    if (reason.includes('执行命令或脚本')) {
+      return '已保持分析模式：不会执行命令或脚本。'
+    }
+
+    if (reason.includes('删除或清空')) {
+      return '已避免高风险操作：当前不会删除或清空内容。'
+    }
+
+    if (reason.includes('默认只读模式') || reason.includes('修改意图')) {
+      return '已保持分析优先：先分析内容，需要修改时再确认。'
+    }
+
+    return '已调整工具选择，继续采用更合适的处理方式。'
+  }
+
+  private isPolicyAdjustmentObservation(observation?: string): boolean {
+    if (!observation) {
+      return false
+    }
+
+    return observation.includes('已调整工具选择：') ||
+      observation.includes('已保持任务聚焦：') ||
+      observation.includes('已避免重复探索：')
+  }
+
+  private isRedundantLinkedFileRead(toolName: string, params: Record<string, any>): boolean {
+    const { linkedResource } = useChatStore.getState()
+
+    if (!linkedResource || isLinkedFolder(linkedResource)) {
+      return false
+    }
+
+    return shouldBlockRedundantLinkedFileRead(toolName, params, linkedResource)
+  }
+
+  private isSupportOnlyTool(toolName?: string): boolean {
+    if (!toolName) {
+      return false
+    }
+
+    return toolName === 'select_skill' || toolName === 'load_skill_content'
+  }
+
+  private hasSubstantiveSuccessfulAction(): boolean {
+    return this.steps.some((step) => {
+      const toolName = step.action?.tool
+      if (!toolName || this.isSupportOnlyTool(toolName)) {
+        return false
+      }
+
+      const observation = step.observation || ''
+      if (!observation) {
+        return false
+      }
+
+      return !observation.includes('失败') && !observation.includes('错误') && !observation.includes('阻止')
+    })
+  }
+
+  private isMutationTool(toolName?: string): boolean {
+    if (!toolName || this.isSupportOnlyTool(toolName)) {
+      return false
+    }
+
+    if (toolName === 'replace_editor_content' || toolName === 'insert_at_cursor') {
+      return true
+    }
+
+    return /^(create_|update_|delete_|rename_|move_|copy_)/.test(toolName)
+  }
+
+  private hasSuccessfulMutationAction(): boolean {
+    return this.steps.some((step) => {
+      const toolName = step.action?.tool
+      if (!this.isMutationTool(toolName)) {
+        return false
+      }
+
+      const observation = step.observation || ''
+      if (!observation) {
+        return false
+      }
+
+      return !observation.includes('失败') && !observation.includes('错误') && !observation.includes('阻止')
+    })
+  }
+
+  private validateFinalAnswerReadiness(userInput: string, finalAnswer: string): { ok: boolean; reason?: string } {
+    const normalizedInput = userInput.toLowerCase()
+    const normalizedAnswer = finalAnswer.toLowerCase()
+    const actionLikeRequest = this.intentPolicy.allowWrite || this.intentPolicy.allowExecute || this.intentPolicy.allowDestructive
+    const hasOnlySupportSteps = this.steps.length > 0 && this.steps.every((step) => this.isSupportOnlyTool(step.action?.tool))
+    const claimsExecution = /已生成|已创建|已保存|已完成|已导出|已验证|成功使用|generated|created|saved|exported|verified|completed/.test(finalAnswer)
+    const claimsEditApplied = /已修改|已更新|已改为|已改回|已删除|已移动|已重命名|已复制|现在为|已经是|updated|changed|modified|deleted|moved|renamed|copied/.test(finalAnswer)
+    const requestedArtifact = /生成|创建|制作|导出|保存|输出|pptx|pdf|docx|xlsx|文件|演示文稿|generate|create|export|save|file|presentation/.test(normalizedInput)
+    const requestedEdit = /修改|编辑|改成|改为|改回|替换|删除|移动|重命名|复制|插入|rewrite|edit|modify|change|replace|delete|move|rename|copy|insert/.test(normalizedInput)
+
+    if (actionLikeRequest && requestedArtifact && claimsExecution && !this.hasSubstantiveSuccessfulAction()) {
+      return {
+        ok: false,
+        reason: hasOnlySupportSteps
+          ? '仅完成了 Skill 选择或说明读取，尚未真正执行创建/脚本工具，不能宣称文件已生成。请继续执行实际工具。'
+          : '尚未获得真实工具成功结果，不能宣称文件已生成、已保存或已验证。请继续执行实际工具。',
+      }
+    }
+
+    if (this.selectedSkills.size > 0 && claimsExecution && !this.hasSubstantiveSuccessfulAction()) {
+      return {
+        ok: false,
+        reason: '已选择 Skill，但还没有真正完成执行步骤。请先完成 create_file、execute_skill_script 或其他实际工具调用，再给最终答案。',
+      }
+    }
+
+    if (normalizedAnswer.includes('验证通过') && !this.hasSubstantiveSuccessfulAction()) {
+      return {
+        ok: false,
+        reason: '还没有真实执行结果可供验证，不能声称“已验证通过”。请先执行实际工具。',
+      }
+    }
+
+    if (actionLikeRequest && requestedEdit && claimsEditApplied && !this.hasSuccessfulMutationAction()) {
+      return {
+        ok: false,
+        reason: '还没有成功的写入/编辑工具结果，不能声称内容已修改。请继续执行实际编辑工具，再给最终答案。',
+      }
+    }
+
+    return { ok: true }
   }
 }

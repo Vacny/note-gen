@@ -19,7 +19,7 @@ import {
   PieChart,
   Database,
   Map,
-  Image,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { SuggestionProps } from '@tiptap/suggestion'
 import { type Editor, type Range } from '@tiptap/core'
@@ -286,11 +286,25 @@ export const suggestionItems = (t?: SlashCommandTranslations): SlashCommandItem[
     {
       title: tr.items.image,
       description: tr.items.imageDesc,
-      icon: <Image className="w-4 h-4" />,
+      icon: (
+        <span aria-hidden="true">
+          <ImageIcon className="w-4 h-4" />
+        </span>
+      ),
       group: tr.groups.block,
       searchTerms: ['image', 'picture', 'photo', 'img'],
       command: async ({ editor, range }: { editor: Editor; range: Range }) => {
-        editor.chain().focus().deleteRange(range).run()
+        const rangeStart = range.from
+
+        // Insert "Uploading..." text as placeholder
+        editor.chain().focus().deleteRange(range).insertContentAt(rangeStart, {
+          type: 'text',
+          text: 'Uploading... ',
+        }).run()
+
+        // Get the position range of the placeholder
+        const placeholderStart = rangeStart
+        const placeholderEnd = rangeStart + 'Uploading... '.length
 
         try {
           const file = await open({
@@ -303,7 +317,11 @@ export const suggestionItems = (t?: SlashCommandTranslations): SlashCommandItem[
             ],
           })
 
-          if (!file) return
+          if (!file) {
+            // User cancelled, remove placeholder
+            editor.chain().focus().deleteRange({ from: placeholderStart, to: placeholderEnd }).run()
+            return
+          }
 
           const activeFilePath = useArticleStore.getState().activeFilePath
           // open 返回的是文件路径字符串，需要读取文件内容并转换为 File 对象
@@ -321,7 +339,11 @@ export const suggestionItems = (t?: SlashCommandTranslations): SlashCommandItem[
 
           const result = await handleImageUpload(fileObj, activeFilePath)
 
-          editor.chain().focus().insertContent({
+          // Delete the placeholder text
+          editor.chain().focus().deleteRange({ from: placeholderStart, to: placeholderEnd }).run()
+
+          // Insert the actual image
+          editor.chain().focus().insertContentAt(placeholderStart, {
             type: 'image',
             attrs: {
               src: result.src,
@@ -329,12 +351,10 @@ export const suggestionItems = (t?: SlashCommandTranslations): SlashCommandItem[
               relativeSrc: result.relativePath,
             },
           }).run()
-
-          toast({
-            title: result.useImageHosting ? tr.imageUpload.success : tr.imageUpload.saveSuccess,
-            description: result.useImageHosting ? '' : tr.imageUpload.savePath.replace('__PATH__', result.relativePath),
-          })
         } catch (error) {
+          // Remove the placeholder on error
+          editor.chain().focus().deleteRange({ from: placeholderStart, to: placeholderEnd }).run()
+
           toast({
             title: tr.imageUpload.failed,
             description: error instanceof Error ? error.message : 'Unknown error',
@@ -483,28 +503,33 @@ function findSlashMatch(config: {
   const { $position } = config
   const $pos = $position
 
-  // Check if we're at the start of a text node or have text directly before position
-  const nodeBefore = $pos.nodeBefore
-  const text = nodeBefore?.isText && nodeBefore.text
+  const parent = $pos.parent
+  if (!parent?.isTextblock) {
+    return null
+  }
 
+  const text = parent.textBetween(0, $pos.parentOffset, undefined, '\uFFFC')
   if (!text) {
     return null
   }
 
-  const textFrom = $pos.pos - text.length
-  const slashIndex = text.lastIndexOf('/')
-
-  if (slashIndex === -1) {
+  // Slash command should only activate when the slash is at the start of the
+  // current text block or after whitespace / sentence punctuation, and the
+  // cursor is still directly after the query text.
+  const match = /(?:^|[\s([{'"`<>]|[.,!?;:，。！？；：（）【】《》、])\/([^\s/]*)$/.exec(text)
+  if (!match) {
     return null
   }
 
-  const from = textFrom + slashIndex
+  const fullMatch = match[0]
+  const slashOffset = text.length - fullMatch.length + fullMatch.lastIndexOf('/')
+  const from = $pos.start() + slashOffset
   const to = $pos.pos
 
   return {
     range: { from, to },
-    query: text.slice(slashIndex + 1),
-    text: text.slice(slashIndex),
+    query: match[1] || '',
+    text: text.slice(slashOffset),
   }
 }
 

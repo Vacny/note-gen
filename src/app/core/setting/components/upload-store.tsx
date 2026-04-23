@@ -6,6 +6,7 @@ import { getFiles as giteeGetFiles, uploadFile as uploadGiteeFile } from "@/lib/
 import { uploadFile as uploadGitlabFile, getFiles as gitlabGetFiles, getFileContent as gitlabGetFileContent } from "@/lib/sync/gitlab";
 import { uploadFile as uploadGiteaFile, getFiles as giteaGetFiles, getFileContent as giteaGetFileContent } from "@/lib/sync/gitea";
 import { getSyncRepoName } from "@/lib/sync/repo-utils";
+import { getRemoteFileContent } from "@/lib/sync/remote-file";
 import { toast } from "@/hooks/use-toast";
 import { useState } from "react";
 import { isMobileDevice } from "@/lib/check";
@@ -140,7 +141,7 @@ export default function UploadStore() {
         break;
     }
     if (file) {
-      const configJson = decodeBase64ToString(file.content)
+      const configJson = decodeBase64ToString(getRemoteFileContent(file, `${path}/${filename}`))
       const remoteSettings = JSON.parse(configJson)
       
       // 合并配置：使用远程配置，但保留本地的排除字段（如工作区路径等）

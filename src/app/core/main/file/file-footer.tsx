@@ -7,7 +7,6 @@ import useArticleStore from "@/stores/article"
 import { useSkillsStore } from "@/stores/skills"
 import { useTranslations } from 'next-intl'
 import { useMemo } from "react"
-import { TooltipButton } from "@/components/tooltip-button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,6 +18,8 @@ import {
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Separator } from "@/components/ui/separator"
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { BottomBarIconButton } from "@/components/bottom-bar-icon-button"
+import { getWorkspaceDisplayName } from "@/lib/workspace-name"
 
 export function FileFooter() {
   const { workspacePath, workspaceHistory, setWorkspacePath } = useSettingStore()
@@ -40,15 +41,9 @@ export function FileFooter() {
   const tFile = useTranslations('settings.file')
   const tToolbar = useTranslations('article.file.toolbar')
 
-  // 获取文件夹名称
-  const getWorkspaceName = (path: string) => {
-    if (!path) return tFile('workspace.defaultPath')
-    return path.split('/').pop() || path.split('\\').pop() || path
-  }
-
   // 当前工作区名称
   const currentWorkspaceName = useMemo(() => {
-    return getWorkspaceName(workspacePath)
+    return getWorkspaceDisplayName(workspacePath, tFile('workspace.defaultPath'))
   }, [workspacePath, tFile])
 
   // 选择工作区目录
@@ -100,16 +95,16 @@ export function FileFooter() {
   }
 
   return (
-    <div className="border-t h-6 flex items-center justify-between px-1 overflow-hidden gap-1">
+    <div className="flex h-6 items-center justify-between gap-1 overflow-hidden border-t border-border bg-background px-2 text-xs text-muted-foreground">
       {/* 左侧：工作区选择器 */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
-            className="flex justify-between h-6 border-0 bg-transparent hover:bg-accent focus:ring-0 text-sm flex-1 px-2"
+            className="flex h-5 flex-1 justify-between border-0 bg-transparent px-1.5 text-xs text-muted-foreground hover:bg-accent focus:ring-0"
           >
             <span className="truncate text-xs">{currentWorkspaceName}</span>
-            <ChevronDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
+            <ChevronDown className="ml-1 size-3 shrink-0 opacity-50" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
@@ -132,9 +127,11 @@ export function FileFooter() {
               <DropdownMenuSeparator />
               <DropdownMenuLabel>{tFile('workspace.history')}</DropdownMenuLabel>
               {workspaceHistory.map((path, index) => (
-                <DropdownMenuItem key={index} onClick={() => switchWorkspace(path)}>
+              <DropdownMenuItem key={index} onClick={() => switchWorkspace(path)}>
                   <FolderOpen className="mr-2 h-4 w-4" />
-                  <span className="truncate" title={path}>{getWorkspaceName(path)}</span>
+                  <span className="truncate" title={path}>
+                    {getWorkspaceDisplayName(path, tFile('workspace.defaultPath'))}
+                  </span>
                 </DropdownMenuItem>
               ))}
             </>
@@ -156,13 +153,13 @@ export function FileFooter() {
       <Separator orientation="vertical" />
 
       {/* 右侧：排序、云端开关、展开、刷新 */}
-      <div className="flex items-center gap-0.5">
+      <div className="flex items-center gap-1">
         {/* 云端文件开关 */}
-        <TooltipButton
-          icon={<Cloud className={`!size-3.5 ${showCloudFiles ? 'text-primary' : 'opacity-40'}`} />}
-          tooltipText={showCloudFiles ? tToolbar('hideCloudFiles') : tToolbar('showCloudFiles')}
+        <BottomBarIconButton
+          icon={<Cloud className={`size-3 ${showCloudFiles ? 'text-primary' : 'opacity-40'}`} />}
+          label={showCloudFiles ? tToolbar('hideCloudFiles') : tToolbar('showCloudFiles')}
           onClick={() => setShowCloudFiles(!showCloudFiles)}
-          size="sm"
+          active={showCloudFiles}
         />
 
         {/* 排序 */}
@@ -171,8 +168,8 @@ export function FileFooter() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-9 w-9 relative">
-                    {sortDirection === 'asc' ? <SortAsc className={`!size-3.5 ${sortType !== 'none' ? 'text-primary' : ''}`} /> : <SortDesc className={`!size-3.5 ${sortType !== 'none' ? 'text-primary' : ''}`} />}
+                  <Button variant="ghost" size="icon" className="relative size-5 rounded-sm">
+                    {sortDirection === 'asc' ? <SortAsc className={`size-3 ${sortType !== 'none' ? 'text-primary' : ''}`} /> : <SortDesc className={`size-3 ${sortType !== 'none' ? 'text-primary' : ''}`} />}
                   </Button>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
@@ -211,19 +208,17 @@ export function FileFooter() {
         </TooltipProvider>
 
         {/* 折叠/展开 */}
-        <TooltipButton 
-          icon={collapsibleList.length > 0 ? <ChevronsDownUp className="!size-3.5" /> : <ChevronsUpDown className="!size-3.5" />} 
-          tooltipText={collapsibleList.length > 0 ? tToolbar('collapseAll') : tToolbar('expandAll')} 
+        <BottomBarIconButton 
+          icon={collapsibleList.length > 0 ? <ChevronsDownUp className="size-3" /> : <ChevronsUpDown className="size-3" />} 
+          label={collapsibleList.length > 0 ? tToolbar('collapseAll') : tToolbar('expandAll')} 
           onClick={toggleAllFolders}
-          size="sm"
         />
 
         {/* 刷新 */}
-        <TooltipButton 
-          icon={<FolderSync className="!size-3.5" />} 
-          tooltipText={tToolbar('refresh')} 
+        <BottomBarIconButton 
+          icon={<FolderSync className="size-3" />} 
+          label={tToolbar('refresh')} 
           onClick={loadFileTree}
-          size="sm"
         />
       </div>
     </div>

@@ -19,15 +19,14 @@ import { McpButton } from "./mcp-button"
 import { RagSwitch } from "./rag-switch"
 import { ClipboardMonitor } from "./clipboard-monitor"
 import emitter from "@/lib/emitter"
-import { ChatSettingsDrawer } from "@/app/mobile/chat/components/chat-settings-drawer"
 import { ChatToolsDrawer } from "@/app/mobile/chat/components/chat-tools-drawer"
-import { ChatAttachmentsDrawer } from "@/app/mobile/chat/components/chat-attachments-drawer"
 import { useIsMobile } from '@/hooks/use-mobile'
 import { ImageAttachments, ImageAttachment } from "./image-attachments"
 import { ImageIcon } from "lucide-react"
 import { TooltipButton } from "@/components/tooltip-button"
 import { isMobileDevice } from '@/lib/check'
 import { QuoteDisplay } from "./quote-display"
+import type { PendingQuote } from "@/stores/chat"
 import { convertFileSrc } from "@tauri-apps/api/core"
 import { readTextFile, writeFile, BaseDirectory, exists } from "@tauri-apps/plugin-fs"
 import { ShineBorder } from "@/components/ui/shine-border"
@@ -46,6 +45,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { buildTypingFrames } from './onboarding-typing'
 
 // 可排序的工具栏项组件 - 定义在外部以避免每次 ChatInput re-render 时重新创建
 interface SortableToolbarItemProps {
@@ -104,7 +104,17 @@ SortableToolbarItem.displayName = 'SortableToolbarItem'
 export const ChatInput = React.memo(function ChatInput() {
   const [text, setText] = useState("")
   const { primaryModel, chatToolbarConfigPc, setChatToolbarConfigPc } = useSettingStore()
-  const { chats, loading, setLinkedResource: setChatLinkedResource, setLinkedResourcePreview } = useChatStore()
+  const {
+    chats,
+    loading,
+    setLinkedResource: setChatLinkedResource,
+    setLinkedResourcePreview,
+    onboardingPromptDraft,
+    setOnboardingPromptDraft,
+    pendingQuote,
+    setPendingQuote,
+    clearPendingQuote,
+  } = useChatStore()
   const { marks, trashState } = useMarkStore()
   const { activeFilePath } = useArticleStore()
   const [isComposing, setIsComposing] = useState(false)
@@ -115,20 +125,28 @@ export const ChatInput = React.memo(function ChatInput() {
   const [tempInput, setTempInput] = useState('')
   const [linkedResource, setLinkedResource] = useState<LinkedResource | null>(null)
   const [attachedImages, setAttachedImages] = useState<ImageAttachment[]>([])
-  const [quoteData, setQuoteData] = useState<{
-    quote: string
-    fullContent: string
-    fileName: string
-    startLine: number
-    endLine: number
-    articlePath: string
-  } | null>(null)
   const chatSendRef = useRef<any>(null)
   const isMobile = useIsMobile()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const placeholderTimerRef = useRef<NodeJS.Timeout | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const isMobileDevice_ = isMobileDevice()
+  const onboardingAgentPromptArmedRef = useRef(false)
+  const onboardingTypingTimerRefs = useRef<number[]>([])
+
+  const applyTypedText = useCallback((value: string) => {
+    setText(value)
+
+    const textarea = textareaRef.current
+    if (!textarea) {
+      return
+    }
+    window.requestAnimationFrame(() => {
+      textarea.style.height = 'auto'
+      const newHeight = Math.min(textarea.scrollHeight, 240)
+      textarea.style.height = `${newHeight}px`
+    })
+  }, [])
 
   // 拖拽传感器配置（仅桌面端）
   const sensors = useSensors(
@@ -192,7 +210,7 @@ export const ChatInput = React.memo(function ChatInput() {
   }
 
   function removeQuote() {
-    setQuoteData(null)
+    clearPendingQuote()
   }
 
   async function handleSelectLocalImages() {
@@ -228,46 +246,13 @@ export const ChatInput = React.memo(function ChatInput() {
     }
   }
 
-  // 移动端相册选择
+  // 移动端图片选择，交给系统决定从相册还是相机获取
   async function handleSelectFromGallery() {
     if (isMobileDevice_) {
-      // 在移动端，我们暂时只能使用通用的图片选择
-      // 用户可以从相册或相机中选择
       if (imageInputRef.current) {
-        // 移除 capture 属性，让系统自己决定
         imageInputRef.current.removeAttribute('capture')
         imageInputRef.current.click()
       }
-    }
-  }
-
-  // 移动端相机拍照
-  async function handleTakePhoto() {
-    if (isMobileDevice_) {
-      // 创建相机输入
-      const cameraInput = document.createElement('input')
-      cameraInput.type = 'file'
-      cameraInput.accept = 'image/*'
-      cameraInput.capture = 'environment' // 使用后置摄像头
-      cameraInput.style.display = 'none'
-      
-      cameraInput.onchange = (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0]
-        if (file) {
-          const url = URL.createObjectURL(file)
-          const newImage: ImageAttachment = {
-            id: `camera-${Date.now()}-${Math.random()}`,
-            url,
-            name: file.name,
-            source: 'file' as const
-          }
-          setAttachedImages(prev => [...prev, newImage])
-        }
-        document.body.removeChild(cameraInput)
-      }
-      
-      document.body.appendChild(cameraInput)
-      cameraInput.click()
     }
   }
 
@@ -344,11 +329,15 @@ export const ChatInput = React.memo(function ChatInput() {
 
   // 处理发送后的清理工作
   function handleSent() {
+    if (onboardingAgentPromptArmedRef.current) {
+      onboardingAgentPromptArmedRef.current = false
+      emitter.emit('onboarding-step-complete', { step: 'ai-polish' })
+    }
     addToHistory(text)
     setText('')
     setHistoryIndex(-1)
     setAttachedImages([])
-    setQuoteData(null)
+    clearPendingQuote()
     const textarea = document.querySelector('textarea')
     if (textarea) {
       textarea.style.height = 'auto'
@@ -450,16 +439,8 @@ export const ChatInput = React.memo(function ChatInput() {
       setChatLinkedResource(event as LinkedFolder)
     })
     emitter.on('insert-quote', (event: unknown) => {
-      const data = event as {
-        quote: string
-        fullContent: string
-        fileName: string
-        startLine: number
-        endLine: number
-        articlePath: string
-      }
-      // 设置引用数据
-      setQuoteData(data)
+      const data = event as PendingQuote
+      setPendingQuote(data)
       // 延迟聚焦到输入框
       setTimeout(() => {
         textareaRef.current?.focus()
@@ -478,6 +459,8 @@ export const ChatInput = React.memo(function ChatInput() {
       }
     })
     return () => {
+      onboardingTypingTimerRefs.current.forEach((timerId) => window.clearTimeout(timerId))
+      onboardingTypingTimerRefs.current = []
       emitter.off('revertChat')
       emitter.off('fileSelected')
       emitter.off('folderSelected')
@@ -485,11 +468,75 @@ export const ChatInput = React.memo(function ChatInput() {
       emitter.off('quick-prompt-insert')
       emitter.off('ai-placeholder-generated')
     }
-  }, [debouncedGenPlaceholder])
+  }, [debouncedGenPlaceholder, setPendingQuote])
+
+  useEffect(() => {
+    if (!onboardingPromptDraft) {
+      return
+    }
+
+    onboardingAgentPromptArmedRef.current = true
+    onboardingTypingTimerRefs.current.forEach((timerId) => window.clearTimeout(timerId))
+    onboardingTypingTimerRefs.current = []
+    setText('')
+    setTimeout(() => {
+      textareaRef.current?.focus()
+    }, 50)
+
+    const frames = buildTypingFrames(onboardingPromptDraft, 2)
+    frames.forEach((frame, index) => {
+      const timerId = window.setTimeout(() => {
+        applyTypedText(frame)
+        if (index === frames.length - 1) {
+          onboardingTypingTimerRefs.current = []
+          setOnboardingPromptDraft(null)
+        }
+      }, 160 + index * 42)
+      onboardingTypingTimerRefs.current.push(timerId)
+    })
+  }, [applyTypedText, onboardingPromptDraft, setOnboardingPromptDraft])
 
   // 生成文件的行号预览（用于 AI 对话）
-  async function generateFilePreview(filePath: string, isCustom: boolean): Promise<string> {
+  async function generateFilePreview(filePath: string, isCustom: boolean, preferEditorContent: boolean = false): Promise<string> {
     try {
+      if (preferEditorContent) {
+        const editorContent = await new Promise<{
+          markdown: string
+          totalLines?: number
+          numberedLines?: string
+          version: number
+        } | null>((resolve) => {
+          emitter.emit('editor-get-content', {
+            resolve: (data: { markdown: string; totalLines?: number; numberedLines?: string; version: number }) => {
+              resolve(data)
+            },
+          })
+
+          window.setTimeout(() => resolve(null), 300)
+        })
+
+        if (editorContent?.numberedLines) {
+          const numberedLines = editorContent.numberedLines.split('\n')
+          const previewLines = numberedLines.slice(0, 100)
+          const totalLines = editorContent.totalLines || numberedLines.length
+          const truncatedNote = totalLines > 100 ? `\n... (共 ${totalLines} 行，后 ${totalLines - 100} 行省略)` : ''
+
+          return `已关联当前编辑器文件：${filePath.split('/').pop() || filePath}
+你可以直接基于下面的行号和版本使用 replace_editor_content。
+
+编辑器版本：v${editorContent.version}
+行号预览：
+\`\`\`
+${previewLines.join('\n')}
+\`\`\`${truncatedNote}
+
+优先使用：
+- 修改某个区块/列表：replace_editor_content({startLine: 4, endLine: 5, replaceContent: "新内容", version: ${editorContent.version}})
+- 仅在有精确选区位置时才使用 from/to
+`
+        }
+      }
+
       // 检查文件是否存在
       const fileExists = isCustom
         ? await exists(filePath)
@@ -570,7 +617,7 @@ ${previewLines.join('\n')}
         setChatLinkedResource(resource)
 
         // 生成并设置文件预览
-        const preview = await generateFilePreview(fullPath, workspace.isCustom)
+        const preview = await generateFilePreview(fullPath, workspace.isCustom, activeFilePath === resource.relativePath)
         setLinkedResourcePreview(preview)
       } else if (!activeFilePath.includes('.')) {
         // 文件夹关联逻辑 - 只有当路径不包含 . 时才可能是文件夹
@@ -590,7 +637,7 @@ ${previewLines.join('\n')}
         const files = await collectMarkdownFiles(activeFilePath)
         const { vectorIndexedFiles } = useArticleStore.getState()
         const indexedCount = files.filter(f =>
-          vectorIndexedFiles.has(f.name)
+          vectorIndexedFiles.has(f.path)
         ).length
 
         // 只有在有索引文件时才关联文件夹
@@ -631,7 +678,7 @@ ${previewLines.join('\n')}
   }, [linkedResource, debouncedGenPlaceholder])
 
   return (
-    <footer className="flex flex-col w-full p-1 justify-between items-center">
+    <footer id="onboarding-target-chat-input" className="flex flex-col w-full p-1 justify-between items-center">
       {/* 移动端图片选择 */}
       {isMobileDevice_ && (
         <input
@@ -655,8 +702,8 @@ ${previewLines.join('\n')}
             shineColor={["#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A"]}
           />
         )}
-        {quoteData && (
-          <QuoteDisplay quoteData={quoteData} onRemove={removeQuote} />
+        {pendingQuote && (
+          <QuoteDisplay quoteData={pendingQuote} onRemove={removeQuote} />
         )}
         <ImageAttachments images={attachedImages} onRemove={removeImage} />
         <div className="relative w-full flex items-start">
@@ -747,28 +794,20 @@ ${previewLines.join('\n')}
               </DndContext>
             ) : (
               <div className="flex overflow-x-auto scrollbar-hide md:overflow-visible gap-1">
-                <ChatAttachmentsDrawer
-                  onImageSelect={handleSelectFromGallery}
-                  onCameraOpen={handleTakePhoto}
-                  onFileLink={setLinkedResource}
-                />
-                <ChatSettingsDrawer />
                 <ChatToolsDrawer />
               </div>
             )}
           </div>
           <div className="flex items-center justify-end gap-2 pr-1">
-            {!isMobile && (
-              <TooltipButton
-                variant="link"
-                size="sm"
-                icon={<ImageIcon className="size-4" />}
-                tooltipText={t('record.chat.input.attachImage')}
-                onClick={handleSelectLocalImages}
-                disabled={!primaryModel || loading}
-              />
-            )}
-            <ChatSend inputValue={text} onSent={handleSent} linkedResource={linkedResource} attachedImages={attachedImages} quoteData={quoteData} ref={chatSendRef} />
+            <TooltipButton
+              variant="link"
+              size="sm"
+              icon={<ImageIcon className="size-4" />}
+              tooltipText={t('record.chat.input.attachImage')}
+              onClick={isMobile ? handleSelectFromGallery : handleSelectLocalImages}
+              disabled={!primaryModel || loading}
+            />
+            <ChatSend inputValue={text} onSent={handleSent} linkedResource={linkedResource} attachedImages={attachedImages} quoteData={pendingQuote} ref={chatSendRef} />
           </div>
         </div>
 

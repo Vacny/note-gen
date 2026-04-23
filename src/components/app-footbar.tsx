@@ -234,7 +234,7 @@ export function AppFootbar() {
       icon: SquarePen,
     },
     {
-      title: t('navigation.setting'),
+      title: t('navigation.me'),
       url: "/mobile/setting",
       icon: Settings,
     },
@@ -272,11 +272,29 @@ export function AppFootbar() {
             return (
               <Popover key={index} open={quickRecordOpen} onOpenChange={setQuickRecordOpen}>
                 <PopoverTrigger asChild>
-                  <div className="w-1/5 flex items-center justify-center">
-                    <Plus className="size-10 bg-primary text-primary-foreground rounded-full p-2 cursor-pointer hover:scale-105 transition-transform" />
-                  </div>
+                  <button
+                    type="button"
+                    className="w-1/5 flex items-center justify-center"
+                    aria-label={item.title}
+                    title={item.title}
+                  >
+                    <span
+                      className={cn(
+                        "inline-flex size-11 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform active:scale-95",
+                        quickRecordOpen && "ring-2 ring-primary/30"
+                      )}
+                    >
+                      <Plus className="size-6" />
+                    </span>
+                  </button>
                 </PopoverTrigger>
-                <PopoverContent align="center" side="top">
+                <PopoverContent
+                  align="center"
+                  side="top"
+                  sideOffset={10}
+                  collisionPadding={12}
+                  className="w-[min(92vw,360px)] rounded-2xl p-3"
+                >
                     <MobileRecordTools onClose={() => setQuickRecordOpen(false)} />
                 </PopoverContent>
               </Popover>

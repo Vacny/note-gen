@@ -10,6 +10,9 @@ import emitter from '@/lib/emitter'
 import { useEffect, useState } from 'react'
 import useShortcutStore from '@/stores/shortcut'
 import useSettingStore from '@/stores/setting'
+import { useSidebarStore } from '@/stores/sidebar'
+import { getActiveOnboardingStep, getNextOnboardingStep, type OnboardingProgress, type OnboardingStepId } from './onboarding-state'
+import { createNewNoteFromEmptyState } from './empty-state-actions'
 
 interface ActionItem {
   icon: React.ReactNode
@@ -19,12 +22,38 @@ interface ActionItem {
   onClick: () => void
 }
 
-export function EmptyState() {
+interface EmptyStateProps {
+  onboardingProgress: OnboardingProgress
+  activeOnboardingStep: OnboardingStepId | null
+  visibleOnboardingStep: OnboardingStepId | null
+  completedOnboardingStep: OnboardingStepId | null
+  onStartOnboardingStep: (step: OnboardingStepId) => void | Promise<void>
+  onContinueToNextStep: () => void | Promise<void>
+  onDismissOnboarding: () => void | Promise<void>
+}
+
+export function EmptyState({
+  onboardingProgress,
+  activeOnboardingStep,
+  visibleOnboardingStep,
+  completedOnboardingStep,
+  onStartOnboardingStep,
+  onContinueToNextStep,
+  onDismissOnboarding,
+}: EmptyStateProps) {
   const { newFile } = useArticleStore()
+  const { setLeftSidebarTab } = useSidebarStore()
   const t = useTranslations('article.emptyState')
   const { shortcuts } = useShortcutStore()
   const { addWorkspaceHistory } = useSettingStore()
   const [textRecordShortcut, setTextRecordShortcut] = useState('')
+
+  const handleCreateNote = async () => {
+    await createNewNoteFromEmptyState({
+      setLeftSidebarTab,
+      newFile,
+    })
+  }
 
   // 注册快捷键
   useEffect(() => {
@@ -32,13 +61,13 @@ export function EmptyState() {
       // Cmd/Ctrl + N 创建笔记
       if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
         e.preventDefault()
-        newFile()
+        void handleCreateNote()
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [newFile])
+  }, [newFile, setLeftSidebarTab])
 
   // 读取文本记录快捷键
   useEffect(() => {
@@ -102,9 +131,7 @@ export function EmptyState() {
       title: t('actions.newNote.title'),
       description: t('actions.newNote.desc'),
       shortcut: '⌘ N',
-      onClick: () => {
-        newFile()
-      }
+      onClick: () => void handleCreateNote()
     },
     {
       icon: <MessageSquareText className="w-5 h-5" />,
@@ -127,6 +154,38 @@ export function EmptyState() {
       onClick: handleOpenWorkspace
     }
   ]
+
+  const onboardingSteps: Array<{ id: OnboardingStepId; title: string; description: string }> = [
+    {
+      id: 'create-record',
+      title: t('onboarding.steps.createRecord.title'),
+      description: t('onboarding.steps.createRecord.desc'),
+    },
+    {
+      id: 'organize-note',
+      title: t('onboarding.steps.organizeNote.title'),
+      description: t('onboarding.steps.organizeNote.desc'),
+    },
+    {
+      id: 'ai-polish',
+      title: t('onboarding.steps.aiPolish.title'),
+      description: t('onboarding.steps.aiPolish.desc'),
+    },
+  ]
+  const completedStep = onboardingSteps.find((step) => step.id === completedOnboardingStep) || null
+  const nextOnboardingStepId = getNextOnboardingStep(onboardingProgress, completedOnboardingStep)
+  const hasPendingNextStep = getActiveOnboardingStep(onboardingProgress) !== null
+  const currentOnboardingStep = onboardingSteps.find((step) => step.id === activeOnboardingStep)
+    || onboardingSteps.find((step) => step.id === nextOnboardingStepId)
+    || null
+  const currentOnboardingIndex = currentOnboardingStep
+    ? onboardingSteps.findIndex((step) => step.id === currentOnboardingStep.id)
+    : -1
+  const completedOnboardingIndex = completedStep
+    ? onboardingSteps.findIndex((step) => step.id === completedStep.id)
+    : -1
+  const showCompletedCard = Boolean(completedStep && hasPendingNextStep)
+  const showOnboardingCard = !onboardingProgress.dismissed && (showCompletedCard || Boolean(currentOnboardingStep))
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center h-full bg-background p-8">
@@ -152,6 +211,65 @@ export function EmptyState() {
             {t('subtitle')}
           </p>
         </div>
+
+        {showOnboardingCard && (
+          <div className="rounded-2xl border bg-card/80 p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h3 className="text-base font-semibold">{t('onboarding.title')}</h3>
+                <p className="text-sm text-muted-foreground">{t('onboarding.subtitle')}</p>
+              </div>
+              <button
+                onClick={() => void onDismissOnboarding()}
+                className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {t('onboarding.dismiss')}
+              </button>
+            </div>
+
+            {showCompletedCard && completedStep ? (
+              <div className="mt-4 rounded-xl border border-emerald-500/50 bg-emerald-500/5 p-4 transition-colors">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-emerald-700/80 dark:text-emerald-300/80">
+                      {t('onboarding.stepCompletedLabel', { current: completedOnboardingIndex + 1, total: onboardingSteps.length })}
+                    </p>
+                    <h4 className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                      {t(`onboarding.completedStates.${completedStep.id}.title`)}
+                    </h4>
+                    <p className="text-xs text-emerald-700/80 dark:text-emerald-300/80">
+                      {t(`onboarding.completedStates.${completedStep.id}.desc`)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void onContinueToNextStep()}
+                    className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500"
+                  >
+                    {t('onboarding.continue')}
+                  </button>
+                </div>
+              </div>
+            ) : currentOnboardingStep ? (
+              <div className="mt-4 rounded-xl border border-primary/60 bg-primary/5 p-4 transition-colors">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                      {t('onboarding.stepLabel', { current: currentOnboardingIndex + 1, total: onboardingSteps.length })}
+                    </p>
+                    <h4 className="text-sm font-medium">{currentOnboardingStep.title}</h4>
+                    <p className="text-xs text-muted-foreground">{currentOnboardingStep.description}</p>
+                  </div>
+                  <button
+                    onClick={() => void onStartOnboardingStep(currentOnboardingStep.id)}
+                    className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:opacity-90"
+                  >
+                    {visibleOnboardingStep === currentOnboardingStep.id ? t('onboarding.viewHint') : t('onboarding.start')}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
 
         {/* Actions Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

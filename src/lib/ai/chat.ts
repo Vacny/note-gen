@@ -17,7 +17,7 @@ export async function fetchAi(
     const aiConfig = await getAISettings(modelType)
 
     // 验证AI服务
-    if (validateAIService(aiConfig?.baseURL) === null) return ''
+    if (await validateAIService(aiConfig?.baseURL) === null) return ''
 
     // 准备消息
     const prepared = await prepareMessages(text, messages)
@@ -68,7 +68,10 @@ export async function fetchAiStream(
     const aiConfig = await getAISettings()
 
     // 验证AI服务
-    if (await validateAIService(aiConfig?.baseURL) === null) return ''
+    const validatedBaseURL = await validateAIService(aiConfig?.baseURL)
+    if (validatedBaseURL === null) {
+      return ''
+    }
 
     // 准备消息 - 如果提供了 messages 数组，使用它；否则用 prepareMessages
     let preparedMessages: OpenAI.Chat.ChatCompletionMessageParam[]
@@ -417,6 +420,7 @@ export async function fetchAiStream(
     
     return fullContent
   } catch (error) {
+    console.error('[fetchAiStream] Error:', error)
     return handleAIError(error) || ''
   }
 }

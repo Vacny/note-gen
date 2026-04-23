@@ -309,6 +309,40 @@
       "jsonImportSkipped": "Ignorado {count} servidor(es) existente(s)",
       "jsonImportNoServers": "Nenhum servidor foi importado",
       "import": "Importar",
+      "mobileHttpOnlyTitle": "MCP por comando local é exclusivo do desktop",
+      "mobileHttpOnlyDesc": "Servidores MCP com comando local só são suportados no desktop. No mobile, o suporte atual é apenas para MCP HTTP.",
+      "runtimeEnvironment": "Ambiente de runtime",
+      "runtimeEnvironmentDesc": "Verifique se o runtime local necessário está disponível antes de testar o servidor MCP.",
+      "checkEnvironment": "Verificar ambiente",
+      "recheckEnvironment": "Verificar novamente",
+      "runtimeCheckFailed": "Falha ao verificar o ambiente",
+      "detectedLauncher": "Launcher detectado",
+      "runtimeInstalled": "Instalado",
+      "runtimeMissing": "Ausente",
+      "runtimeVersion": "Versão",
+      "runtimeInstalledSummary": "{installed}/{total} instalados",
+      "showRuntimeDetails": "Mostrar detalhes do runtime",
+      "hideRuntimeDetails": "Ocultar detalhes do runtime",
+      "runtimeNotChecked": "Este runtime ainda não foi verificado.",
+      "runtimeCurrentUserScope": "Quando houver suporte, o comando recomendado instala no ambiente do usuário atual.",
+      "runtimeManualOnly": "A instalação automática não está disponível para este runtime na plataforma atual. Instale manualmente e verifique novamente.",
+      "installRuntime": "Instalar runtime",
+      "runtimeInstallTitle": "Instalar runtime",
+      "runtimeInstallDesc": "Após sua confirmação, o NoteGen executará o seguinte comando de instalação.",
+      "runtimeInstallPreparing": "Preparando instalação",
+      "runtimeInstallRunning": "Instalando",
+      "runtimeInstallCompleted": "Instalação concluída",
+      "runtimeInstallCancelled": "Cancelado",
+      "runtimeInstallFailedState": "Falha na instalação",
+      "runtimeInstallLogs": "Logs de instalação",
+      "runtimeInstallWaitingLogs": "Aguardando saída da instalação...",
+      "runtimeInstallClose": "Fechar",
+      "runtimeInstallCancel": "Parar instalação",
+      "runtimeInstallCancelledByUser": "Cancelamento solicitado pelo usuário.",
+      "runtimeInstallCancelFailed": "Falha ao parar a instalação",
+      "runtimeInstallSuccess": "Instalação do runtime concluída",
+      "runtimeInstallFailed": "Falha na instalação do runtime",
+      "runtimeNoGuidedSupport": "Ainda não há assistência guiada para este comando.",
       "enableTitle": "Ativar MCP",
       "enableDesc": "Quando ativado, a IA pode chamar as ferramentas fornecidas pelos servidores MCP configurados."
     },
@@ -316,8 +350,8 @@
       "title": "Configurações do Editor",
       "interfaceSettings": "Configurações de Interface",
       "desc": "Aqui, você pode personalizar o editor, criando uma experiência de escrita adaptada às suas necessidades.",
-      "typewriterMode": "Modo Máquina de Escrever",
-      "typewriterModeDesc": "No modo máquina de escrever, o editor simula o efeito de uma máquina de escrever, permitindo que você se concentre melhor na escrita.",
+      "centeredContent": "Conteúdo Centralizado",
+      "centeredContentDesc": "Quando ativado, o conteúdo do editor será centralizado com margens em ambos os lados.",
       "outlineEnable": "Sumário habilitado por padrão",
       "outlineEnableDesc": "Habilitar esta opção tornará o sumário visível por padrão.",
       "outlinePosition": "Posição do Sumário",
@@ -326,14 +360,8 @@
         "left": "Esquerda",
         "right": "Direita"
       },
-      "pageView": "Visualização da Página",
-      "pageViewDesc": "Na visualização imersiva, o editor reservará uma grande quantidade de espaço em branco em ambos os lados, e na visualização panorâmica, o conteúdo do editor ocupará toda a área de edição.",
-      "pageViewOptions": {
-        "immersiveView": "Visualização Imersiva",
-        "panoramaView": "Visualização Panorâmica"
-      },
-      "enableLineNumber": "Habilitar número da linha",
-      "enableLineNumberDesc": "Habilitar esta opção tornará o número da linha visível nos blocos de código.",
+      "showUndoRedo": "Botões Desfazer/Refazer",
+      "showUndoRedoDesc": "Mostrar botões de desfazer e refazer na barra de guias do editor.",
       "completion": {
         "title": "Auto Completar",
         "model": {
@@ -578,12 +606,19 @@
     "audio": {
       "title": "Configurações de Áudio",
       "desc": "Aqui, você pode configurar as definições de áudio, incluindo as funções de conversão de texto em fala (TTS) e fala em texto (STT).",
+      "mode": {
+        "title": "Modo",
+        "auto": "Automático (Recomendado)",
+        "local": "Somente local",
+        "model": "Somente modelo"
+      },
       "tts": {
         "title": "Texto para Fala (TTS)",
         "desc": "Configure a funcionalidade de leitura em voz alta para fornecer reprodução de voz para o conteúdo do chat.",
+        "modeDesc": "Prefere as vozes do navegador e do sistema por padrão e usa um modelo apenas quando necessário para melhorar a experiência.",
         "model": {
           "title": "Modelo TTS",
-          "desc": "Selecione o modelo de IA para conversão de texto em fala, suportando vários tipos de voz e configurações de parâmetros."
+          "desc": "Opcional. Configure um modelo para aprimorar o modo automático ou usar o modo somente modelo."
         },
         "speed": {
           "title": "Velocidade da Fala",
@@ -593,15 +628,31 @@
       "stt": {
         "title": "Fala para Texto (STT)",
         "desc": "Configure o reconhecimento de voz para converter fala em registros de texto.",
-        "mode": {
-          "title": "Modo de Reconhecimento",
-          "desc": "Escolha entre o reconhecimento embutido do navegador ou o reconhecimento por modelo de IA",
-          "builtin": "Embutido",
-          "model": "Modelo de IA"
-        },
+        "modeDesc": "Prefere o reconhecimento nativo do navegador por padrão e usa um modelo como fallback quando o suporte local não estiver disponível.",
         "model": {
           "title": "Modelo STT",
-          "desc": "Selecione o modelo de IA para reconhecimento de fala, suportando conversão de voz em texto em tempo real."
+          "desc": "Opcional. Configure um modelo para fallback automático ou para o modo somente modelo."
+        }
+      }
+    },
+    "readAloud": {
+      "title": "Ler em Voz Alta",
+      "desc": "Configure o comportamento da leitura em voz alta. As vozes do sistema são preferidas por padrão, e a voz de modelo funciona como aprimoramento.",
+      "options": {
+        "mode": {
+          "title": "Modo",
+          "desc": "O modo automático prefere as vozes do sistema e só tenta um modelo quando a fala local não está disponível.",
+          "auto": "Automático (Recomendado)",
+          "local": "Somente local",
+          "model": "Somente modelo"
+        },
+        "audioModel": {
+          "title": "Modelo de Leitura",
+          "desc": "Opcional. Configure um modelo para aprimorar o modo automático ou usar o modo somente modelo."
+        },
+        "speed": {
+          "title": "Velocidade",
+          "desc": "Ajuste a velocidade da leitura entre 0.5x e 2x, com 1x como padrão."
         }
       }
     },
@@ -636,6 +687,16 @@
       "syncRepoDesc": "Sincronizar arquivos markdown na escrita",
       "imageRepo": "Repositório de Imagens",
       "imageRepoDesc": "Sincronize suas imagens para o repositório, usando jsdelivr para aceleração",
+      "status": {
+        "connected": "Conectado",
+        "disconnected": "Desconectado",
+        "failed": "Conexão Falhou",
+        "unconfigured": "Não Configurado"
+      },
+      "uploadRecords": "Enviar Registros e Config",
+      "downloadConfig": "Baixar Registros e Config",
+      "cloudSync": "Sinc Registros e Config",
+      "localBackupAll": "Backup Local (Tudo)",
       "private": "Privado",
       "public": "Público",
       "createdAt": "Criado {time}",
@@ -677,6 +738,52 @@
         "selfHostedDesc": "Insira o endereço do seu servidor Gitea auto-hospedado (ex: https://gitea.example.com)"
       },
       "giteaAccessTokenDesc": "Crie um token de acesso pessoal em {instanceDisplayName}, requer permissão total de repositório",
+      "s3": {
+        "title": "Sincronização S3",
+        "description": "Sincronize suas notas usando armazenamento compatível com S3",
+        "status": "Status da Conexão",
+        "connected": "Conectado",
+        "connecting": "Conectando",
+        "disconnected": "Desconectado",
+        "accessKeyId": "Access Key ID",
+        "accessKeyIdPlaceholder": "Por favor, insira o Access Key ID",
+        "secretAccessKey": "Secret Access Key",
+        "secretAccessKeyPlaceholder": "Por favor, insira o Secret Access Key",
+        "region": "Região",
+        "bucket": "Bucket",
+        "bucketPlaceholder": "Por favor, insira o nome do bucket",
+        "endpoint": "Endpoint",
+        "pathPrefix": "Prefixo do Caminho",
+        "pathPrefixPlaceholder": "Por favor, insira o prefixo do caminho",
+        "pathPrefixDesc": "Usado para diferenciar arquivos entre diferentes usuários, similar ao nome do repositório",
+        "customDomain": "Domínio Personalizado",
+        "testConnection": "Testar Conexão",
+        "testing": "Testando",
+        "saveConfig": "Salvar Configuração",
+        "saving": "Salvando"
+      },
+      "webdav": {
+        "title": "Sincronização WebDAV",
+        "description": "Sincronize suas notas usando o protocolo WebDAV",
+        "status": "Status da Conexão",
+        "connected": "Conectado",
+        "connecting": "Conectando",
+        "disconnected": "Desconectado",
+        "url": "URL do Servidor",
+        "urlPlaceholder": "Por favor, insira a URL do servidor WebDAV",
+        "urlDesc": "Suporta Synology, QNAP, Nextcloud e outros serviços WebDAV",
+        "username": "Nome de Usuário",
+        "usernamePlaceholder": "Por favor, insira o nome de usuário",
+        "password": "Senha",
+        "passwordPlaceholder": "Por favor, insira a senha",
+        "pathPrefix": "Prefixo do Caminho",
+        "pathPrefixPlaceholder": "Por favor, insira o prefixo do caminho",
+        "pathPrefixDesc": "Usado para diferenciar arquivos entre diferentes usuários",
+        "testConnection": "Testar Conexão",
+        "testing": "Testando",
+        "saveConfig": "Salvar Configuração",
+        "saving": "Salvando"
+      },
       "autoSync": "Sincronização Automática",
       "autoSyncOptions": {
         "placeholder": "Selecione o tempo de sincronização automática",
@@ -690,6 +797,10 @@
         "1m": "1 minuto",
         "2m": "2 minutos"
       },
+      "autoPullOnOpen": "Puxar automaticamente ao abrir arquivos",
+      "autoPullOnOpenDesc": "Ao abrir um arquivo, puxa automaticamente a versão remota se for mais recente",
+      "autoPullOnSwitch": "Puxar automaticamente ao trocar de arquivo",
+      "autoPullOnSwitchDesc": "Ao trocar para outro arquivo, puxa automaticamente a versão remota se for mais recente",
       "exclusions": {
         "title": "Configuração de Exclusão de Sincronização",
         "desc": "As seguintes configurações não serão sincronizadas entre dispositivos, pois são específicas do dispositivo",
@@ -720,9 +831,17 @@
       "isPrimaryBackup": "Método principal atual de hospedagem de imagens: {type}",
       "setPrimaryBackup": "Definir como Hospedagem de Imagem Principal",
       "smms": {
+        "title": "Hospedagem de Imagens S.EE",
+        "description": "Use o S.EE para enviar e gerenciar imagens",
+        "status": "Status da Conexão",
+        "connected": "Conectado",
+        "connecting": "Verificando",
+        "disconnected": "Desconectado",
         "token": {
-          "desc": "Por favor, crie e insira o Token SM.MS.",
-          "createToken": "Criar Token"
+          "desc": "Por favor, crie e insira o Token S.EE.",
+          "createToken": "Abrir página de desenvolvedor do S.EE",
+          "helper": "Insira o token da API do S.EE. A configuração existente pode continuar sendo reutilizada.",
+          "placeholder": "Insira o token da API do S.EE"
         },
         "disk": "Uso do Disco",
         "error": "Falha ao obter, por favor, verifique a rede ou se o Token está correto."
@@ -817,44 +936,6 @@
     "backupSync": {
       "title": "Dados de Backup",
       "desc": "Aqui, você pode usar outros métodos para fazer backup de seus dados, você pode fazer backup regularmente para garantir a segurança dos dados.",
-      "webdav": {
-        "connectionState": {
-          "success": "Conectado",
-          "checking": "Conectando",
-          "failed": "Não Conectado"
-        },
-        "description": "O WebDAV é usado apenas como uma solução de backup e não suporta sincronização automática, reversão de histórico e outros recursos.",
-        "backupTo": "Backup para WebDAV",
-        "syncFrom": "Sincronizar do WebDAV",
-        "serverUrl": "URL do Servidor WebDAV",
-        "serverUrlDesc": "Insira a URL do servidor WebDAV. Nenhum caminho incluído, ex: https://dav.example.com http://192.8.8.88:9999",
-        "serverUrlPlaceholder": "https://dav.example.com",
-        "username": "Nome de Usuário",
-        "usernameDesc": "Nome de usuário do servidor WebDAV",
-        "usernamePlaceholder": "Nome de Usuário",
-        "password": "Senha",
-        "passwordDesc": "Senha do servidor WebDAV",
-        "passwordPlaceholder": "Senha",
-        "backupPath": "Caminho do Backup",
-        "backupPathDesc": "Caminho do backup no servidor WebDAV, ex: /backup/notes",
-        "backupPathPlaceholder": "/backup/notes",
-        "backupSuccess": "Backup Bem-sucedido",
-        "backupSuccessDesc": "Backup de {count} arquivos para WebDAV concluído.",
-        "syncSuccess": "Sincronização Bem-sucedida",
-        "syncSuccessDesc": "Sincronizados {count} arquivos do WebDAV para o local.",
-        "syncFailed": "Falha na Sincronização",
-        "backupFailed": "Falha no Backup",
-        "directoryCreated": "Diretório Criado",
-        "directoryCreatedDesc": "Diretório {path} criado com sucesso.",
-        "createDir": "Criar Diretório",
-        "success": "Sucesso",
-        "failed": "Falha",
-        "error": {
-          "pathNotFound": "Caminho não encontrado ou servidor inacessível.",
-          "createDirFailed": "Falha ao criar diretório",
-          "connectionTimeOut": "Tempo limite de conexão, por favor, verifique a rede ou o servidor."
-        }
-      },
       "localBackup": {
         "tabTitle": "Backup Local",
         "export": {
@@ -1187,8 +1268,8 @@
       },
       "assets": {
         "title": "Caminho dos Recursos",
-        "desc": "Defina o caminho onde os recursos (ex: imagens, vídeos, arquivos, etc.) usados na escrita serão salvos. Os recursos serão salvos no mesmo nível do arquivo markdown atualmente editado.",
-        "select": "Defina o caminho onde os recursos usados na escrita serão salvos"
+        "desc": "Defina o nome do diretório de recursos. A inserção local de imagens no editor usará esse nome de diretório, como `assets` ou `images`.",
+        "select": "Defina o nome do diretório de recursos, por exemplo: assets"
       }
     },
     "shortcuts": {
@@ -1573,6 +1654,7 @@
         "processingVectors": "Processando Dados Vetoriais",
         "calculateVectors": "Calcular Vetores de Documento",
         "multiSelect": "Seleção Múltipla",
+        "multiSelectMode": "Modo de Seleção Múltipla",
         "exitMultiSelect": "Sair da Seleção Múltipla",
         "selectAll": "Selecionar Tudo",
         "deselectAll": "Desmarcar Tudo",
@@ -1744,7 +1826,7 @@
           "translate": "Modo Traduzir"
         },
         "chatModeSelect": {
-          "chatDescription": "Conversa rápida, modo somente leitura",
+          "chatDescription": "Conversa rápida, foco em análise",
           "agentDescription": "Assistente inteligente, pode executar ações"
         },
         "attachImage": "Anexar imagens",
@@ -1755,6 +1837,10 @@
           "acting": "Agindo",
           "observation": "Observação",
           "toolCalls": "Chamadas de Ferramenta",
+          "autoFinal": {
+            "createNote": "Nota \"{name}\" criada.",
+            "createFile": "Arquivo \"{name}\" criado."
+          },
           "thought": "Pensamento",
           "action": "Ação",
           "confirmation": {
@@ -1882,6 +1968,7 @@
     "record": "Registro",
     "quickRecord": "Registro Rápido",
     "write": "Escrever",
+    "me": "Meu",
     "search": "Pesquisar",
     "githubImageHosting": "Hospedagem de Imagens Github",
     "login": "Entrar",
@@ -1889,6 +1976,7 @@
     "view": "Visualizar",
     "logout": "Sair",
     "setting": "Configurações",
+    "activity": "Atividade",
     "files": "Notas",
     "outline": "Sumário",
     "hideLeftSidebar": "Ocultar Barra Lateral Esquerda",
@@ -1898,6 +1986,42 @@
     "searchPlaceholder": "Pesquisar notas ou registros...",
     "showCenterPanel": "Mostrar editor",
     "hideCenterPanel": "Ocultar editor"
+  },
+  "activity": {
+    "title": "Calendário de Atividade",
+    "description": "Veja seus registros, conversas e atividade de escrita por dia. Esta primeira versão é calculada a partir dos registros existentes, conversas do usuário e horários de modificação das notas.",
+    "drawer": {
+      "title": "Atividade",
+      "description": "Veja rapidamente o status de hoje e a tendência recente da sua atividade.",
+      "today": "Hoje"
+    },
+    "loading": "Carregando dados de atividade...",
+    "empty": "Ainda não há dados de atividade",
+    "refresh": "Atualizar",
+    "summary": {
+      "totalCount": "Atividade Total",
+      "activeDays": "Dias Ativos",
+      "records": "Registros",
+      "chats": "Conversas",
+      "writing": "Escrita"
+    },
+    "labels": {
+      "record": "Registro",
+      "writing": "Escrita",
+      "chat": "Conversa"
+    },
+    "heatmap": {
+      "title": "Últimas 26 Semanas",
+      "range": "{startDate} - {endDate}",
+      "less": "Menos",
+      "more": "Mais",
+      "dayCount": "atividades",
+      "emptyDay": "Sem atividade"
+    },
+    "detail": {
+      "title": "Detalhes do Dia",
+      "empty": "Selecione um dia para ver seus detalhes de atividade."
+    }
   },
   "marks": {
     "types": {
@@ -1958,6 +2082,77 @@
         "openWorkspace": {
           "title": "Abrir Workspace",
           "desc": "Selecionar ou alternar diretório de workspace"
+        }
+      },
+      "onboarding": {
+        "title": "Onboarding",
+        "subtitle": "Siga estas três tarefas para conhecer o fluxo principal do NoteGen.",
+        "dismiss": "Pular introducao",
+        "reopen": "Mostrar onboarding novamente",
+        "start": "Começar",
+        "viewHint": "Ver dica",
+        "continue": "Continuar",
+        "completed": "Concluído",
+        "allDone": "Todas as tarefas iniciais foram concluídas. Você já experimentou o fluxo principal do NoteGen.",
+        "stepLabel": "Tarefa ({current}/{total})",
+        "stepCompletedLabel": "Tarefa concluída ({current}/{total})",
+        "afterOrganizeDialog": {
+          "title": "Tarefa concluída (2/3)",
+          "description": "Seu registro virou uma nota. Quer continuar e usar o AI Agent para transformar essa nota em uma versão bilíngue?",
+          "confirm": "Continuar",
+          "cancel": "Agora não"
+        },
+        "agentPrompt": {
+          "label": "Prompt de exemplo",
+          "use": "Usar este prompt",
+          "intro": "Please directly revise the note I just organized into a bilingual Chinese-English version.",
+          "requirement1": "",
+          "requirement2": "",
+          "requirement3": "",
+          "requirement4": "",
+          "outro": ""
+        },
+        "steps": {
+          "createRecord": {
+            "title": "Criar o primeiro registro",
+            "desc": "Salve um registro de exemplo e veja onde fica a captura rápida."
+          },
+          "organizeNote": {
+            "title": "Organizar em nota",
+            "desc": "Transforme esse registro em uma nota estruturada."
+          },
+          "aiPolish": {
+            "title": "Usar Agent para tradução bilíngue",
+            "desc": "Use o AI Agent para transformar a nota recém-organizada em uma versão bilíngue."
+          }
+        },
+        "completedStates": {
+          "create-record": {
+            "title": "Seu primeiro registro foi criado",
+            "desc": "Agora você já sabe onde fica a captura rápida."
+          },
+          "organize-note": {
+            "title": "Seu registro virou uma nota",
+            "desc": "Agora vale experimentar a IA editando essa nota."
+          },
+          "ai-polish": {
+            "title": "Você usou o Agent na nota",
+            "desc": "Você concluiu o fluxo de captura, organização e processamento com Agent no NoteGen."
+          }
+        },
+        "spotlight": {
+          "create-record": {
+            "title": "Aqui fica a captura rápida",
+            "desc": "Clique aqui para abrir o registro em texto. Vamos preencher um exemplo automaticamente para você salvar logo."
+          },
+          "organize-note": {
+            "title": "Este botão organiza registros em uma nota",
+            "desc": "Use-o para transformar o registro salvo em uma nota Markdown completa."
+          },
+          "ai-polish": {
+            "title": "Use o Agent aqui na nota que acabou de criar",
+            "desc": "Insira o prompt de exemplo no chat e envie. O Agent vai gerar uma versão bilíngue com base na nota atual."
+          }
         }
       }
     },
@@ -2264,6 +2459,40 @@
     }
   },
   "mobile": {
+    "me": {
+      "profile": {
+        "deviceName": "Plataforma de Sincronização",
+        "deviceSubtitle": "Sincronize seus registros e configurações",
+        "syncPlatform": "Plataforma de Sincronização",
+        "gitSubtitle": "Conectado ao {provider} para sincronizar seus registros e configurações",
+        "storageSubtitle": "No momento usando {provider} para sincronizar seus registros e configurações",
+        "unconfiguredSubtitle": "A sincronização ainda não foi configurada. Seus dados estão salvos apenas localmente",
+        "streak": "Ativo por {count} dias seguidos"
+      },
+      "activity": {
+        "tip": "Toque em um dia do mapa de calor para abrir a linha do tempo daquele dia.",
+        "range": "Últimas {count} semanas",
+        "rangePlaceholder": "Últimas 16 semanas",
+        "drawerEmpty": "Escolha um dia para ver os detalhes da atividade.",
+        "drawerSummary": "Houve {total} atividades nesse dia, incluindo {record} registros, {writing} escritas e {chat} conversas."
+      },
+      "sync": {
+        "title": "Sincronização",
+        "configured": "Conectado",
+        "unconfigured": "Não configurado",
+        "localOnly": "Apenas local"
+      },
+      "stats": {
+        "weekly": "Esta Semana",
+        "weeklyHint": "Total de atividades nesta semana",
+        "streak": "Sequência Atual",
+        "streakHint": "Dias consecutivos com atividade"
+      },
+      "settings": {
+        "title": "Configurações",
+        "description": "Abra diretamente daqui as configurações de cada recurso."
+      }
+    },
     "chat": {
       "drawer": {
         "settings": {
@@ -2314,11 +2543,18 @@
     "error": "Erro",
     "success": "Sucesso",
     "noModelConfigured": "Modelo de reconhecimento de fala não configurado, configure nas configurações primeiro",
+    "speechUnavailable": "O modo atual de reconhecimento de fala não está disponível. Verifique o suporte local ou a configuração do modelo.",
+    "fallbackToModel": "O reconhecimento local não está disponível, então o app mudou automaticamente para a transcrição por modelo.",
     "startError": "Não é possível iniciar a gravação",
     "noAudioData": "Nenhum dado de áudio gravado",
     "transcriptionSuccess": "Reconhecimento de fala concluído",
     "transcriptionEmpty": "Resultado do reconhecimento está vazio",
     "transcriptionError": "Falha no reconhecimento de fala",
+    "configureModel": "Configurar modelo",
+    "retryTranscription": "Transcrever novamente",
+    "retrying": "Transcrevendo novamente...",
+    "retrySuccess": "Transcrição atualizada",
+    "retryError": "Falha ao transcrever novamente",
     "noContentDetected": "Nenhum conteúdo detectado",
     "doubleClickToSelectFile": "Clique duas vezes para selecionar o arquivo de áudio",
     "mode": {

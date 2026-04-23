@@ -8,6 +8,41 @@ import emitter from '@/lib/emitter'
 import { pullRemoteFile, setLocalRecordedSha, getLocalRecordedSha } from './auto-sync'
 import { getRemoteFileInfo } from './auto-sync'
 import useSettingStore from '@/stores/setting'
+import useSyncStore from '@/stores/sync'
+import { S3Config, WebDAVConfig } from '@/types/sync'
+
+/**
+ * 获取 S3 配置
+ */
+async function getS3Config(): Promise<S3Config | null> {
+  const store = await Store.load('store.json')
+  const config = await store.get<S3Config>('s3SyncConfig')
+  if (config && config.accessKeyId && config.secretAccessKey && config.region && config.bucket) {
+    return config
+  }
+  return null
+}
+
+/**
+ * 获取 WebDAV 配置
+ */
+async function getWebDAVConfig(): Promise<WebDAVConfig | null> {
+  const store = await Store.load('store.json')
+  const config = await store.get<WebDAVConfig>('webdavSyncConfig')
+  if (config && config.url && config.username && config.password) {
+    return config
+  }
+  return null
+}
+
+/**
+ * 获取代理配置
+ */
+async function getProxyConfig(): Promise<{ all: string } | undefined> {
+  const store = await Store.load('store.json')
+  const proxyUrl = await store.get<string>('proxy')
+  return proxyUrl ? { all: proxyUrl } : undefined
+}
 
 interface PushTask {
   path: string
@@ -217,8 +252,8 @@ class SyncPushQueue {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const store = await Store.load('store.json')
-        const provider = (await store.get<string>('primaryBackupMethod') || 'github') as 'gitee' | 'github' | 'gitlab' | 'gitea'
-        const repo = await getSyncRepoName(provider)
+        const provider = (await store.get<string>('primaryBackupMethod') || 'github') as 'gitee' | 'github' | 'gitlab' | 'gitea' | 's3' | 'webdav'
+        const repo = (provider !== 's3' && provider !== 'webdav') ? await getSyncRepoName(provider) : undefined
 
         // 从磁盘读取最新内容，确保上传的是本地最新内容
         const workspace = await getWorkspacePath()
@@ -233,6 +268,10 @@ class SyncPushQueue {
           if (remoteContent === content) {
             // 获取远程 SHA 用于更新文件树
             const remoteSha = await this.getRemoteSha(path)
+            // 更新本地记录的 SHA，这样下次推送时就会检测到 SHA 匹配而跳过
+            if (remoteSha) {
+              await setLocalRecordedSha(path, remoteSha)
+            }
             // 发送完成事件
             emitter.emit('sync-push-completed', { path, success: true, sha: remoteSha })
             return { success: true, sha: remoteSha }
@@ -281,7 +320,7 @@ class SyncPushQueue {
           case 'gitee': {
             const giteeModule = await import('@/lib/sync/gitee') as any
             // 每次尝试都重新获取远程 SHA
-            const fileInfo = await giteeModule.getFiles({ path, repo })
+            const fileInfo = await giteeModule.getFiles({ path, repo})
 
             // 检查返回的是文件还是目录
             // Gitee API 对文件返回对象，对目录返回数组
@@ -304,38 +343,105 @@ class SyncPushQueue {
             // 检查上传是否成功
             if (result && result.data) {
               success = true
-              uploadedSha = result?.data?.sha || fileInfo?.sha
+              // Gitee API 返回的是 result.data.content.sha
+              uploadedSha = result?.data?.content?.sha || fileInfo?.sha
             }
             break
           }
           case 'gitlab': {
             const gitlabModule = await import('@/lib/sync/gitlab') as any
-            await gitlabModule.uploadFile({
+            // 先获取远程文件的 SHA（blob_id），uploadFile 会用它获取 last_commit_id
+            const fileInfo = await gitlabModule.getFiles({ path, repo })
+            // GitLab getFiles 返回文件对象或文件数组，检查是否为数组（目录）
+            if (Array.isArray(fileInfo)) {
+              console.warn(`[SyncPushQueue] ${path} 是目录，无法推送`)
+              emitter.emit('sync-push-completed', { path, success: false })
+              return { success: false }
+            }
+            const result = await gitlabModule.uploadFile({
               file: content,
               filename: path.split('/').pop() || path,
-              sha: undefined, // GitLab 使用 last_commit_id，不使用 sha
+              sha: fileInfo?.sha, // GitLab 会用 sha 获取 last_commit_id
               message: commitMessage,
               repo,
               path
             })
-            success = true
-            // GitLab 上传成功后获取最新 SHA
-            uploadedSha = await this.getRemoteSha(path)
+            // 检查上传是否成功
+            if (result && result.data) {
+              success = true
+              // GitLab 上传成功后从 commit 获取 SHA
+              uploadedSha = await this.getRemoteSha(path)
+            }
             break
           }
           case 'gitea': {
             const giteaModule = await import('@/lib/sync/gitea') as any
-            await giteaModule.uploadFile({
+            // 先获取远程文件的 SHA
+            const fileInfo = await giteaModule.getFiles({ path, repo })
+            // Gitea getFiles 返回文件对象或文件数组，检查是否为数组（目录）
+            if (Array.isArray(fileInfo)) {
+              console.warn(`[SyncPushQueue] ${path} 是目录，无法推送`)
+              emitter.emit('sync-push-completed', { path, success: false })
+              return { success: false }
+            }
+            const result = await giteaModule.uploadFile({
               file: content,
               filename: path.split('/').pop() || path,
-              sha: undefined, // Gitea API 处理方式
+              sha: fileInfo?.sha, // 传递 SHA 以便 Gitea 进行冲突检测
               message: commitMessage,
               repo,
               path
             })
-            success = true
-            // Gitea 上传成功后获取最新 SHA
-            uploadedSha = await this.getRemoteSha(path)
+            // 检查上传是否成功
+            if (result && result.data) {
+              success = true
+              // Gitea 上传成功后从 commit 获取 SHA
+              uploadedSha = await this.getRemoteSha(path)
+            }
+            break
+          }
+          case 's3': {
+            const s3Module = await import('@/lib/sync/s3') as any
+            const s3Config = await getS3Config()
+            if (!s3Config) {
+              console.warn('[SyncPushQueue] S3 未配置')
+              emitter.emit('sync-push-completed', { path, success: false })
+              return { success: false }
+            }
+
+            // 获取代理配置
+            const proxy = await getProxyConfig()
+
+            // S3 不需要 SHA 检查，直接上传
+            const result = await s3Module.s3Upload(s3Config, path, content, proxy)
+            if (result && result.etag) {
+              success = true
+              uploadedSha = result.etag // 使用 ETag 作为标识
+              // 更新本地记录的 ETag
+              useSyncStore.getState().updateS3FileEtag(path, result.etag)
+            }
+            break
+          }
+          case 'webdav': {
+            const webdavModule = await import('@/lib/sync/webdav') as any
+            const webdavConfig = await getWebDAVConfig()
+            if (!webdavConfig) {
+              console.warn('[SyncPushQueue] WebDAV 未配置')
+              emitter.emit('sync-push-completed', { path, success: false })
+              return { success: false }
+            }
+
+            // 获取代理配置
+            const proxy = await getProxyConfig()
+
+            // WebDAV 不需要 SHA 检查，直接上传
+            const result = await webdavModule.webdavUpload(webdavConfig, path, content, proxy)
+            if (result) {
+              success = true
+              uploadedSha = result.etag || 'uploaded' // 使用 ETag 作为标识，空字符串使用默认值
+              // 更新本地记录的 ETag
+              useSyncStore.getState().updateWebDAVFileEtag(path, result.etag || '')
+            }
             break
           }
         }
@@ -431,8 +537,8 @@ class SyncPushQueue {
   async forcePush(path: string): Promise<{ success: boolean; sha?: string }> {
     try {
       const store = await Store.load('store.json')
-      const provider = (await store.get<string>('primaryBackupMethod') || 'github') as 'gitee' | 'github' | 'gitlab' | 'gitea'
-      const repo = await getSyncRepoName(provider)
+      const provider = (await store.get<string>('primaryBackupMethod') || 'github') as 'gitee' | 'github' | 'gitlab' | 'gitea' | 's3' | 'webdav'
+      const repo = (provider !== 's3' && provider !== 'webdav') ? await getSyncRepoName(provider) : undefined
 
       // 从磁盘读取最新内容
       const workspace = await getWorkspacePath()
@@ -479,7 +585,8 @@ class SyncPushQueue {
           })
           if (result && result.data) {
             success = true
-            uploadedSha = result?.data?.sha
+            // Gitee API 返回的是 result.data.content.sha
+            uploadedSha = result?.data?.content?.sha
           }
           break
         }
@@ -509,6 +616,50 @@ class SyncPushQueue {
           })
           success = true
           uploadedSha = await this.getRemoteSha(path)
+          break
+        }
+        case 's3': {
+          const s3Module = await import('@/lib/sync/s3') as any
+          const s3Config = await getS3Config()
+          if (!s3Config) {
+            console.warn('[SyncPushQueue] S3 未配置')
+            emitter.emit('sync-push-completed', { path, success: false })
+            return { success: false }
+          }
+
+          // 获取代理配置
+          const proxy = await getProxyConfig()
+
+          // S3 强制推送：直接上传，不检查 ETag
+          const result = await s3Module.s3Upload(s3Config, path, content, proxy)
+          if (result && result.etag) {
+            success = true
+            uploadedSha = result.etag
+            // 更新本地记录的 ETag
+            useSyncStore.getState().updateS3FileEtag(path, result.etag)
+          }
+          break
+        }
+        case 'webdav': {
+          const webdavModule = await import('@/lib/sync/webdav') as any
+          const webdavConfig = await getWebDAVConfig()
+          if (!webdavConfig) {
+            console.warn('[SyncPushQueue] WebDAV 未配置')
+            emitter.emit('sync-push-completed', { path, success: false })
+            return { success: false }
+          }
+
+          // 获取代理配置
+          const proxy = await getProxyConfig()
+
+          // WebDAV 强制推送：直接上传，不检查 ETag
+          const result = await webdavModule.webdavUpload(webdavConfig, path, content, proxy)
+          if (result && result.etag) {
+            success = true
+            uploadedSha = result.etag
+            // 更新本地记录的 ETag
+            useSyncStore.getState().updateWebDAVFileEtag(path, result.etag)
+          }
           break
         }
       }

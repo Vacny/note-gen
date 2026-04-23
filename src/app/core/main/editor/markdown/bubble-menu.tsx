@@ -23,7 +23,6 @@ import {
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { useTranslations } from 'next-intl'
-import { fetchAiTranslate } from '@/lib/ai/translate'
 import { toast } from '@/hooks/use-toast'
 
 const POPULAR_LANGUAGES = [
@@ -43,6 +42,7 @@ interface BubbleMenuProps {
   onAIPolish?: () => void
   onAIConcise?: () => void
   onAIExpand?: () => void
+  onAITranslate?: (targetLanguage: string) => void
   onQuoteToChat?: () => void
 }
 
@@ -51,6 +51,7 @@ export function BubbleMenu({
   onAIPolish,
   onAIConcise,
   onAIExpand,
+  onAITranslate,
   onQuoteToChat,
 }: BubbleMenuProps) {
   const t = useTranslations('editor')
@@ -61,6 +62,8 @@ export function BubbleMenu({
   const [customTranslateLang, setCustomTranslateLang] = useState('')
   const [linkUrl, setLinkUrl] = useState('')
   const [showLinkInput, setShowLinkInput] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [isInteractingWithMenu, setIsInteractingWithMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const aiSubmenuRef = useRef<HTMLDivElement>(null)
   const translateSubmenuRef = useRef<HTMLDivElement>(null)
@@ -72,17 +75,8 @@ export function BubbleMenu({
       toast({ title: t('translation.fail'), description: t('translation.failNoSelection'), variant: 'destructive' })
       return
     }
-    toast({ title: t('translation.translating'), description: t('translation.translatingTo', { language: targetLanguage }) })
-    try {
-      const result = await fetchAiTranslate(selectedText, targetLanguage)
-      if (result) {
-        editor.chain().focus().insertContent(result).run()
-        toast({ title: t('translation.success'), description: t('translation.successTo', { language: targetLanguage }) })
-      }
-    } catch (error) {
-      toast({ title: t('translation.fail'), description: error instanceof Error ? error.message : t('common.error'), variant: 'destructive' })
-    }
-  }, [editor, t])
+    onAITranslate?.(targetLanguage)
+  }, [editor, onAITranslate, t])
 
   const handleCustomTranslate = useCallback(async () => {
     const targetLanguage = customTranslateLang.trim()
@@ -99,7 +93,17 @@ export function BubbleMenu({
     const { selection } = editor.state
     const { from, to } = selection
 
-    if (from === to) {
+    // 检查选区是否有效（空选区、光标位置、无效位置都不显示）
+    if (from === to || from < 0 || to < 0 || from > editor.state.doc.content.size || to > editor.state.doc.content.size) {
+      setShow(false)
+      return
+    }
+
+    // 检查编辑器是否有焦点（没有焦点时不显示）
+    // 但如果选区有文本内容（from !== to），即使失去焦点也保持显示
+    // 这样可以避免点击工具栏按钮时菜单被隐藏
+    const hasSelection = from !== to
+    if (!hasSelection && !editor.view.hasFocus()) {
       setShow(false)
       return
     }
@@ -211,6 +215,18 @@ export function BubbleMenu({
 
   useEffect(() => {
     const updateHandler = () => updatePosition()
+
+    // 初始化时检查是否有有效的选区
+    const { selection } = editor.state
+    const { from, to } = selection
+
+    // 只有在有选中文本时才显示工具栏
+    if (from !== to) {
+      updatePosition()
+    } else {
+      setShow(false)
+    }
+
     editor.on('selectionUpdate', updateHandler)
     editor.on('transaction', updatePosition)
 
@@ -226,6 +242,7 @@ export function BubbleMenu({
         setShow(false)
         setShowAISubmenu(false)
         setShowTranslateSubmenu(false)
+        setIsInteractingWithMenu(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -326,27 +343,36 @@ export function BubbleMenu({
 
               <div className="border-t border-border my-1" />
 
-              <button className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2" onClick={() => setShowTranslateSubmenu(!showTranslateSubmenu)}>
-                <Languages className="w-3.5 h-3.5" /><span>{t('bubbleMenu.translate')}</span><ChevronRight className={cn('w-3.5 h-3.5 ml-auto transition-transform', showTranslateSubmenu && 'rotate-90')} />
-              </button>
-
-              {showTranslateSubmenu && (
-                <div
-                  ref={translateSubmenuRef}
-                  className="absolute top-0 left-full ml-1 py-1 bg-background border border-border rounded-lg shadow-lg min-w-40 z-50 max-h-60 overflow-y-auto data-translate-submenu-right:left-auto data-translate-submenu-right:right-full data-translate-submenu-right:ml-0 data-translate-submenu-right:mr-1"
-                  data-submenu="translate"
+              <div
+                className="relative"
+                onMouseEnter={() => setShowTranslateSubmenu(true)}
+                onMouseLeave={() => setShowTranslateSubmenu(false)}
+              >
+                <button
+                  className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2"
+                  onClick={() => setShowTranslateSubmenu(!showTranslateSubmenu)}
                 >
-                  {POPULAR_LANGUAGES.map((lang) => (
-                    <button key={lang.code} className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2" onClick={() => { setShowAISubmenu(false); setShowTranslateSubmenu(false); handleTranslate(lang.code) }}>
-                      <span>{t(`bubbleMenu.${lang.i18nKey}`)}</span>
-                    </button>
-                  ))}
-                  <div className="border-t border-border my-1" />
-                  <div className="px-3 py-1 flex items-center gap-1">
-                    <input type="text" placeholder={t('bubbleMenu.customLanguagePlaceholder')} value={customTranslateLang} onChange={(e) => setCustomTranslateLang(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { handleCustomTranslate() } else if (e.key === 'Escape') { setShowTranslateSubmenu(false); setCustomTranslateLang('') } }} className="w-full px-2 py-1 text-sm bg-muted rounded border border-border focus:outline-none focus:ring-1 focus:ring-primary" autoFocus />
+                  <Languages className="w-3.5 h-3.5" /><span>{t('bubbleMenu.translate')}</span><ChevronRight className={cn('w-3.5 h-3.5 ml-auto transition-transform', showTranslateSubmenu && 'rotate-90')} />
+                </button>
+
+                {showTranslateSubmenu && (
+                  <div
+                    ref={translateSubmenuRef}
+                    className="absolute top-0 left-full ml-1 py-1 bg-background border border-border rounded-lg shadow-lg min-w-40 z-50 max-h-60 overflow-y-auto data-translate-submenu-right:left-auto data-translate-submenu-right:right-full data-translate-submenu-right:ml-0 data-translate-submenu-right:mr-1"
+                    data-submenu="translate"
+                  >
+                    {POPULAR_LANGUAGES.map((lang) => (
+                      <button key={lang.code} className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2" onClick={() => { setShowAISubmenu(false); setShowTranslateSubmenu(false); handleTranslate(lang.code) }}>
+                        <span>{t(`bubbleMenu.${lang.i18nKey}`)}</span>
+                      </button>
+                    ))}
+                    <div className="border-t border-border my-1" />
+                    <div className="px-3 py-1 flex items-center gap-1">
+                      <input type="text" placeholder={t('bubbleMenu.customLanguagePlaceholder')} value={customTranslateLang} onChange={(e) => setCustomTranslateLang(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { handleCustomTranslate() } else if (e.key === 'Escape') { setShowTranslateSubmenu(false); setCustomTranslateLang('') } }} className="w-full px-2 py-1 text-sm bg-muted rounded border border-border focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
               <button className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2" onClick={() => { setShowAISubmenu(false); handleQuoteToChat() }}>
                 <MessageCircle className="w-3.5 h-3.5" /><span>{t('bubbleMenu.quoteToChat')}</span>

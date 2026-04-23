@@ -34,3 +34,10 @@ input, textarea, select {
   -moz-appearance: none;
   appearance: none;
 }
+
+/* Keep top-level mobile page headers visually consistent */
+.mobile-page-header {
+  height: 3rem;
+  min-height: 3rem;
+  max-height: 3rem;
+}

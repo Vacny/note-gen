@@ -47,7 +47,6 @@ const useImageStore = create<MarkState>((set, get) => ({
   initMainHosting: async () => {
     const store = await Store.load('store.json');
     const mainImageHosting = await store.get<string>('mainImageHosting')
-    console.log('[ImageStore] initMainHosting - mainImageHosting from store:', mainImageHosting)
     if (mainImageHosting) {
       set({ mainImageHosting })
     }

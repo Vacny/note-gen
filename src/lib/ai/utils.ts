@@ -1,8 +1,10 @@
 import { toast } from "@/hooks/use-toast";
 import { Store } from "@tauri-apps/plugin-store";
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { AiConfig } from "@/app/core/setting/config";
 import { readFile } from "@tauri-apps/plugin-fs";
+import { platform } from "@tauri-apps/plugin-os";
+import { createTauriOpenAIClient, type OpenAICompatibleClient } from "./tauri-client";
 
 /**
  * 获取当前的prompt内容
@@ -100,31 +102,28 @@ export async function convertImageToBase64(imageUrl: string): Promise<string | n
     if (imageUrl.startsWith('data:image')) {
       return imageUrl
     }
-    
-    // 从 Tauri URL 中提取文件路径
-    // convertFileSrc 生成的 URL 格式类似: tauri://localhost/path 或 asset://localhost/path
+
+    // 从 convertFileSrc 生成的 URL 中提取文件路径
     let filePath = imageUrl
-    
-    // 移除 tauri:// 或 asset:// 协议前缀
-    if (imageUrl.startsWith('tauri://localhost/')) {
-      filePath = imageUrl.replace('tauri://localhost/', '')
-    } else if (imageUrl.startsWith('asset://localhost/')) {
-      filePath = imageUrl.replace('asset://localhost/', '')
-    } else if (imageUrl.startsWith('http://tauri.localhost/')) {
-      filePath = imageUrl.replace('http://tauri.localhost/', '')
+
+    try {
+      const url = new URL(imageUrl)
+      filePath = decodeURIComponent(url.pathname)
+      if (platform() === 'windows' && filePath.startsWith('/')) {
+        filePath = filePath.substring(1)
+      }
+    } catch {
+      filePath = imageUrl
     }
-    
-    // URL 解码
-    filePath = decodeURIComponent(filePath)
-    
+
     // 读取文件
     const fileData = await readFile(filePath)
-    
+
     // 转换为 base64
     const base64 = btoa(
       new Uint8Array(fileData).reduce((data, byte) => data + String.fromCharCode(byte), '')
     )
-    
+
     // 根据文件扩展名确定 MIME 类型
     let mimeType = 'image/png'
     if (filePath.toLowerCase().endsWith('.jpg') || filePath.toLowerCase().endsWith('.jpeg')) {
@@ -134,7 +133,7 @@ export async function convertImageToBase64(imageUrl: string): Promise<string | n
     } else if (filePath.toLowerCase().endsWith('.webp')) {
       mimeType = 'image/webp'
     }
-    
+
     return `data:${mimeType};base64,${base64}`
   } catch (error) {
     console.error('Failed to convert image to base64:', error)
@@ -261,35 +260,20 @@ export async function prepareMessages(
 /**
  * 创建OpenAI客户端，适用于所有AI类型
  */
-export async function createOpenAIClient(AiConfig?: AiConfig) {
+export async function createOpenAIClient(AiConfig?: AiConfig): Promise<OpenAICompatibleClient> {
   const store = await Store.load('store.json')
-  let baseURL
-  let apiKey
-  if (AiConfig) {
-    baseURL = AiConfig.baseURL
-    apiKey = AiConfig.apiKey
-  } else {
-    baseURL = await store.get<string>('baseURL')
-    apiKey = await store.get<string>('apiKey')
-  }
-  const proxyUrl = await store.get<string>('proxy')
 
-  // 创建OpenAI客户端
-  return new OpenAI({
-    apiKey: apiKey || '',
-    baseURL: baseURL,
-    dangerouslyAllowBrowser: true,
-    defaultHeaders:{
-      "x-stainless-arch": null,
-      "x-stainless-lang": null,
-      "x-stainless-os": null,
-      "x-stainless-package-version": null,
-      "x-stainless-retry-count": null,
-      "x-stainless-runtime": null,
-      "x-stainless-runtime-version": null,
-      "x-stainless-timeout": null,
-      ...(AiConfig?.customHeaders || {})
-    },
-    ...(proxyUrl ? { httpAgent: proxyUrl } : {})
+  if (AiConfig) {
+    return createTauriOpenAIClient(AiConfig)
+  }
+
+  const baseURL = await store.get<string>('baseURL')
+  const apiKey = await store.get<string>('apiKey')
+
+  return createTauriOpenAIClient({
+    key: 'runtime',
+    title: 'Runtime',
+    baseURL,
+    apiKey,
   })
 }

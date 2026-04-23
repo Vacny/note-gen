@@ -92,7 +92,7 @@ export default function ChatEmpty() {
   }
 
   return (
-    <div className="relative w-full flex-1 flex flex-col items-center justify-center h-full p-8 overflow-hidden">
+    <div className="absolute top-0 right-0 w-full flex flex-col items-center justify-center h-full overflow-hidden">
       {/* Dashed background pattern - only visible when empty */}
       <div
         className="absolute inset-0 opacity-[0.03] dark:opacity-[0.05] pointer-events-none"
@@ -117,7 +117,7 @@ export default function ChatEmpty() {
         }}
       />
 
-      <div className="relative max-w-[340px] w-full space-y-6">
+      <div className="relative max-w-[340px] w-full px-2 space-y-6">
         {/* Header */}
         <div className="text-center space-y-3">
           <div className="flex items-center justify-center gap-2">

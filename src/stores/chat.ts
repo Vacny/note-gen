@@ -4,12 +4,27 @@ import { uploadFile as uploadGithubFile, getFiles as githubGetFiles, decodeBase6
 import { uploadFile as uploadGiteeFile, getFiles as giteeGetFiles } from '@/lib/sync/gitee';
 import { uploadFile as uploadGitlabFile, getFiles as gitlabGetFiles, getFileContent as gitlabGetFileContent } from '@/lib/sync/gitlab';
 import { uploadFile as uploadGiteaFile, getFiles as giteaGetFiles, getFileContent as giteaGetFileContent } from '@/lib/sync/gitea';
+import { s3Upload, s3Delete, s3HeadObject, s3Download } from '@/lib/sync/s3'
+import { webdavUpload, webdavDelete, webdavHeadObject, webdavDownload } from '@/lib/sync/webdav'
 import { getSyncRepoName } from '@/lib/sync/repo-utils';
+import { getRemoteFileContent } from '@/lib/sync/remote-file';
 import { Store } from '@tauri-apps/plugin-store';
 import { locales } from '@/lib/locales';
 import { AgentState, ToolCall } from '@/lib/agent/types'
 import { LinkedResource } from '@/lib/files'
 import type { Conversation } from '@/db/conversations'
+import { S3Config, WebDAVConfig } from '@/types/sync'
+
+export interface PendingQuote {
+  quote: string
+  fullContent: string
+  fileName: string
+  startLine: number
+  endLine: number
+  from: number
+  to: number
+  articlePath: string
+}
 
 // MCP 工具调用记录（临时，不保存到数据库）
 export interface McpToolCall {
@@ -68,6 +83,10 @@ interface ChatState {
   resetAgentState: () => void
   addAgentToolCall: (toolCall: ToolCall) => void
   updateAgentToolCall: (id: string, updates: Partial<ToolCall>) => void
+  agentAutoApproveConversationId: number | null
+  setAgentAutoApproveConversationId: (conversationId: number | null) => void
+  agentAutoApproveRuntimeSkillId: string | null
+  setAgentAutoApproveRuntimeSkillId: (skillId: string | null) => void
 
   // Placeholder 状态
   isPlaceholderEnabled: boolean
@@ -80,6 +99,13 @@ interface ChatState {
   // 关联文件的行号预览（用于 AI 对话时快速了解文件结构）
   linkedResourcePreview: string | null
   setLinkedResourcePreview: (preview: string | null) => void
+
+  pendingQuote: PendingQuote | null
+  setPendingQuote: (quote: PendingQuote | null) => void
+  clearPendingQuote: () => void
+
+  onboardingPromptDraft: string | null
+  setOnboardingPromptDraft: (prompt: string | null) => void
 
   // === 新增：会话管理 ===
   // 当前会话
@@ -180,6 +206,7 @@ const useChatStore = create<ChatState>((set, get) => ({
   },
 
   agentState: {
+    activeChatId: undefined,
     isRunning: false,
     isThinking: false,
     currentThought: '',
@@ -207,6 +234,7 @@ const useChatStore = create<ChatState>((set, get) => ({
     const currentState = get().agentState
     set({
       agentState: {
+        activeChatId: undefined,
         isRunning: false,
         isThinking: false,
         currentThought: '',
@@ -254,6 +282,15 @@ const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
+  agentAutoApproveConversationId: null,
+  setAgentAutoApproveConversationId: (conversationId: number | null) => {
+    set({ agentAutoApproveConversationId: conversationId })
+  },
+  agentAutoApproveRuntimeSkillId: null,
+  setAgentAutoApproveRuntimeSkillId: (skillId: string | null) => {
+    set({ agentAutoApproveRuntimeSkillId: skillId })
+  },
+
   isPlaceholderEnabled: true,
   setPlaceholderEnabled: (enabled: boolean) => {
     set({ isPlaceholderEnabled: enabled })
@@ -267,6 +304,19 @@ const useChatStore = create<ChatState>((set, get) => ({
   linkedResourcePreview: null,
   setLinkedResourcePreview: (preview: string | null) => {
     set({ linkedResourcePreview: preview })
+  },
+
+  pendingQuote: null,
+  setPendingQuote: (pendingQuote: PendingQuote | null) => {
+    set({ pendingQuote })
+  },
+  clearPendingQuote: () => {
+    set({ pendingQuote: null })
+  },
+
+  onboardingPromptDraft: null,
+  setOnboardingPromptDraft: (prompt: string | null) => {
+    set({ onboardingPromptDraft: prompt })
   },
 
   chats: [],
@@ -405,6 +455,7 @@ const useChatStore = create<ChatState>((set, get) => ({
     // 清空聊天记录时同步清理 Agent 状态
     get().resetAgentState()
     get().clearMcpToolCalls()
+    get().clearPendingQuote()
 
     // 更新会话的消息数量
     const { currentConversationId } = get()
@@ -510,6 +561,30 @@ const useChatStore = create<ChatState>((set, get) => ({
           sha: giteaChatFile?.sha || '',
         })
         break;
+      case 's3': {
+        const s3Config = await store.get<S3Config>('s3SyncConfig')
+        if (s3Config) {
+          const s3Key = `${path}/${filename}`
+          const existingFile = await s3HeadObject(s3Config, s3Key)
+          if (existingFile) {
+            await s3Delete(s3Config, s3Key)
+          }
+          res = await s3Upload(s3Config, s3Key, JSON.stringify(chats, null, 2))
+        }
+        break;
+      }
+      case 'webdav': {
+        const webdavConfig = await store.get<WebDAVConfig>('webdavSyncConfig')
+        if (webdavConfig) {
+          const webdavKey = `${path}/${filename}`
+          const existingFile = await webdavHeadObject(webdavConfig, webdavKey)
+          if (existingFile) {
+            await webdavDelete(webdavConfig, webdavKey)
+          }
+          res = await webdavUpload(webdavConfig, webdavKey, JSON.stringify(chats, null, 2))
+        }
+        break;
+      }
     }
     if (res) {
       result = true
@@ -564,13 +639,39 @@ const useChatStore = create<ChatState>((set, get) => ({
         const giteaRepo2 = await getSyncRepoName('gitea')
         files = await giteaGetFileContent({ path: `${path}/${filename}`, ref: 'main', repo: giteaRepo2 })
         break;
+      case 's3': {
+        const s3Config = await store.get<S3Config>('s3SyncConfig')
+        if (s3Config) {
+          const s3Key = `${path}/${filename}`
+          const s3Result = await s3Download(s3Config, s3Key)
+          if (s3Result) {
+            // S3 返回的 content 是字符串，直接解析
+            result = JSON.parse(s3Result.content)
+          }
+        }
+        break;
+      }
+      case 'webdav': {
+        const webdavConfig = await store.get<WebDAVConfig>('webdavSyncConfig')
+        if (webdavConfig) {
+          const webdavKey = `${path}/${filename}`
+          const webdavResult = await webdavDownload(webdavConfig, webdavKey)
+          if (webdavResult) {
+            result = JSON.parse(webdavResult.content)
+          }
+        }
+        break;
+      }
     }
+    // S3/WebDAV 已经直接解析到 result 了，这里处理 Git 平台
     if (files) {
-      const configJson = decodeBase64ToString(files.content)
+      const configJson = decodeBase64ToString(getRemoteFileContent(files, `${path}/${filename}`))
       result = JSON.parse(configJson)
     }
-    await deleteAllChats()
-    await insertChats(result)
+    if (result.length > 0) {
+      await deleteAllChats()
+      await insertChats(result)
+    }
     set({ syncState: false })
     return result
   },
@@ -601,7 +702,7 @@ const useChatStore = create<ChatState>((set, get) => ({
     // 然后加载消息
     const { getChatsByConversation } = await import('@/db/chats')
     const data = await getChatsByConversation(id)
-    set({ currentConversationId: id, chats: data })
+    set({ currentConversationId: id, chats: data, pendingQuote: null })
     // 刷新会话列表以确保 UI 显示最新的会话状态
     await get().initConversations()
   },
@@ -626,7 +727,13 @@ const useChatStore = create<ChatState>((set, get) => ({
         await switchConversation(remainingConversations[0].id)
       } else {
         // 没有其他会话了，清空状态，不创建新会话
-        set({ currentConversationId: null, chats: [] })
+        set({
+          currentConversationId: null,
+          chats: [],
+          pendingQuote: null,
+          agentAutoApproveConversationId: null,
+          agentAutoApproveRuntimeSkillId: null
+        })
         get().resetAgentState()
         get().clearMcpToolCalls()
       }
@@ -662,7 +769,13 @@ const useChatStore = create<ChatState>((set, get) => ({
 
     // 清空聊天，不立即创建新会话
     // 等到用户发送第一条消息时才创建会话
-    set({ currentConversationId: null, chats: [] })
+    set({
+      currentConversationId: null,
+      chats: [],
+      pendingQuote: null,
+      agentAutoApproveConversationId: null,
+      agentAutoApproveRuntimeSkillId: null
+    })
     // 清空 Agent 状态
     get().resetAgentState()
     get().clearMcpToolCalls()

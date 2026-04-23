@@ -1,10 +1,11 @@
 import { Store } from '@tauri-apps/plugin-store'
 import { create } from 'zustand'
 import { filterSyncData, mergeSyncData } from '@/config/sync-exclusions'
-import { uploadFile as uploadGithubFile, getFiles as githubGetFiles } from '@/lib/sync/github'
+import { uploadFile as uploadGithubFile, getFiles as githubGetFiles, decodeBase64ToString } from '@/lib/sync/github'
 import { uploadFile as uploadGiteeFile, getFiles as giteeGetFiles } from '@/lib/sync/gitee'
 import { uploadFile as uploadGitlabFile, getFiles as gitlabGetFiles } from '@/lib/sync/gitlab'
 import { uploadFile as uploadGiteaFile, getFiles as giteaGetFiles } from '@/lib/sync/gitea'
+import { getRemoteFileContent } from '@/lib/sync/remote-file'
 import { getSyncRepoName } from '@/lib/sync/repo-utils'
 
 interface SettingsSyncState {
@@ -136,13 +137,13 @@ const useSettingsSyncStore = create<SettingsSyncState>((set) => ({
         repo: repoName
       })
       
-      if (!files || files.length === 0) {
+      if (!files) {
         console.warn('No settings file found in remote repository')
         return false
       }
       
       // 解码 base64 内容
-      const content = decodeURIComponent(escape(atob(files[0].content)))
+      const content = decodeBase64ToString(getRemoteFileContent(files, '.data/settings.json'))
       const remoteSettings = JSON.parse(content)
       
       // 合并配置：使用远程配置，但保留本地的排除字段

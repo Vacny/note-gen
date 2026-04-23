@@ -31,7 +31,7 @@ export function TagMobileActions({ tag, onRename, onDelete, isEditing }: TagMobi
         <div 
           role="button"
           tabIndex={0}
-          className="inline-flex items-center justify-center h-6 w-6 shrink-0 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer"
+          className="inline-flex items-center justify-center h-10 w-10 shrink-0 rounded-md hover:bg-accent hover:text-accent-foreground cursor-pointer"
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault()

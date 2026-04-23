@@ -17,7 +17,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
-import { useCallback, useEffect, useMemo, useImperativeHandle, forwardRef, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useImperativeHandle, forwardRef, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Store } from "@tauri-apps/plugin-store"
 import { Label } from "@/components/ui/label"
@@ -30,6 +30,12 @@ import { useTranslations } from "next-intl"
 import { writeTextFile, exists } from "@tauri-apps/plugin-fs"
 import { getFilePathOptions, getWorkspacePath } from "@/lib/workspace"
 import { toast } from "@/hooks/use-toast"
+import emitter from "@/lib/emitter"
+import { shouldEmitOrganizeOnboardingComplete } from "./organize-onboarding"
+
+function shouldAutoSyncOnInitialRead(options?: { isNewFile?: boolean }) {
+  return options?.isNewFile !== true
+}
 
 interface OrganizeNotesProps {
   inputValue?: string;
@@ -40,13 +46,14 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
   const { primaryModel } = useSettingStore()
   const { fetchMarks, marks } = useMarkStore()
   const { currentTag } = useTagStore()
-  const { setActiveFilePath, loadFileTree, readArticle, setCurrentArticle } = useArticleStore()
+  const { setActiveFilePath, loadFileTree, readArticle, setCurrentArticle, setSkipSyncOnSave, setAiGeneratingFilePath, setAiTerminateFn } = useArticleStore()
   const { setLeftSidebarTab } = useSidebarStore()
   const router = useRouter()
   const [tab, setTab] = useState('0')
   const [genTemplate, setGenTemplate] = useState<GenTemplate[]>([])
   const [loading, setLoading] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const organizingRef = useRef(false)
   const [isRemoveThinking, setIsRemoveThinking] = useState(true)
   const t = useTranslations('record.chat.note')
   const tMark = useTranslations('record.mark')
@@ -55,6 +62,12 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
     const store = await Store.load('store.json')
     const template = await store.get<GenTemplate[]>('templateList') || []
     setGenTemplate(template)
+    setTab((currentTab) => {
+      if (template.some((item) => item.id === currentTab)) {
+        return currentTab
+      }
+      return template[0]?.id ?? '0'
+    })
   }
 
   // 使用 useMemo 优化过滤的记录
@@ -113,21 +126,27 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
 
   const openOrganize = useCallback(() => {
     setOpen(true)
-    initGenTemplates()
+    void initGenTemplates()
   }, [])
 
   const handleOrganize = useCallback(async () => {
-    setOpen(false)
+    if (loading || organizingRef.current) {
+      return
+    }
+
     if (!primaryModel) return
 
+    organizingRef.current = true
+    setOpen(false)
     setLoading(true)
 
+    // Prepare file path outside try block for access in finally
+    const timestamp = new Date().getTime()
+    const fileName = `整理笔记_${timestamp}.md`
+    const filePath = fileName
+
     try {
-      // 1. Create empty markdown file
-      const timestamp = new Date().getTime()
-      const fileName = `整理笔记_${timestamp}.md`
       const workspace = await getWorkspacePath()
-      const filePath = fileName
       const pathOptions = await getFilePathOptions(filePath)
 
       if (workspace.isCustom) {
@@ -137,7 +156,7 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
       }
 
       await loadFileTree()
-      setActiveFilePath(filePath)
+      await setActiveFilePath(filePath)
 
       // Switch to files tab in sidebar
       await setLeftSidebarTab('files')
@@ -145,6 +164,46 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
       await new Promise(resolve => setTimeout(resolve, 500))
 
       await fetchMarks()
+
+      // Get latest marks from store after fetch
+      const latestMarks = useMarkStore.getState().marks
+
+      // Calculate marksByRange with latest marks
+      const range = selectedTemplate?.range
+      let subtractDate: Dayjs
+      switch (range) {
+        case GenTemplateRange.All:
+          subtractDate = dayjs().subtract(99, 'year')
+          break
+        case GenTemplateRange.Today:
+          subtractDate = dayjs().subtract(1, 'day')
+          break
+        case GenTemplateRange.Week:
+          subtractDate = dayjs().subtract(1, 'week')
+          break
+        case GenTemplateRange.Month:
+          subtractDate = dayjs().subtract(1, 'month')
+          break
+        case GenTemplateRange.ThreeMonth:
+          subtractDate = dayjs().subtract(3, 'month')
+          break
+        case GenTemplateRange.Year:
+          subtractDate = dayjs().subtract(1, 'year')
+          break
+        default:
+          subtractDate = dayjs().subtract(99, 'year')
+          break
+      }
+      const marksByRange = latestMarks.filter(item => dayjs(item.createdAt).isAfter(subtractDate))
+
+      // Calculate categorizedMarks with latest marks
+      const categorizedMarks = {
+        scanMarks: marksByRange.filter(item => item.type === 'scan'),
+        textMarks: marksByRange.filter(item => item.type === 'text'),
+        imageMarks: marksByRange.filter(item => item.type === 'image'),
+        linkMarks: marksByRange.filter(item => item.type === 'link'),
+        fileMarks: marksByRange.filter(item => item.type === 'file')
+      }
 
       // Process image marks
       const processedImageMarks = await Promise.all(
@@ -200,15 +259,45 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
         ${selectedTemplate?.content}
       `
 
+      // Emit AI streaming start event with target file path
+      emitter.emit('editor-ai-streaming', {
+        isStreaming: true,
+        targetFilePath: filePath,
+        terminate: () => {
+          terminateGeneration()
+        }
+      })
+
       // 5. Stream generation to editor
+
+      // Skip sync for AI-generated content
+      setSkipSyncOnSave(true)
+      setAiGeneratingFilePath(filePath)
+      setAiTerminateFn(() => {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort()
+          abortControllerRef.current = null
+          setLoading(false)
+        }
+      })
+
       abortControllerRef.current = new AbortController()
       const signal = abortControllerRef.current.signal
+      const targetFilePath = filePath // 保存目标文件路径
 
       let fullContent = ''
+      let streamFinished = false
       await fetchAiStream(request_content, async (content) => {
+        // Check if user switched to a different file - stop writing if so
+        const currentActivePath = useArticleStore.getState().activeFilePath
+        if (currentActivePath !== targetFilePath) {
+          return
+        }
+
         fullContent = content
         // Update editor content in real-time without reloading file
         setCurrentArticle(content)
+        emitter.emit('external-content-update', content)
         // Also write to file
         if (workspace.isCustom) {
           await writeTextFile(pathOptions.path, content)
@@ -216,6 +305,18 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
           await writeTextFile(pathOptions.path, content, { baseDir: pathOptions.baseDir })
         }
       }, signal)
+      streamFinished = true
+
+      // Re-enable sync after AI generation
+      setSkipSyncOnSave(false)
+      setAiGeneratingFilePath(null)
+      setAiTerminateFn(null)
+
+      // Emit AI streaming end event
+      emitter.emit('editor-ai-streaming', {
+        isStreaming: false,
+        targetFilePath: filePath
+      })
 
       // 6. Extract title and rename file
       const cleanedContent = fullContent
@@ -264,7 +365,10 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
         // Update file tree and active file
         await loadFileTree()
         setActiveFilePath(newFilePath)
-        await readArticle(newFilePath, '', true)
+        await readArticle(newFilePath, '', shouldAutoSyncOnInitialRead({ isNewFile: true }))
+        if (shouldEmitOrganizeOnboardingComplete({ streamFinished, aborted: signal.aborted })) {
+          emitter.emit('onboarding-step-complete', { step: 'organize-note', filePath: newFilePath })
+        }
 
         toast({
           description: tMark('toolbar.organizeSuccess', { title: sanitizedTitle }),
@@ -276,7 +380,10 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
         } else {
           await writeTextFile(pathOptions.path, cleanedContent, { baseDir: pathOptions.baseDir })
         }
-        await readArticle(filePath, '', true)
+        await readArticle(filePath, '', shouldAutoSyncOnInitialRead())
+        if (shouldEmitOrganizeOnboardingComplete({ streamFinished, aborted: signal.aborted })) {
+          emitter.emit('onboarding-step-complete', { step: 'organize-note', filePath })
+        }
 
         toast({
           description: tMark('toolbar.organizeSuccess', { title: fileName }),
@@ -292,35 +399,50 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
         })
       }
     } finally {
+      organizingRef.current = false
       abortControllerRef.current = null
       setLoading(false)
+      // Re-enable sync in case of termination
+      setSkipSyncOnSave(false)
+      setAiGeneratingFilePath(null)
+      setAiTerminateFn(null)
+      // Emit AI streaming end event
+      emitter.emit('editor-ai-streaming', {
+        isStreaming: false,
+        targetFilePath: filePath
+      })
     }
-  }, [primaryModel, categorizedMarks, selectedTemplate, inputValue, fetchMarks, loadFileTree, setActiveFilePath, setLeftSidebarTab, setCurrentArticle, readArticle, tMark, t, open])
+  }, [primaryModel, categorizedMarks, selectedTemplate, inputValue, fetchMarks, loadFileTree, setActiveFilePath, setLeftSidebarTab, setCurrentArticle, readArticle, tMark, loading])
 
   useImperativeHandle(ref, () => ({
     openOrganize
   }))
 
+  // Listen for abort event from editor
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!open) return
-      if (e.key === 'Enter' && !e.isComposing) {
-        e.preventDefault()
-        handleOrganize()
-      } else if (e.key === 'Escape') {
-        e.preventDefault()
-        setOpen(false)
-      } else if (e.key === 'Escape' && loading) {
-        e.preventDefault()
+    const handleAbortAiStreaming = () => {
+      if (loading) {
         terminateGeneration()
       }
     }
+    emitter.on('abort-ai-streaming', handleAbortAiStreaming)
+    return () => {
+      emitter.off('abort-ai-streaming', handleAbortAiStreaming)
+    }
+  }, [loading, terminateGeneration])
 
-    setTimeout(() => {
-      window.addEventListener('keydown', handleKeyDown)
-    }, 500);
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [open, loading, handleOrganize, terminateGeneration])
+  const handleDialogKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!open || e.nativeEvent.isComposing) return
+
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      if (loading) {
+        terminateGeneration()
+      } else {
+        setOpen(false)
+      }
+    }
+  }, [open, loading, terminateGeneration])
 
   const handleSetting = useCallback(() => {
     router.push('/core/setting/template')
@@ -328,10 +450,10 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
 
   return (
     <AlertDialog onOpenChange={setOpen} open={open}>
-      <AlertDialogContent>
+      <AlertDialogContent onKeyDown={handleDialogKeyDown}>
         <AlertDialogHeader>
           <AlertDialogTitle>{t('organizeAs')}</AlertDialogTitle>
-          <Tabs defaultValue={tab} onValueChange={value => setTab(value)}>
+          <Tabs value={tab} onValueChange={value => setTab(value)}>
             <TabsList>
               {
                 genTemplate.map(item => (

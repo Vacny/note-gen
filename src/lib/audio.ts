@@ -1,4 +1,8 @@
 import useSettingStore from '@/stores/setting'
+import { resolvePreferredSpeechEngine } from '@/lib/speech/runtime.ts'
+import type { SpeechTask } from '@/lib/speech/types.ts'
+import { NO_TRANSCRIPTION_MESSAGE } from '@/lib/speech/transcription-fallback.ts'
+import { blobToBytes, invokeAiBinary, invokeAiMultipart } from '@/lib/ai/tauri-client'
 
 /**
  * 使用浏览器原生语音合成API进行朗读
@@ -60,6 +64,17 @@ export interface AudioSpeechRequest {
 
 export interface AudioSpeechResponse {
   audio: ArrayBuffer
+}
+
+export function resolveCurrentSpeechEngine(task: SpeechTask) {
+  const { audioModel, sttModel, textToSpeechMode, speechToTextMode } = useSettingStore.getState()
+
+  return resolvePreferredSpeechEngine(task, {
+    audioModel,
+    sttModel,
+    textToSpeechMode,
+    speechToTextMode,
+  })
 }
 
 /**
@@ -124,29 +139,17 @@ export async function fetchAudioSpeech(text: string, customVoice?: string, custo
     speed: speed
   }
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${audioConfig.apiKey}`
-  }
-
-  // 添加自定义头部
-  if (audioConfig.customHeaders) {
-    Object.assign(headers, audioConfig.customHeaders)
-  }
-
   try {
-    const response = await fetch(`${audioConfig.baseURL}/audio/speech`, {
+    return await invokeAiBinary({
+      config: {
+        baseUrl: audioConfig.baseURL,
+        apiKey: audioConfig.apiKey,
+        customHeaders: audioConfig.customHeaders,
+      },
+      path: '/audio/speech',
       method: 'POST',
-      headers,
-      body: JSON.stringify(requestBody)
+      body: requestBody,
     })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`音频生成失败: ${response.status} ${errorText}`)
-    }
-
-    return await response.arrayBuffer()
   } catch (error) {
     console.error('音频生成错误:', error)
     throw error
@@ -271,10 +274,13 @@ export async function textToSpeechAndPlay(
     throw new Error('文本内容为空')
   }
 
-  const { audioModel } = useSettingStore.getState()
-  
-  // 如果没有配置音频模型，使用系统朗读
-  if (!audioModel) {
+  const resolution = resolveCurrentSpeechEngine('tts')
+
+  if (!resolution.available) {
+    throw new Error('当前朗读模式不可用，请检查本地语音支持或模型配置')
+  }
+
+  if (resolution.engine === 'local') {
     try {
       // 停止当前播放
       stopCurrentAudio()
@@ -312,7 +318,6 @@ export async function textToSpeechAndPlay(
     }
   }
 
-  // 使用AI音频模型
   try {
     // 停止当前播放
     stopCurrentAudio()
@@ -364,6 +369,18 @@ export interface AudioTranscriptionResponse {
   text: string
 }
 
+export { NO_TRANSCRIPTION_MESSAGE }
+
+export async function transcribeRecording(audioBlob: Blob): Promise<string> {
+  const { sttModel } = useSettingStore.getState()
+
+  if (!sttModel) {
+    return ''
+  }
+
+  return fetchAudioTranscription(audioBlob)
+}
+
 /**
  * 调用STT模型将音频转换为文本
  */
@@ -410,33 +427,24 @@ export async function fetchAudioTranscription(audioBlob: Blob): Promise<string> 
     throw new Error('语音识别模型配置不完整')
   }
 
-  // 创建 FormData
-  const formData = new FormData()
-  formData.append('file', audioBlob, 'audio.webm')
-  formData.append('model', sttConfig.model || 'FunAudioLLM/SenseVoiceSmall')
-
-  const headers: Record<string, string> = {
-    'Authorization': `Bearer ${sttConfig.apiKey}`
-  }
-
-  // 添加自定义头部
-  if (sttConfig.customHeaders) {
-    Object.assign(headers, sttConfig.customHeaders)
-  }
-
   try {
-    const response = await fetch(`${sttConfig.baseURL}/audio/transcriptions`, {
-      method: 'POST',
-      headers,
-      body: formData
+    const result = await invokeAiMultipart<AudioTranscriptionResponse>({
+      config: {
+        baseUrl: sttConfig.baseURL,
+        apiKey: sttConfig.apiKey,
+        customHeaders: sttConfig.customHeaders,
+      },
+      path: '/audio/transcriptions',
+      fileFieldName: 'file',
+      fields: {
+        model: sttConfig.model || 'FunAudioLLM/SenseVoiceSmall'
+      },
+      file: {
+        bytes: await blobToBytes(audioBlob),
+        fileName: 'audio.webm',
+        contentType: audioBlob.type || 'audio/webm',
+      }
     })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`语音识别失败: ${response.status} ${errorText}`)
-    }
-
-    const result: AudioTranscriptionResponse = await response.json()
     return result.text
   } catch (error) {
     console.error('语音识别错误:', error)

@@ -1,11 +1,16 @@
 import { Store } from '@tauri-apps/plugin-store'
-import { calculateFileSha, getLocalFileMetadata, getRemoteFileInfo, compareFileVersions, pullRemoteFile, saveLocalFile } from './auto-sync'
+import { calculateFileSha, getLocalFileMetadata, getRemoteFileInfo, compareFileVersions, pullRemoteFile, saveLocalFile, setLocalRecordedSha } from './auto-sync'
+import { decodeBase64ToString } from './github'
 import { updateFileSyncTime } from './conflict-resolution'
 import { getSyncRepoName } from './repo-utils'
 import { uploadFile as uploadToGithub, getFiles as getGithubFiles, deleteFile as deleteGithubFile } from './github'
 import { uploadFile as uploadToGitee, getFiles as getGiteeFiles, deleteFile as deleteGiteeFile } from './gitee'
 import { uploadFile as uploadToGitlab, getFileContent as getGitlabFile, deleteFile as deleteGitlabFile } from './gitlab'
 import { uploadFile as uploadToGitea, getFileContent as getGiteaFile, deleteFile as deleteGiteaFile } from './gitea'
+import { s3Upload, s3Download, s3Delete } from './s3'
+import { webdavUpload, webdavDownload, webdavDelete } from './webdav'
+import { S3Config, WebDAVConfig } from '@/types/sync'
+import useSyncStore from '@/stores/sync'
 import { toast } from '@/hooks/use-toast'
 import { readTextFile } from '@tauri-apps/plugin-fs'
 import { getFilePathOptions, getWorkspacePath } from '@/lib/workspace'
@@ -27,18 +32,44 @@ async function getGiteaBranch(): Promise<string> {
   return await store.get<string>('giteaBranch') || 'main'
 }
 
+/**
+ * 获取 S3 配置
+ */
+async function getS3Config(): Promise<S3Config | null> {
+  const store = await Store.load('store.json')
+  const config = await store.get<S3Config>('s3SyncConfig')
+  if (config && config.accessKeyId && config.secretAccessKey && config.region && config.bucket) {
+    return config
+  }
+  return null
+}
+
+/**
+ * 获取 WebDAV 配置
+ */
+async function getWebDAVConfig(): Promise<WebDAVConfig | null> {
+  const store = await Store.load('store.json')
+  const config = await store.get<WebDAVConfig>('webdavSyncConfig')
+  if (config && config.url && config.username && config.password) {
+    return config
+  }
+  return null
+}
+
 // 同步配置
 export interface SyncConfig {
   autoSync: boolean           // 自动同步总开关
   autoPushOnSave: boolean     // 保存时自动推送
   autoPullOnOpen: boolean     // 打开时自动拉取
+  autoPullOnSwitch: boolean   // 切换文件时自动拉取
   conflictPolicy: 'ask' | 'local' | 'remote'
 }
 
 export const defaultSyncConfig: SyncConfig = {
   autoSync: true,
   autoPushOnSave: true,
-  autoPullOnOpen: true,
+  autoPullOnOpen: false,      // 默认关闭
+  autoPullOnSwitch: false,    // 默认关闭
   conflictPolicy: 'ask'
 }
 
@@ -90,10 +121,24 @@ export class SyncManager {
    */
   async loadConfig(): Promise<void> {
     try {
-      const store = await Store.load('sync_config.json')
-      const savedConfig = await store.get<SyncConfig>('config')
+      // 先从 sync_config.json 加载配置
+      const syncStore = await Store.load('sync_config.json')
+      const savedConfig = await syncStore.get<SyncConfig>('config')
       if (savedConfig) {
         this.config = { ...defaultSyncConfig, ...savedConfig }
+      }
+
+      // 再从 store.json 读取设置中的 autoPull 配置
+      const settingStore = await Store.load('store.json')
+      const autoPullOnOpen = await settingStore.get<boolean>('autoPullOnOpen')
+      const autoPullOnSwitch = await settingStore.get<boolean>('autoPullOnSwitch')
+
+      // 覆盖配置
+      if (autoPullOnOpen !== undefined && autoPullOnOpen !== null) {
+        this.config.autoPullOnOpen = autoPullOnOpen
+      }
+      if (autoPullOnSwitch !== undefined && autoPullOnSwitch !== null) {
+        this.config.autoPullOnSwitch = autoPullOnSwitch
       }
     } catch {
       // 静默处理配置加载错误
@@ -176,9 +221,10 @@ export class SyncManager {
     }
 
     try {
-      const platform = await this.getCurrentPlatform() as 'github' | 'gitee' | 'gitlab' | 'gitea'
-      const repo = await getSyncRepoName(platform)
-      const sha = await this.getRemoteSha(path) || undefined
+      const platform = await this.getCurrentPlatform() as 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav'
+      // S3 不需要 repo，直接设为空字符串
+      const repo = (platform === 's3' || platform === 'webdav') ? '' : await getSyncRepoName(platform)
+      const sha = (platform === 's3' || platform === 'webdav') ? undefined : await this.getRemoteSha(path) || undefined
       const message = `Sync: ${path} - ${new Date().toLocaleString('zh-CN')}`
       const filename = path.split('/').pop() || path
 
@@ -205,9 +251,43 @@ export class SyncManager {
           uploadSuccess = !!result
           break
         }
+        case 's3': {
+          const s3Config = await getS3Config()
+          if (!s3Config) {
+            return { success: false, action: 'push', error: 'S3 配置未找到' }
+          }
+          // S3 使用相对路径作为 key，不需要添加 pathPrefix
+          const result = await s3Upload(s3Config, path, content)
+          uploadSuccess = !!result
+          if (uploadSuccess && result) {
+            // 更新 ETag 记录
+            useSyncStore.getState().updateS3FileEtag(path, result.etag)
+          }
+          break
+        }
+        case 'webdav': {
+          const webdavConfig = await getWebDAVConfig()
+          if (!webdavConfig) {
+            return { success: false, action: 'push', error: 'WebDAV 配置未找到' }
+          }
+          const result = await webdavUpload(webdavConfig, path, content)
+          uploadSuccess = !!result
+          if (uploadSuccess && result) {
+            // 更新 ETag 记录
+            useSyncStore.getState().updateWebDAVFileEtag(path, result.etag)
+          }
+          break
+        }
       }
 
       if (uploadSuccess) {
+        // 推送成功后更新本地记录的远程 SHA
+        if (platform !== 's3' && platform !== 'webdav') {
+          const newRemoteSha = await this.getRemoteSha(path)
+          if (newRemoteSha) {
+            await setLocalRecordedSha(path, newRemoteSha)
+          }
+        }
         await this.logSync(path, 'push', true)
         return { success: true, action: 'push', message: '推送成功' }
       }
@@ -225,8 +305,9 @@ export class SyncManager {
    */
   async pullFile(path: string): Promise<SyncResult> {
     try {
-      const platform = await this.getCurrentPlatform() as 'github' | 'gitee' | 'gitlab' | 'gitea'
-      const repo = await getSyncRepoName(platform)
+      const platform = await this.getCurrentPlatform() as 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav'
+      // S3 不需要 repo
+      const repo = (platform === 's3' || platform === 'webdav') ? '' : await getSyncRepoName(platform)
 
       let content: string | undefined
 
@@ -251,10 +332,51 @@ export class SyncManager {
           content = giteaFile?.content
           break
         }
+        case 's3': {
+          const s3Config = await getS3Config()
+          if (!s3Config) {
+            return { success: false, action: 'pull', error: 'S3 配置未找到' }
+          }
+          // S3 使用相对路径作为 key
+          const s3File = await s3Download(s3Config, path)
+          if (s3File) {
+            content = s3File.content
+            // 更新 ETag 记录
+            useSyncStore.getState().updateS3FileEtag(path, s3File.etag)
+          }
+          break
+        }
+        case 'webdav': {
+          const webdavConfig = await getWebDAVConfig()
+          if (!webdavConfig) {
+            return { success: false, action: 'pull', error: 'WebDAV 配置未找到' }
+          }
+          const webdavFile = await webdavDownload(webdavConfig, path)
+          if (webdavFile) {
+            content = webdavFile.content
+            // 更新 ETag 记录
+            useSyncStore.getState().updateWebDAVFileEtag(path, webdavFile.etag)
+          }
+          break
+        }
       }
 
       if (content) {
-        await saveLocalFile(path, content)
+        // S3 和 WebDAV 不需要 base64 解码，其他平台需要
+        let decodedContent = content
+        if (platform !== 's3' && platform !== 'webdav') {
+          decodedContent = decodeBase64ToString(content)
+        }
+        await saveLocalFile(path, decodedContent)
+
+        // 获取远程文件的 SHA 并更新本地记录
+        if (platform !== 's3' && platform !== 'webdav') {
+          const remoteSha = await this.getRemoteSha(path)
+          if (remoteSha) {
+            await setLocalRecordedSha(path, remoteSha)
+          }
+        }
+
         await updateFileSyncTime(path)
         await this.logSync(path, 'pull', true)
         return { success: true, action: 'pull', message: '拉取成功' }
@@ -273,11 +395,13 @@ export class SyncManager {
    */
   async deleteRemoteFile(path: string): Promise<SyncResult> {
     try {
-      const platform = await this.getCurrentPlatform() as 'github' | 'gitee' | 'gitlab' | 'gitea'
-      const repo = await getSyncRepoName(platform)
-      const sha = await this.getRemoteSha(path)
+      const platform = await this.getCurrentPlatform() as 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav'
+      // S3 不需要 repo
+      const repo = (platform === 's3' || platform === 'webdav') ? '' : await getSyncRepoName(platform)
+      const sha = (platform === 's3' || platform === 'webdav') ? undefined : await this.getRemoteSha(path)
 
-      if (!sha) {
+      // S3 和 WebDAV 不需要 SHA，但其他平台需要
+      if ((platform !== 's3' && platform !== 'webdav') && !sha) {
         return { success: true, action: 'none', message: '远程文件不存在，无需删除' }
       }
 
@@ -285,17 +409,42 @@ export class SyncManager {
 
       switch (platform) {
         case 'github':
-          success = !!(await deleteGithubFile({ path, sha, repo }))
+          success = !!(await deleteGithubFile({ path, sha: sha!, repo }))
           break
         case 'gitee':
-          success = !!(await deleteGiteeFile({ path, sha, repo }))
+          success = !!(await deleteGiteeFile({ path, sha: sha!, repo }))
           break
         case 'gitlab':
-          success = !!(await deleteGitlabFile({ path, sha, repo }))
+          success = !!(await deleteGitlabFile({ path, sha: sha!, repo }))
           break
         case 'gitea':
-          success = !!(await deleteGiteaFile({ path, sha, repo }))
+          success = !!(await deleteGiteaFile({ path, sha: sha!, repo }))
           break
+        case 's3': {
+          const s3Config = await getS3Config()
+          if (!s3Config) {
+            return { success: false, action: 'delete', error: 'S3 配置未找到' }
+          }
+          // S3 使用相对路径作为 key
+          success = await s3Delete(s3Config, path)
+          if (success) {
+            // 移除 ETag 记录
+            useSyncStore.getState().removeS3FileEtag(path)
+          }
+          break
+        }
+        case 'webdav': {
+          const webdavConfig = await getWebDAVConfig()
+          if (!webdavConfig) {
+            return { success: false, action: 'delete', error: 'WebDAV 配置未找到' }
+          }
+          success = await webdavDelete(webdavConfig, path)
+          if (success) {
+            // 移除 ETag 记录
+            useSyncStore.getState().removeWebDAVFileEtag(path)
+          }
+          break
+        }
       }
 
       if (success) {
@@ -700,6 +849,25 @@ export async function isSyncConfigured(): Promise<boolean> {
       case 'gitea': {
         const giteaToken = await store.get<string>('giteaAccessToken')
         return !!(giteaToken && giteaToken.trim().length > 0)
+      }
+      case 's3': {
+        const s3Config = await store.get<S3Config>('s3SyncConfig')
+        return !!(
+          s3Config &&
+          s3Config.accessKeyId &&
+          s3Config.secretAccessKey &&
+          s3Config.region &&
+          s3Config.bucket
+        )
+      }
+      case 'webdav': {
+        const webdavConfig = await store.get<WebDAVConfig>('webdavSyncConfig')
+        return !!(
+          webdavConfig &&
+          webdavConfig.url &&
+          webdavConfig.username &&
+          webdavConfig.password
+        )
       }
       default:
         return false

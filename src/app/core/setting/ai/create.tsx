@@ -6,11 +6,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { baseAiConfig } from "../config";
+import { builtinProviderTemplates } from "../config";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { BotMessageSquare, ChevronRight, Plus, Settings } from "lucide-react";
+import { BotMessageSquare, ChevronRight, LoaderCircle, Plus, Settings } from "lucide-react";
 import { Store } from "@tauri-apps/plugin-store";
 import { AiConfig } from "../config";
 import * as React from "react"
@@ -19,6 +26,9 @@ import { AvatarImage } from "@/components/ui/avatar";
 import { Avatar } from "@radix-ui/react-avatar";
 import useSettingStore from "@/stores/setting";
 import { useLocalStorage } from "react-use";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { isMobileDevice as checkIsMobileDevice } from "@/lib/check";
+import { getCachedProviderTemplates, loadProviderTemplates } from "@/lib/ai/provider-templates-runtime";
 
 interface CreateConfigProps {
   hasCustomModels?: boolean;
@@ -28,13 +38,46 @@ interface CreateConfigProps {
 // 独立的创建配置对话框组件
 function CreateConfigDialog({ open, setOpen, onConfigCreated }: { open: boolean; setOpen: (open: boolean) => void; onConfigCreated?: (configId: string) => void }) {
   const t = useTranslations('settings.ai');
+  const isMobile = useIsMobile() || checkIsMobileDevice()
   const { setAiModelList } = useSettingStore()
   const [, setSelectedAiConfig] = useLocalStorage<string>('ai-config-selected', '')
+  const [providerTemplates, setProviderTemplates] = useState<AiConfig[]>([])
+  const [loadingTemplates, setLoadingTemplates] = useState(true)
+
+  React.useEffect(() => {
+    let cancelled = false
+
+    async function initProviderTemplates() {
+      try {
+        const cachedTemplates = await getCachedProviderTemplates()
+        if (!cancelled && cachedTemplates.length > 0) {
+          setProviderTemplates(cachedTemplates)
+          setLoadingTemplates(false)
+        }
+
+        const templates = await loadProviderTemplates(builtinProviderTemplates)
+        if (!cancelled) {
+          setProviderTemplates(templates)
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingTemplates(false)
+        }
+      }
+    }
+
+    initProviderTemplates()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const customModel: AiConfig = {
     key: '',
     baseURL: '',
     title: t('custom'),
+    templateSource: 'custom',
     temperature: 0.7,
     topP: 1.0,
   }
@@ -51,6 +94,8 @@ function CreateConfigDialog({ open, setOpen, onConfigCreated }: { open: boolean;
     const newModel: AiConfig = {
       ...model,
       key: id,
+      templateKey: model.templateKey || model.key || undefined,
+      templateSource: model.templateSource || 'custom',
       modelType: 'chat'
     }
     const updatedList = [newModel, ...aiModelList]
@@ -70,6 +115,46 @@ function CreateConfigDialog({ open, setOpen, onConfigCreated }: { open: boolean;
     setOpen(false)
   }
 
+  const content = (
+    <>
+      <ProviderItem item={customModel} onClick={() => addCustomModelHandler(customModel)}/>
+      {loadingTemplates && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+          <LoaderCircle className="size-4 animate-spin" />
+          <span>正在获取供应商模板...</span>
+        </div>
+      )}
+      {!loadingTemplates && providerTemplates.length > 0 && (
+        <>
+          <p className="text-xs text-muted-foreground">供应商模板</p>
+          <div className="overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-2">
+            {providerTemplates.map((item, index) => (
+              <ProviderItem key={index} item={item} onClick={() => addCustomModelHandler(item)}/>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  )
+
+  if (isMobile) {
+    return (
+      <Drawer open={open} onOpenChange={setOpen}>
+        <DrawerContent className="max-h-[85vh]">
+          <DrawerHeader>
+            <DrawerTitle>{t('create')}</DrawerTitle>
+            <DrawerDescription>
+              {t('createDesc')}
+            </DrawerDescription>
+          </DrawerHeader>
+          <div className="space-y-3 px-4 pb-6 overflow-y-auto">
+            {content}
+          </div>
+        </DrawerContent>
+      </Drawer>
+    )
+  }
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-[650px]">
@@ -79,15 +164,7 @@ function CreateConfigDialog({ open, setOpen, onConfigCreated }: { open: boolean;
             {t('createDesc')}
           </DialogDescription>
         </DialogHeader>
-        <ProviderItem item={customModel} onClick={() => addCustomModelHandler(customModel)}/>
-        <p className="text-xs text-muted-foreground">供应商模板</p>
-        <div className="overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-2">
-          {
-            baseAiConfig.map((item, index) => (
-              <ProviderItem key={index} item={item} onClick={() => addCustomModelHandler(item)}/>
-            ))
-          }
-        </div>
+        {content}
       </DialogContent>
     </Dialog>
   )

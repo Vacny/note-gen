@@ -34,6 +34,9 @@
     "import": "导入",
     "refresh": "刷新",
     "loading": "加载中...",
+    "all": "全部",
+    "today": "今天",
+    "yesterday": "昨天",
     "warning": "警告",
     "info": "信息",
     "restartToApply": "，请重启应用使配置生效",
@@ -304,7 +307,41 @@
       "jsonImportSuccess": "成功导入 {count} 个服务器",
       "jsonImportSkipped": "跳过 {count} 个已存在的服务器",
       "jsonImportNoServers": "没有导入任何服务器",
-      "import": "导入"
+      "import": "导入",
+      "mobileHttpOnlyTitle": "本地命令 MCP 仅限桌面端",
+      "mobileHttpOnlyDesc": "本地命令型 MCP 服务器仅支持桌面端，移动端当前只支持 HTTP MCP。",
+      "runtimeEnvironment": "运行时环境",
+      "runtimeEnvironmentDesc": "在测试 MCP 服务器前，先检查所需的本地运行时是否可用。",
+      "checkEnvironment": "检查环境",
+      "recheckEnvironment": "重新检查环境",
+      "runtimeCheckFailed": "环境检查失败",
+      "detectedLauncher": "检测到的启动器",
+      "runtimeInstalled": "已安装",
+      "runtimeMissing": "缺失",
+      "runtimeVersion": "版本",
+      "runtimeInstalledSummary": "已安装 {installed}/{total}",
+      "showRuntimeDetails": "展开运行时详情",
+      "hideRuntimeDetails": "收起运行时详情",
+      "runtimeNotChecked": "尚未检查该运行时。",
+      "runtimeCurrentUserScope": "推荐命令会尽量安装到当前用户环境。",
+      "runtimeManualOnly": "当前平台暂不支持自动安装该运行时，请手动安装后重新检查。",
+      "installRuntime": "安装运行时",
+      "runtimeInstallTitle": "安装运行时",
+      "runtimeInstallDesc": "确认后，NoteGen 将执行以下安装命令。",
+      "runtimeInstallPreparing": "准备安装",
+      "runtimeInstallRunning": "安装中",
+      "runtimeInstallCompleted": "安装完成",
+      "runtimeInstallCancelled": "已取消",
+      "runtimeInstallFailedState": "安装失败",
+      "runtimeInstallLogs": "安装日志",
+      "runtimeInstallWaitingLogs": "等待安装输出...",
+      "runtimeInstallClose": "关闭",
+      "runtimeInstallCancel": "终止安装",
+      "runtimeInstallCancelledByUser": "用户已请求取消安装。",
+      "runtimeInstallCancelFailed": "终止安装失败",
+      "runtimeInstallSuccess": "运行时安装完成",
+      "runtimeInstallFailed": "运行时安装失败",
+      "runtimeNoGuidedSupport": "当前命令暂不支持引导式运行时辅助。"
     },
     "skills": {
       "title": "Skills",
@@ -364,8 +401,8 @@
       "title": "编辑器设置",
       "desc": "在这里，你可以对编辑器进行自定义配置，打造更适合你的写作方式。",
       "interfaceSettings": "界面设置",
-      "typewriterMode": "打字机模式",
-      "typewriterModeDesc": "打字机模式下，编辑器会模拟打字机效果，帮助你更好地沉浸在写作中。",
+      "centeredContent": "居中内容",
+      "centeredContentDesc": "启用后，编辑器内容将在中间显示，两侧留白。",
       "outlineEnable": "默认启用大纲",
       "outlineEnableDesc": "启用后，编辑器将默认显示大纲。",
       "outlinePosition": "大纲位置",
@@ -374,14 +411,8 @@
         "left": "左侧",
         "right": "右侧"
       },
-      "pageView": "页面视图",
-      "pageViewDesc": "沉浸视图下编辑器两侧会保留大量空白，全景模式下编辑器内容占据整个编辑区域。",
-      "pageViewOptions": {
-        "immersiveView": "沉浸视图",
-        "panoramaView": "全景视图"
-      },
-      "enableLineNumber": "代码块行号",
-      "enableLineNumberDesc": "启用后，代码块将显示行号。",
+      "showUndoRedo": "撤销/重做按钮",
+      "showUndoRedoDesc": "在编辑器标签栏显示撤销和重做按钮。",
       "completion": {
         "title": "快速补全",
         "model": {
@@ -588,12 +619,19 @@
     "audio": {
       "title": "语音设置",
       "desc": "在这里，你可以配置语音相关设置，包括文本转语音（朗读）和语音转文本（录音识别）功能。",
+      "mode": {
+        "title": "运行方式",
+        "auto": "自动（推荐）",
+        "local": "仅本地",
+        "model": "仅模型"
+      },
       "tts": {
         "title": "文本转语音（TTS）",
         "desc": "配置朗读功能，为聊天内容提供语音播放。",
+        "modeDesc": "默认优先使用浏览器和系统自带语音，必要时再使用模型增强体验。",
         "model": {
           "title": "朗读模型",
-          "desc": "选择用于文本转语音的AI模型，支持多种语音类型和参数配置。"
+          "desc": "可选。配置后可在自动模式下作为增强体验或在仅模型模式下使用。"
         },
         "speed": {
           "title": "语速",
@@ -603,15 +641,31 @@
       "stt": {
         "title": "语音转文本（STT）",
         "desc": "配置录音识别功能，将语音转换为文字记录。",
-        "mode": {
-          "title": "识别方式",
-          "desc": "选择使用浏览器内置识别或大模型识别",
-          "builtin": "内置",
-          "model": "大模型"
-        },
+        "modeDesc": "默认优先使用浏览器原生识别，不支持时再回退到模型识别。",
         "model": {
           "title": "识别模型",
-          "desc": "选择用于语音识别的AI模型，支持实时语音转文字。"
+          "desc": "可选。配置后可在自动模式下回退使用，或在仅模型模式下强制使用。"
+        }
+      }
+    },
+    "readAloud": {
+      "title": "朗读",
+      "desc": "配置文本朗读方式，默认优先使用系统语音，模型作为增强能力。",
+      "options": {
+        "mode": {
+          "title": "运行方式",
+          "desc": "自动模式会优先使用系统语音，不可用时再尝试模型。",
+          "auto": "自动（推荐）",
+          "local": "仅本地",
+          "model": "仅模型"
+        },
+        "audioModel": {
+          "title": "朗读模型",
+          "desc": "可选。配置后可在自动模式下作为增强体验，或在仅模型模式下使用。"
+        },
+        "speed": {
+          "title": "语速",
+          "desc": "调整朗读速度，范围从0.5倍到2倍，默认为1倍。"
         }
       }
     },
@@ -675,6 +729,16 @@
       "syncRepoDesc": "同步写作中的 markdown 文件。",
       "imageRepo": "图床仓库",
       "imageRepoDesc": "同步你的图片到图床仓库。",
+      "status": {
+        "connected": "已连接",
+        "disconnected": "未连接",
+        "failed": "连接失败",
+        "unconfigured": "未配置"
+      },
+      "uploadRecords": "上载记录和配置",
+      "downloadConfig": "下载记录和配置",
+      "cloudSync": "记录与配置同步",
+      "localBackupAll": "本地备份（全部）",
       "private": "私有",
       "public": "公开",
       "createdAt": "创建于 {time}",
@@ -717,6 +781,52 @@
         "selfHostedDesc": "输入您的自建 Gitea 服务器地址（如：https://gitea.example.com）"
       },
       "giteaAccessTokenDesc": "在 {instanceDisplayName} 创建个人访问令牌，需要完整的 repository 权限",
+      "s3": {
+        "title": "S3 同步",
+        "description": "使用 S3 兼容存储同步你的笔记",
+        "status": "连接状态",
+        "connected": "已连接",
+        "connecting": "连接中",
+        "disconnected": "未连接",
+        "accessKeyId": "Access Key ID",
+        "accessKeyIdPlaceholder": "请输入 Access Key ID",
+        "secretAccessKey": "Secret Access Key",
+        "secretAccessKeyPlaceholder": "请输入 Secret Access Key",
+        "region": "区域",
+        "bucket": "存储桶",
+        "bucketPlaceholder": "请输入存储桶名称",
+        "endpoint": "端点",
+        "pathPrefix": "路径前缀",
+        "pathPrefixPlaceholder": "请输入路径前缀",
+        "pathPrefixDesc": "用于区分不同用户的文件，类似仓库名",
+        "customDomain": "自定义域名",
+        "testConnection": "测试连接",
+        "testing": "测试中",
+        "saveConfig": "保存配置",
+        "saving": "保存中"
+      },
+      "webdav": {
+        "title": "WebDAV 同步",
+        "description": "使用 WebDAV 协议同步你的笔记",
+        "status": "连接状态",
+        "connected": "已连接",
+        "connecting": "连接中",
+        "disconnected": "未连接",
+        "url": "服务器地址",
+        "urlPlaceholder": "请输入 WebDAV 服务器地址",
+        "urlDesc": "支持群晖、QNAP、Nextcloud 等 WebDAV 服务",
+        "username": "用户名",
+        "usernamePlaceholder": "请输入用户名",
+        "password": "密码",
+        "passwordPlaceholder": "请输入密码",
+        "pathPrefix": "路径前缀",
+        "pathPrefixPlaceholder": "请输入路径前缀",
+        "pathPrefixDesc": "用于区分不同用户的文件",
+        "testConnection": "测试连接",
+        "testing": "测试中",
+        "saveConfig": "保存配置",
+        "saving": "保存中"
+      },
       "autoSync": "自动同步",
       "autoSyncOptions": {
         "placeholder": "选择自动同步时间",
@@ -730,6 +840,10 @@
         "1m": "1 分钟",
         "2m": "2 分钟"
       },
+      "autoPullOnOpen": "打开文件时自动拉取",
+      "autoPullOnOpenDesc": "打开文件时，如果远程有新版本则自动拉取覆盖本地",
+      "autoPullOnSwitch": "切换文件时自动拉取",
+      "autoPullOnSwitchDesc": "切换到其他文件时，如果远程有新版本则自动拉取覆盖本地",
       "exclusions": {
         "title": "同步排除配置",
         "desc": "以下配置项不会在设备间同步，因为它们是设备特定的",
@@ -759,9 +873,17 @@
       "isPrimaryBackup": "当前 {type} 为主要图床",
       "setPrimaryBackup": "设为主要图床",
       "smms": {
+        "title": "S.EE 图床",
+        "description": "使用 S.EE 上传和管理图片",
+        "status": "连接状态",
+        "connected": "已连接",
+        "connecting": "检测中",
+        "disconnected": "未连接",
         "token": {
-          "desc": "请创建并输入 SM.MS Token。",
-          "createToken": "创建 Token"
+          "desc": "请创建并输入 S.EE Token。",
+          "createToken": "打开 S.EE 开发者页面",
+          "helper": "请输入 S.EE API Token，现有配置可继续复用。",
+          "placeholder": "输入 S.EE API Token"
         },
         "disk": "磁盘使用情况",
         "error": "获取失败，请检查网络或 Token 是否正确。"
@@ -834,44 +956,6 @@
     "backupSync": {
       "title": "备用方案",
       "desc": "在这里，你可以使用其他方案来备份你的数据，你可以定期进行备份，以确保数据的安全。",
-      "webdav": {
-        "connectionState": {
-          "success": "已连接",
-          "checking": "连接中",
-          "failed": "未连接"
-        },
-        "description": "WebDAV 仅作为备用备份方案，不支持自动同步、历史回滚等功能。",
-        "backupTo": "备份至 WebDAV",
-        "syncFrom": "从 WebDAV 同步",
-        "serverUrl": "WebDAV 服务器地址",
-        "serverUrlDesc": "输入WebDAV服务器的URL不含路径，例如：https://dav.example.com http://192.8.8.88:9999 ",
-        "serverUrlPlaceholder": "https://dav.example.com",
-        "username": "用户名",
-        "usernameDesc": "WebDAV服务器的用户名",
-        "usernamePlaceholder": "用户名",
-        "password": "密码",
-        "passwordDesc": "WebDAV服务器的密码",
-        "passwordPlaceholder": "密码",
-        "backupPath": "备份路径",
-        "backupPathDesc": "WebDAV服务器上的备份路径，例如：/backup/notes",
-        "backupPathPlaceholder": "/backup/notes",
-        "backupSuccess": "备份成功",
-        "backupSuccessDesc": "已备份 {count} 个文件至 WebDAV。",
-        "syncSuccess": "同步成功",
-        "syncSuccessDesc": "已从 WebDAV 同步至本地 {count} 个文件。",
-        "syncFailed": "同步失败",
-        "backupFailed": "备份失败",
-        "directoryCreated": "目录已创建",
-        "directoryCreatedDesc": "目录 {path} 已成功创建。",
-        "createDir": "创建目录",
-        "success": "成功",
-        "failed": "失败",
-        "error": {
-          "pathNotFound": "路径不存在或服务器无法访问。",
-          "createDirFailed": "创建目录失败",
-          "connectionTimeOut": "连接超时，请检查网络或服务器。"
-        }
-      },
       "localBackup": {
         "tabTitle": "本地备份",
         "export": {
@@ -1213,8 +1297,8 @@
       },
       "assets": {
         "title": "写作资源路径",
-        "desc": "设置写作资源的保存路径，例如图片、视频、文件等，与当前编辑的 markdown 文件同级。",
-        "select": "请设置写作资源路径，例如：assets"
+        "desc": "设置写作资源目录名称。编辑器本地插入图片时会使用该目录名，例如 assets 或 images。",
+        "select": "请设置资源目录名称，例如：assets"
       }
     },
     "shortcuts": {
@@ -1237,10 +1321,11 @@
   },
   "record": {
     "trash": {
-      "title": "清空回收站",
+      "title": "回收站",
       "confirm": "确定清空回收站吗？",
       "records": "共 {count} 条记录可还原",
       "empty": "清空",
+      "restoreAll": "全部还原",
       "close": "关闭回收站"
     },
     "queue": {
@@ -1492,6 +1577,25 @@
       },
       "toolbar": {
         "search": "搜索",
+        "filter": {
+          "title": "筛选",
+          "description": "按内容、时间和类型即时过滤记录。",
+          "search": "搜索",
+          "searchPlaceholder": "搜索记录内容、描述或链接",
+          "type": "类型",
+          "time": "时间",
+          "tag": "标签",
+          "allTags": "全部标签",
+          "clear": "清空筛选",
+          "selectAllTypes": "选择全部类型",
+          "clearTypes": "清空类型选择",
+          "timeOptions": {
+            "all": "全部时间",
+            "today": "今天",
+            "last7Days": "最近7天",
+            "last30Days": "最近30天"
+          }
+        },
         "trash": "回收站",
         "closeTrash": "关闭回收站",
         "organizeNotes": "整理笔记",
@@ -1510,13 +1614,20 @@
         "viewFile": "查看原文件",
         "deleteForever": "彻底删除",
         "multiSelect": "多选",
+        "multiSelectMode": "多选模式",
         "exitMultiSelect": "退出多选",
         "selectAll": "全选",
         "deselectAll": "取消全选",
         "selectedCount": "已选择 {count} 项",
+        "visibleCount": "共 {count} 条记录",
         "moveSelectedTags": "转移选中的 {count} 项",
         "deleteSelected": "删除选中的 {count} 项",
         "deleteSelectedForever": "彻底删除选中的 {count} 项",
+        "view": {
+          "list": "列表视图",
+          "compact": "紧凑视图",
+          "cards": "卡片视图"
+        },
         "text": "记录文本",
         "recording": "录音记录",
         "scan": "扫描图片",
@@ -1526,7 +1637,20 @@
         "todo": "待办记录"
       },
       "list": {
-        "title": "记录"
+        "title": "记录",
+        "emptyFiltered": "没有符合条件的记录",
+        "emptyFilteredHint": "试试调整搜索词或筛选条件",
+        "filteredLabel": "已筛选 {count} 条",
+        "filtered": "已筛选",
+        "filteredByTag": "标签",
+        "filteredByType": "{count} 种类型",
+        "filteredSummary": "当前显示 {count} 条结果 · {filters}",
+        "searchChip": "搜索: {value}",
+        "time": {
+          "today": "今天",
+          "last7Days": "最近7天",
+          "last30Days": "最近30天"
+        }
       }
     },
     "chat": {
@@ -1622,7 +1746,7 @@
           "translate": "翻译模式"
         },
         "chatModeSelect": {
-          "chatDescription": "快速对话，只读模式",
+          "chatDescription": "快速对话，分析优先",
           "agentDescription": "智能助手，可执行操作"
         },
         "attachImage": "附加图片",
@@ -1644,6 +1768,10 @@
           "thought": "思考",
           "action": "行动",
           "toolCalls": "工具调用",
+          "autoFinal": {
+            "createNote": "已创建笔记《{name}》。",
+            "createFile": "已创建文件《{name}》。"
+          },
           "confirmation": {
             "title": "确认操作",
             "description": "Agent 想要执行以下操作，请确认后继续。",
@@ -1652,7 +1780,59 @@
             "cancel": "取消",
             "confirm": "确认",
             "confirmed": "已确认",
-            "cancelled": "已取消"
+            "cancelled": "已取消",
+            "fallback": {
+              "title": "即将执行操作",
+              "description": "请确认这次操作的目标和内容。"
+            },
+            "params": {
+              "filePath": "文件路径",
+              "content": "文件内容",
+              "sourcePath": "来源路径",
+              "targetPath": "目标路径",
+              "files": "文件列表",
+              "newName": "新名称",
+              "scriptName": "脚本名称",
+              "command": "命令"
+            },
+            "tools": {
+              "create_file": {
+                "title": "创建文件",
+                "description": "将在工作区中新建一个文件。"
+              },
+              "create_files_batch": {
+                "title": "批量创建文件",
+                "description": "将在工作区中一次创建多个文件。"
+              },
+              "rename_file": {
+                "title": "重命名文件",
+                "description": "将修改所选文件的名称。"
+              },
+              "move_file": {
+                "title": "移动文件",
+                "description": "将把文件移动到新的位置。"
+              },
+              "copy_file": {
+                "title": "复制文件",
+                "description": "将在目标位置创建该文件的副本。"
+              },
+              "replace_editor_content": {
+                "title": "替换编辑器内容",
+                "description": "将用新内容替换当前编辑器内容。"
+              },
+              "insert_at_cursor": {
+                "title": "在光标处插入内容",
+                "description": "会把内容插入到当前光标位置。"
+              },
+              "delete_markdown_file": {
+                "title": "删除文件",
+                "description": "将永久删除所选文件。"
+              },
+              "execute_skill_script": {
+                "title": "运行脚本",
+                "description": "将执行由 skill 提供的脚本或命令。"
+              }
+            }
           }
         },
         "fileLink": {
@@ -1777,6 +1957,7 @@
     "record": "记录",
     "quickRecord": "快捷记录",
     "write": "写作",
+    "me": "我的",
     "search": "搜索",
     "githubImageHosting": "Github 图床",
     "login": "登录",
@@ -1784,6 +1965,7 @@
     "view": "查看",
     "logout": "登出",
     "setting": "设置",
+    "activity": "活跃度",
     "files": "笔记",
     "outline": "大纲",
     "showLeftSidebar": "显示左侧边栏",
@@ -1793,6 +1975,42 @@
     "showRightSidebar": "显示右侧边栏",
     "hideRightSidebar": "隐藏右侧边栏",
     "searchPlaceholder": "搜索笔记或记录..."
+  },
+  "activity": {
+    "title": "活跃度日历",
+    "description": "按天查看你的记录、对话和写作活跃情况。第一版基于现有记录、用户对话和笔记修改时间进行统计。",
+    "drawer": {
+      "title": "活跃度",
+      "description": "快速查看今天状态和最近一段时间的活跃趋势。",
+      "today": "今天"
+    },
+    "loading": "正在加载活跃度数据...",
+    "empty": "暂无活跃度数据",
+    "refresh": "刷新",
+    "summary": {
+      "totalCount": "总活跃次数",
+      "activeDays": "活跃天数",
+      "records": "记录次数",
+      "chats": "对话次数",
+      "writing": "写作活跃"
+    },
+    "labels": {
+      "record": "记录",
+      "writing": "写作",
+      "chat": "对话"
+    },
+    "heatmap": {
+      "title": "最近 26 周热力图",
+      "range": "{startDate} - {endDate}",
+      "less": "少",
+      "more": "多",
+      "dayCount": "次活动",
+      "emptyDay": "无活动"
+    },
+    "detail": {
+      "title": "当天明细",
+      "empty": "选择一个日期查看当天的活动明细。"
+    }
   },
   "marks": {
     "types": {
@@ -1852,6 +2070,77 @@
         "openWorkspace": {
           "title": "打开工作区",
           "desc": "选择或切换工作区目录"
+        }
+      },
+      "onboarding": {
+        "title": "新手引导",
+        "subtitle": "跟着这三步体验 NoteGen 的核心工作流。",
+        "dismiss": "跳过新手引导",
+        "reopen": "重新显示新手引导",
+        "start": "开始引导",
+        "viewHint": "查看提示",
+        "continue": "继续下一步",
+        "completed": "已完成",
+        "allDone": "新手任务已全部完成，你已经体验了 NoteGen 的基础工作流。",
+        "stepLabel": "任务 ({current}/{total})",
+        "stepCompletedLabel": "已完成任务 ({current}/{total})",
+        "afterOrganizeDialog": {
+          "title": "已完成任务 (2/3)",
+          "description": "你已经把记录整理成了一篇笔记。要继续体验下一步，用 AI Agent 把这篇笔记翻译成双语版本吗？",
+          "confirm": "继续下一步",
+          "cancel": "暂时不用"
+        },
+        "agentPrompt": {
+          "label": "示例提示词",
+          "use": "使用这条提示词",
+          "intro": "请将我刚刚整理出的这篇笔记直接修改为中英双语版本。",
+          "requirement1": "",
+          "requirement2": "",
+          "requirement3": "",
+          "requirement4": "",
+          "outro": ""
+        },
+        "steps": {
+          "createRecord": {
+            "title": "创建第一条记录",
+            "desc": "先记录一段示例内容，熟悉记录入口。"
+          },
+          "organizeNote": {
+            "title": "整理成笔记",
+            "desc": "把刚才的记录整理成一篇正式笔记。"
+          },
+          "aiPolish": {
+            "title": "用 Agent 翻译成双语",
+            "desc": "用 AI Agent 将刚整理好的笔记翻译成双语版本。"
+          }
+        },
+        "completedStates": {
+          "create-record": {
+            "title": "你已经创建了第一条记录",
+            "desc": "现在你已经知道如何快速记录内容了。"
+          },
+          "organize-note": {
+            "title": "你已经把记录整理成笔记",
+            "desc": "下一步可以体验 AI 如何继续修改这篇笔记。"
+          },
+          "ai-polish": {
+            "title": "你已经用 Agent 处理了笔记",
+            "desc": "你已经体验了从记录到整理，再到 Agent 处理内容的完整流程。"
+          }
+        },
+        "spotlight": {
+          "create-record": {
+            "title": "这里可以快速记录内容",
+            "desc": "点击这个文本记录入口，系统会自动带入一段示例内容，你也可以自己改。"
+          },
+          "organize-note": {
+            "title": "这里可以整理记录",
+            "desc": "点击这个按钮，把刚才的记录整理成一篇正式笔记。"
+          },
+          "ai-polish": {
+            "title": "这里可以用 Agent 处理刚生成的笔记",
+            "desc": "把示例提示词填进对话框后发送，Agent 会基于当前笔记生成双语版本。"
+          }
         }
       }
     },
@@ -1981,6 +2270,22 @@
         "empty": "剪贴板为空",
         "confirmOverwrite": "文件已存在，是否覆盖？",
         "notSupported": "不支持此操作"
+      },
+      "mobile": {
+        "cancel": "取消",
+        "create": "创建",
+        "save": "保存",
+        "emptyDir": "该目录为空",
+        "root": "根目录",
+        "openFiles": "打开文件",
+        "remote": "远程文件",
+        "remoteFileNotPulled": "仅云端 · 点击后拉取",
+        "remoteFolderOnly": "仅云端目录",
+        "file": "文件",
+        "folder": "文件夹",
+        "folderChildren": "{files} 个文件 · {folders} 个文件夹",
+        "filePlaceholder": "示例.md",
+        "folderPlaceholder": "示例文件夹"
       },
       "deleteConfirm": "确认删除此文件吗？"
     },
@@ -2116,6 +2421,48 @@
     }
   },
   "mobile": {
+    "me": {
+      "profile": {
+        "deviceName": "同步平台",
+        "deviceSubtitle": "同步你的记录与设置",
+        "syncPlatform": "同步平台",
+        "gitSubtitle": "已连接 {provider}，可以同步你的记录与设置",
+        "storageSubtitle": "当前通过 {provider} 同步你的记录与设置",
+        "unconfiguredSubtitle": "还没有配置同步，当前数据仅保存在本地",
+        "streak": "已连续活跃 {count} 天"
+      },
+      "activity": {
+        "tip": "点击热力图中的日期，查看当天的活动时间轴。",
+        "range": "最近 {count} 周",
+        "rangePlaceholder": "最近 16 周",
+        "drawerEmpty": "选择一个日期查看当天的活动详情。",
+        "drawerSummary": "当天共 {total} 条活动，含 {record} 条记录、{writing} 条写作、{chat} 条对话。"
+      },
+      "sync": {
+        "title": "同步",
+        "configured": "已连接",
+        "unconfigured": "未配置",
+        "localOnly": "本地存储"
+      },
+      "stats": {
+        "weekly": "本周活跃",
+        "weeklyHint": "本周累计活动次数",
+        "streak": "连续活跃",
+        "streakHint": "连续活跃天数"
+      },
+      "status": {
+        "title": "当前配置",
+        "sync": "备份方案",
+        "model": "默认模型",
+        "configured": "已连接",
+        "unconfigured": "未配置",
+        "modelFallback": "未设置默认模型"
+      },
+      "settings": {
+        "title": "设置",
+        "description": "直接在这里进入各项功能设置。"
+      }
+    },
     "chat": {
       "drawer": {
         "settings": {
@@ -2161,11 +2508,18 @@
     "error": "错误",
     "success": "成功",
     "noModelConfigured": "未配置语音识别模型，请先在设置中配置",
+    "speechUnavailable": "当前识别方式不可用，请检查本地语音支持或模型配置",
+    "fallbackToModel": "本地语音识别不可用，已自动切换为模型识别",
     "startError": "无法启动录音",
     "noAudioData": "未录制到音频数据",
     "transcriptionSuccess": "语音识别完成",
     "transcriptionEmpty": "识别结果为空",
     "transcriptionError": "语音识别失败",
+    "configureModel": "配置模型",
+    "retryTranscription": "重新识别",
+    "retrying": "重新识别中...",
+    "retrySuccess": "重新识别完成",
+    "retryError": "重新识别失败",
     "noContentDetected": "未识别到内容",
     "doubleClickToSelectFile": "双击选择音频文件",
     "mode": {

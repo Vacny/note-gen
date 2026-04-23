@@ -25,6 +25,7 @@ import { MobileActionMenu, MobileMenuItem, MobileSeparator } from "../mobile-act
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useTranslations } from "next-intl"
 import { FolderVectorMenu } from './folder-vector-menu'
+import { pasteIntoFolder } from './paste-into-folder'
 import emitter from '@/lib/emitter'
 import { LinkedFolder } from '@/lib/files'
 
@@ -90,7 +91,7 @@ export function FolderItem({ item, focusSidebar }: { item: DirTree; focusSidebar
         // 如果是文件（没有 children）
         if (node.name.endsWith('.md')) {
           totalCount++
-          if (vectorIndexedFiles.has(node.name)) {
+          if (vectorIndexedFiles.has(computedParentPath(node))) {
             indexedCount++
           }
         }
@@ -224,82 +225,16 @@ export function FolderItem({ item, focusSidebar }: { item: DirTree; focusSidebar
 
   // 粘贴到文件夹
   async function handlePasteInFolder() {
-    if (!clipboardItem) {
-      toast({ title: t('clipboard.empty'), variant: 'destructive' })
-      return
-    }
-
-    try {
-      const { BaseDirectory, mkdir, readDir, readTextFile, remove, writeTextFile } = await import('@tauri-apps/plugin-fs')
-      const { generateCopyFilename, generateCopyFoldername } = await import('@/lib/default-filename')
-
-      const sourcePath = `article/${clipboardItem.path}`
-
-      // 粘贴目标：当前文件夹的父目录（同级粘贴）
-      const targetDir = path.includes('/') ? path.split('/').slice(0, -1).join('/') : ''
-
-      // 生成唯一的目标名称（文件或文件夹）
-      const targetName = clipboardItem.isDirectory
-        ? await generateCopyFoldername(targetDir, clipboardItem.name)
-        : await generateCopyFilename(targetDir, clipboardItem.name)
-
-      const targetPath = targetDir ? `article/${targetDir}/${targetName}` : `article/${targetName}`
-
-      if (clipboardItem.isDirectory) {
-        // For directories, need to copy recursively
-        // Create target directory
-        await mkdir(targetPath, { baseDir: BaseDirectory.AppData })
-
-        // Copy recursively using readDir, readTextFile, and writeTextFile
-        const copyDirRecursively = async (src: string, dest: string) => {
-          const entries = await readDir(src, { baseDir: BaseDirectory.AppData })
-
-          for (const entry of entries) {
-            const srcPath = `${src}/${entry.name}`
-            const destPath = `${dest}/${entry.name}`
-
-            if (entry.isDirectory) {
-              // It's a directory
-              await mkdir(destPath, { baseDir: BaseDirectory.AppData })
-              await copyDirRecursively(srcPath, destPath)
-            } else {
-              // It's a file
-              try {
-                const content = await readTextFile(srcPath, { baseDir: BaseDirectory.AppData })
-                await writeTextFile(destPath, content, { baseDir: BaseDirectory.AppData })
-              } catch (err) {
-                console.error(`Error copying file ${srcPath}:`, err)
-              }
-            }
-          }
-        }
-
-        await copyDirRecursively(sourcePath, targetPath)
-      } else {
-        // For files, just copy the file
-        try {
-          const content = await readTextFile(sourcePath, { baseDir: BaseDirectory.AppData })
-          await writeTextFile(targetPath, content, { baseDir: BaseDirectory.AppData })
-        } catch (err) {
-          console.error(`Error copying file ${sourcePath}:`, err)
-          throw err
-        }
-      }
-
-      // If cut operation, delete the original
-      if (clipboardOperation === 'cut') {
-        await remove(sourcePath, { baseDir: BaseDirectory.AppData })
-        // Clear clipboard after cut & paste operation
-        setClipboardItem(null, 'none')
-      }
-
-      // Refresh file tree
-      loadFileTree()
-      toast({ title: t('clipboard.pasted') })
-    } catch (error) {
-      console.error('Paste operation failed:', error)
-      toast({ title: t('clipboard.pasteFailed'), variant: 'destructive' })
-    }
+    await pasteIntoFolder({
+      clipboardItem,
+      clipboardOperation,
+      folderPath: path,
+      emptyToastTitle: t('clipboard.empty'),
+      pastedToastTitle: t('clipboard.pasted'),
+      pasteFailedToastTitle: t('clipboard.pasteFailed'),
+      loadFileTree,
+      setClipboardItem,
+    })
   }
 
   // 删除文件夹
@@ -363,7 +298,7 @@ export function FolderItem({ item, focusSidebar }: { item: DirTree; focusSidebar
 
         // 删除这些文件的向量数据
         for (const file of filesInFolder) {
-          const filename = file.name
+          const filename = file.relativePath
           try {
             await deleteVectorDocumentsByFilename(filename)
           } catch (error) {
@@ -626,7 +561,7 @@ export function FolderItem({ item, focusSidebar }: { item: DirTree; focusSidebar
 
     // 获取向量索引状态
     const indexedCount = files.filter(f =>
-      vectorIndexedFiles.has(f.name)
+      vectorIndexedFiles.has(f.path)
     ).length
 
     // 只有在有索引文件时才触发关联事件
@@ -663,7 +598,7 @@ export function FolderItem({ item, focusSidebar }: { item: DirTree; focusSidebar
   useEffect(() => {
     if (item.isEditing) {
       setIsEditing(true)
-      setName(name)
+      setName(item.name)
       setTimeout(() => inputRef.current?.focus(), 300);
     }
   }, [item])
@@ -686,7 +621,7 @@ export function FolderItem({ item, focusSidebar }: { item: DirTree; focusSidebar
 
     const handlePasteEvent = (e: Event) => {
       const customEvent = e as CustomEvent<{ targetPath: string }>
-      // 粘贴到文件所在目录（同级粘贴）
+      // 粘贴到当前文件夹
       if (customEvent.detail.targetPath === path) {
         handlePasteInFolder()
       }
@@ -742,7 +677,21 @@ export function FolderItem({ item, focusSidebar }: { item: DirTree; focusSidebar
               e.stopPropagation();
             }}
           >
-            <ChevronRight className="transition-transform size-4 ml-1 bg-sidebar group-hover:bg-transparent" />
+            <ChevronRight
+              className="transition-transform size-4 ml-1 bg-sidebar group-hover:bg-transparent"
+              onClick={async (e) => {
+                // 点击折叠箭头时只触发展开/折叠，阻止冒泡避免触发 handleSelectFolder
+                e.stopPropagation();
+                e.preventDefault();
+                // 切换折叠状态
+                const isExpanded = collapsibleList.includes(path)
+                await setCollapsibleList(path, !isExpanded)
+                // 如果是展开操作，加载文件夹内容
+                if (!isExpanded) {
+                  await loadCollapsibleFiles(path)
+                }
+              }}
+            />
             {
               isEditing ?
                 <>

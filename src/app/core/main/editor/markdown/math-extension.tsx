@@ -1,6 +1,6 @@
 'use client'
 
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Node, mergeAttributes, nodeInputRule } from '@tiptap/core'
 import { ReactNodeViewRenderer, NodeViewWrapper, ReactNodeViewProps } from '@tiptap/react'
 import { useMemo, useState } from 'react'
 import katex from 'katex'
@@ -173,8 +173,18 @@ export const InlineMath = Node.create({
     return ReactNodeViewRenderer(InlineMathView)
   },
 
-  // InputRules are handled by @tiptap/markdown extension
-  // Removed to avoid transaction conflicts with contentType: 'markdown'
+  addInputRules() {
+    return [
+      nodeInputRule({
+        // Convert `$...$` to an inline math node as soon as the closing `$` is typed.
+        find: /(?<!\$)\$[^\$\n]+\$$/,
+        type: this.type,
+        getAttributes: (match) => ({
+          latex: match[0].slice(1, -1),
+        }),
+      }),
+    ]
+  },
 
   // Configure Markdown serialization for the Tiptap Markdown extension
   markdownTokenName: 'inline_math',
@@ -247,8 +257,18 @@ export const BlockMath = Node.create({
     return ReactNodeViewRenderer(BlockMathView)
   },
 
-  // InputRules are handled by @tiptap/markdown extension
-  // Removed to avoid transaction conflicts with contentType: 'markdown'
+  addInputRules() {
+    return [
+      nodeInputRule({
+        // Convert `$$...$$` within a paragraph to a block math node immediately.
+        find: /^\$\$[\s\S]+?\$\$$/,
+        type: this.type,
+        getAttributes: (match) => ({
+          latex: match[0].slice(2, -2).trim(),
+        }),
+      }),
+    ]
+  },
 
   // Configure Markdown serialization for the Tiptap Markdown extension
   markdownTokenName: 'block_math',

@@ -151,14 +151,14 @@ export function FloatingTableMenu({ editor }: FloatingTableMenuProps) {
   return (
     <div
       ref={menuRef}
-      className="absolute z-50"
+      className="absolute z-50 transition-[top,left]"
       style={{
         top: position.top,
         left: position.left,
       }}
     >
       {/* Arrow */}
-      <div className="absolute -top-0 left-1/2 -translate-x-1/2 translate-y-[-100%]">
+      <div className="absolute -top-0 left-6 -translate-x-1/2 translate-y-[-100%]">
         <div className="w-0 h-0 border-l-8 border-r-8 border-b-8 border-l-transparent border-r-transparent border-b-border" />
       </div>
 

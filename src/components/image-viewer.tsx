@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { PhotoProvider, PhotoView } from "react-photo-view";
+import { PhotoView } from "react-photo-view";
 import { LocalImage } from "./local-image";
 import { convertImage } from "@/lib/utils";
 import { useEffect } from "react";
+import { cn } from "@/lib/utils";
+import { PhotoPreviewProvider } from "@/components/photo-preview-provider";
 
-export function ImageViewer({url, path}: {url: string, path?: string}) {
+export function ImageViewer({url, path, imageClassName}: {url: string, path?: string, imageClassName?: string}) {
   const [src, setSrc] = useState('')
 
   async function init() {
@@ -17,16 +19,16 @@ export function ImageViewer({url, path}: {url: string, path?: string}) {
   }, [])
 
   return (
-    <PhotoProvider>
+    <PhotoPreviewProvider>
       <PhotoView src={src}>
         <div>
           <LocalImage
             src={url.includes('http') ? url : `/${path}/${url}`}
             alt=""
-            className="w-14 h-14 object-cover cursor-pointer"
+            className={cn("w-14 h-14 object-cover cursor-pointer", imageClassName)}
           />
         </div>
       </PhotoView>
-    </PhotoProvider>
+    </PhotoPreviewProvider>
   )
 }

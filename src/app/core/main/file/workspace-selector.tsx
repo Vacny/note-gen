@@ -6,21 +6,16 @@ import useSettingStore from "@/stores/setting"
 import useArticleStore from "@/stores/article"
 import { useTranslations } from 'next-intl'
 import { useMemo } from "react"
+import { getWorkspaceDisplayName } from "@/lib/workspace-name"
 
 export function WorkspaceSelector() {
   const { workspacePath, workspaceHistory, setWorkspacePath } = useSettingStore()
   const { clearCollapsibleList, loadFileTree, setActiveFilePath, setCurrentArticle } = useArticleStore()
   const t = useTranslations('settings.file')
 
-  // 获取文件夹名称
-  const getWorkspaceName = (path: string) => {
-    if (!path) return t('workspace.defaultPath')
-    return path.split('/').pop() || path.split('\\').pop() || path
-  }
-
   // 当前工作区名称
   const currentWorkspaceName = useMemo(() => {
-    return getWorkspaceName(workspacePath)
+    return getWorkspaceDisplayName(workspacePath, t('workspace.defaultPath'))
   }, [workspacePath, t])
 
   // 切换工作区
@@ -59,7 +54,7 @@ export function WorkspaceSelector() {
             <SelectItem key={index} value={path}>
               <div className="flex items-center gap-2">
                 <FolderOpen className="w-4 h-4" />
-                <span>{getWorkspaceName(path)}</span>
+                <span>{getWorkspaceDisplayName(path, t('workspace.defaultPath'))}</span>
               </div>
             </SelectItem>
           ))}

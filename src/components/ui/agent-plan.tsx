@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useTranslations } from "next-intl";
 import { DiffViewer } from "@/components/ui/diff-viewer";
+import { formatConfirmationPreview } from "@/lib/agent/tool-confirmation-display";
 
 // Type definitions from existing codebase
 interface ToolCall {
@@ -42,6 +43,9 @@ interface ConfirmationRecord {
   params: Record<string, any>;
   status: "pending" | "confirmed" | "cancelled";
   timestamp: number;
+  scope?: "once" | "conversation";
+  sessionApprovalType?: "write" | "runtime-script-skill";
+  sessionApprovalSkillId?: string;
 }
 
 interface ReActStep {
@@ -71,9 +75,13 @@ interface AgentPlanProps {
   pendingConfirmation?: {
     toolName: string;
     params: Record<string, any>;
+    previewParams?: Record<string, any>;
     originalContent?: string;
     modifiedContent?: string;
     filePath?: string;
+    canApproveForSession?: boolean;
+    sessionApprovalType?: "write" | "runtime-script-skill";
+    sessionApprovalSkillId?: string;
   };
   confirmationHistory?: ConfirmationRecord[];
   currentStepStartTime?: number; // 当前步骤开始时间戳
@@ -82,7 +90,7 @@ interface AgentPlanProps {
   historyJson?: string;
 
   // Callbacks for live mode
-  onConfirm?: () => void;
+  onConfirm?: (scope?: "once" | "conversation") => void;
   onCancel?: () => void;
 
   // i18n namespace (optional, defaults to 'record.chat.input.agent')
@@ -127,12 +135,79 @@ export function AgentPlan({
   embedded = false,
 }: AgentPlanProps) {
   const t = useTranslations(i18nNs);
+  const rootT = useTranslations();
   const [expandedTasks, setExpandedTasks] = React.useState<string[]>([]);
   const contentRef = React.useRef<HTMLDivElement>(null);
   const thoughtRefs = React.useRef<Map<string, HTMLParagraphElement>>(new Map());
   const [currentStepDuration, setCurrentStepDuration] = React.useState<number>(0);
   const [showDiff, setShowDiff] = React.useState(true);
   const [autoScrollEnabled, setAutoScrollEnabled] = React.useState(true);
+
+  const scrollStepIntoView = React.useCallback((stepId: string) => {
+    if (embedded) return;
+
+    setTimeout(() => {
+      const el = document.getElementById(`step-${stepId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "end" });
+      }
+    }, 50);
+  }, [embedded]);
+
+  const extractFinalAnswer = React.useCallback((content: string): string => {
+    if (!content) return "";
+
+    const normalized = content.replace(/Action:\s*Final\s*Answer:\s*/i, "Final Answer: ");
+    const finalAnswerPatterns = [
+      /Final Answer[:：]\s*([\s\S]*)/i,
+      /最终答案[:：]?\s*([\s\S]*)/i,
+    ];
+
+    for (const pattern of finalAnswerPatterns) {
+      const match = normalized.match(pattern);
+      if (match?.[1]) {
+        return match[1].trim();
+      }
+    }
+
+    return "";
+  }, []);
+
+  const getThoughtBody = React.useCallback((content: string): string => {
+    if (!content) return "";
+
+    return content
+      .replace(/^Thought:\s*/i, "")
+      .replace(/^思考[:：]?\s*/i, "")
+      .trim();
+  }, []);
+
+  const shouldHideThoughtBlock = React.useCallback((thought?: string): boolean => {
+    if (!thought) return false;
+
+    const finalAnswer = extractFinalAnswer(thought);
+    if (!finalAnswer) return false;
+
+    const thoughtBody = getThoughtBody(thought)
+      .replace(/Final Answer[:：][\s\S]*/i, "")
+      .replace(/最终答案[:：]?[\s\S]*/i, "")
+      .trim();
+
+    if (!thoughtBody) {
+      return true;
+    }
+
+    const normalizeForCompare = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/\s+/g, "")
+        .replace(/[：:，。、“”"'`]/g, "");
+
+    const normalizedThought = normalizeForCompare(thoughtBody);
+    const normalizedAnswer = normalizeForCompare(finalAnswer);
+
+    return !normalizedThought || normalizedAnswer.includes(normalizedThought);
+  }, [extractFinalAnswer, getThoughtBody]);
 
   // 实时更新当前步骤的耗时
   React.useEffect(() => {
@@ -411,18 +486,49 @@ export function AgentPlan({
       if (currentStepId && !expandedTasks.includes(currentStepId)) {
         setExpandedTasks((prev) => {
           const newState = [...prev, currentStepId];
-          // 自动展开后滚动到该步骤
-          setTimeout(() => {
-            const el = document.getElementById(`step-${currentStepId}`);
-            if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'end' });
-            }
-          }, 50);
+          // 非嵌入模式下自动展开后滚动到该步骤
+          scrollStepIntoView(currentStepId);
           return newState;
         });
       }
     }
-  }, [displaySteps.length, currentThought, currentObservation, isRunning, mode]);
+  }, [displaySteps.length, currentThought, currentObservation, isRunning, mode, expandedTasks, scrollStepIntoView]);
+
+  const confirmationPreview = React.useMemo(() => {
+    if (!pendingConfirmation) {
+      return null;
+    }
+
+    return formatConfirmationPreview(
+      pendingConfirmation.toolName,
+      pendingConfirmation.previewParams ?? pendingConfirmation.params ?? {}
+    );
+  }, [pendingConfirmation]);
+
+  const translateKey = React.useCallback((key: string, fallback: string) => {
+    return rootT.has(key) ? rootT(key) : fallback;
+  }, [rootT]);
+
+  const formatFieldValue = React.useCallback((value: unknown) => {
+    if (typeof value === "string") {
+      return value;
+    }
+
+    if (
+      typeof value === "number" ||
+      typeof value === "boolean" ||
+      value === null ||
+      value === undefined
+    ) {
+      return String(value);
+    }
+
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }, []);
 
   // Don't render if no content in history mode
   if (mode === "history" && displaySteps.length === 0) {
@@ -447,13 +553,8 @@ export function AgentPlan({
     setExpandedTasks((prev) => {
       const isExpanding = !prev.includes(stepId);
       if (isExpanding) {
-        // 展开时滚动到该步骤
-        setTimeout(() => {
-          const el = document.getElementById(`step-${stepId}`);
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'end' });
-          }
-        }, 50);
+        // 非嵌入模式下展开时滚动到该步骤
+        scrollStepIntoView(stepId);
       }
       return prev.includes(stepId)
         ? prev.filter((id) => id !== stepId)
@@ -462,8 +563,8 @@ export function AgentPlan({
   };
 
   // Handle confirmation
-  const handleConfirm = () => {
-    if (onConfirm) onConfirm();
+  const handleConfirm = (scope: "once" | "conversation" = "once") => {
+    if (onConfirm) onConfirm(scope);
   };
 
   const handleCancel = () => {
@@ -508,6 +609,11 @@ export function AgentPlan({
     // Helper to extract meaningful text from content
     const extractFromContent = (content: string): string => {
       if (!content || !content.trim()) return '';
+
+      const finalAnswer = extractFinalAnswer(content);
+      if (finalAnswer) {
+        return extractFromContent(finalAnswer);
+      }
 
       // 预处理：移除首尾的代码块标记 ``` 及其周围的空白行
       let processedContent = content.trim();
@@ -671,7 +777,7 @@ export function AgentPlan({
             {isExpanded && (
               <div className="border-muted mt-1 mr-2 mb-1.5 ml-6 space-y-2">
                 {/* Thought */}
-                {step.thought && (
+                {step.thought && !shouldHideThoughtBlock(step.thought) && (
                   <div className="text-muted-foreground border-foreground/20 border-l border-dashed pl-3 text-xs">
                     <div className="flex items-center gap-2 py-1">
                       <Brain className="size-3.5 text-blue-500 shrink-0" />
@@ -754,37 +860,28 @@ export function AgentPlan({
                 <Clock className="size-4.5 text-orange-500 shrink-0 animate-pulse" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <code className="text-sm text-foreground font-mono truncate">
-                      {pendingConfirmation.toolName}
-                    </code>
+                    <span className="text-sm text-foreground font-medium truncate">
+                      {confirmationPreview
+                        ? translateKey(
+                            confirmationPreview.titleKey,
+                            pendingConfirmation.toolName
+                          )
+                        : pendingConfirmation.toolName}
+                    </span>
                     {pendingConfirmation.filePath && (
                       <span className="text-xs text-muted-foreground truncate">
                         {pendingConfirmation.filePath}
                       </span>
                     )}
                   </div>
-                  {/* 显示操作参数 */}
-                  {pendingConfirmation.toolName === 'modify_current_note' && (() => {
-                    const params = pendingConfirmation.params
-                    let operationDesc = ''
-                    if (params.lineEdits) {
-                      const count = Array.isArray(params.lineEdits) ? params.lineEdits.length : 1
-                      operationDesc = `修改 ${count} 处行 (lineEdits)`
-                    } else if (params.searchReplace) {
-                      operationDesc = `搜索替换 "${params.searchReplace.searchPattern}"`
-                    } else if (params.insertLines) {
-                      operationDesc = `在第 ${params.insertLines.afterLine} 行后插入`
-                    } else if (params.deleteLines) {
-                      operationDesc = `删除第 ${params.deleteLines.startLine}-${params.deleteLines.endLine} 行`
-                    } else if (params.content) {
-                      operationDesc = '完整替换内容'
-                    }
-                    return operationDesc ? (
-                      <div className="text-xs text-muted-foreground mt-1 truncate" title={operationDesc}>
-                        {operationDesc}
-                      </div>
-                    ) : null
-                  })()}
+                  {confirmationPreview && (
+                    <div className="text-xs text-muted-foreground mt-1 truncate">
+                      {translateKey(
+                        confirmationPreview.descriptionKey,
+                        t("confirmation.description")
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
@@ -821,6 +918,35 @@ export function AgentPlan({
               </div>
             )}
 
+            {!pendingConfirmation.originalContent &&
+              !pendingConfirmation.modifiedContent &&
+              confirmationPreview &&
+              confirmationPreview.fields.length > 0 && (
+                <div className="border-t border-border/50 px-3 py-2 space-y-2">
+                  {confirmationPreview.fields.map((field) => {
+                    const label = translateKey(field.labelKey, field.name);
+                    const formattedValue = formatFieldValue(field.value);
+
+                    return (
+                      <div key={field.name} className="space-y-1">
+                        <div className="text-xs font-medium text-muted-foreground">
+                          {label}
+                        </div>
+                        {field.displayType === "content" ? (
+                          <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 px-2 py-1 text-xs text-foreground">
+                            {formattedValue}
+                          </pre>
+                        ) : (
+                          <div className="whitespace-pre-wrap break-words text-xs text-foreground">
+                            {formattedValue}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
             {/* Confirmation buttons */}
             <div className="flex items-center justify-end gap-1 px-3 py-1.5 border-t border-border/50">
               <Button
@@ -834,11 +960,27 @@ export function AgentPlan({
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-6 w-6 p-0"
-                onClick={handleConfirm}
+                className="h-6 px-2 text-xs"
+                onClick={() => handleConfirm("once")}
               >
                 <CheckCircle className="size-4 text-green-500" />
+                <span className="ml-1">允许这次</span>
               </Button>
+              {pendingConfirmation.canApproveForSession && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => handleConfirm("conversation")}
+                >
+                  <CheckCircle2 className="size-4 text-green-600" />
+                  <span className="ml-1">
+                    {pendingConfirmation.sessionApprovalType === "runtime-script-skill"
+                      ? "本会话允许此 Skill 脚本"
+                      : "本会话都允许"}
+                  </span>
+                </Button>
+              )}
             </div>
           </div>
         </li>

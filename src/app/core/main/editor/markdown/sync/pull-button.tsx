@@ -4,7 +4,8 @@ import { Editor } from '@tiptap/react'
 import { ArrowDownCircle, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useArticleStore from '@/stores/article'
-import { compareFileVersions, pullRemoteFile, saveLocalFile } from '@/lib/sync/auto-sync'
+import useSettingStore from '@/stores/setting'
+import { compareFileVersions, pullRemoteFile, saveLocalFile, getRemoteFileInfo, setLocalRecordedSha } from '@/lib/sync/auto-sync'
 import { updateFileSyncTime } from '@/lib/sync/conflict-resolution'
 import { isSyncConfigured } from '@/lib/sync/sync-manager'
 import emitter from '@/lib/emitter'
@@ -20,6 +21,7 @@ type PullStatus = 'idle' | 'checking' | 'update-available' | 'pulling' | 'confli
 
 export function PullButton({ editor }: PullButtonProps) {
   const { activeFilePath } = useArticleStore()
+  const { autoPullOnSwitch } = useSettingStore()
   const [hasUpdate, setHasUpdate] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isConfigured, setIsConfigured] = useState(false)
@@ -90,6 +92,11 @@ export function PullButton({ editor }: PullButtonProps) {
       editor.commands.setContent(remoteContent, { contentType: 'markdown' })
       // 更新同步时间，避免重复检测
       await updateFileSyncTime(activeFilePath)
+      // 更新本地记录的远程 SHA，避免重复提示有更新
+      const remoteInfo = await getRemoteFileInfo(activeFilePath)
+      if (remoteInfo.sha) {
+        await setLocalRecordedSha(activeFilePath, remoteInfo.sha)
+      }
       // 触发事件，让推送队列重置计时器
       emitter.emit('sync-pulled', { path: activeFilePath })
       // 清除远程内容缓存
@@ -111,15 +118,11 @@ export function PullButton({ editor }: PullButtonProps) {
 
   // Auto pull from remote (called by interval)
   const checkForUpdates = useCallback(async () => {
-    if (!activeFilePath || isLoading) return
-
-    // 如果用户正在编辑，延迟拉取
-    if (isUserActive) {
-      setPullStatus('idle')
+    if (!activeFilePath || isLoading) {
       return
     }
 
-    // 如果用户刚停止输入不久，也延迟
+    // 如果用户正在编辑（停止输入不到 10 秒），延迟拉取
     if (timeSinceInput < IDLE_THRESHOLD) {
       setPullStatus('idle')
       return
@@ -188,6 +191,9 @@ export function PullButton({ editor }: PullButtonProps) {
       pullTimeoutRef.current = null
     }
 
+    // 文件切换时，重置最后输入时间，让首次检测可以立即执行
+    lastInputTimeRef.current = 0
+
     // 文件切换时也使用新的检测逻辑，不自动拉取
     const checkOnSwitch = async () => {
       // 竞态检查：如果当前正在处理的文件不是这个了，忽略
@@ -201,12 +207,8 @@ export function PullButton({ editor }: PullButtonProps) {
       remoteContentRef.current = null
 
       try {
-        // 如果用户正在编辑，不执行检测
-        if (isUserActive) {
-          setPullStatus('idle')
-          return
-        }
-
+        // 文件切换时总是检测（用户主动打开的文件，检测更新不会打扰用户）
+        // 只有定时器检测才需要考虑用户是否在编辑
         const result = await compareFileVersions(activeFilePath)
 
         // 再次检查是否还是当前文件（可能已经切换走了）
@@ -215,36 +217,72 @@ export function PullButton({ editor }: PullButtonProps) {
         }
 
         if (result.action === 'conflict') {
-          // 有冲突，自动拉取远程版本覆盖本地
+          // 有冲突时，根据 autoPullOnSwitch 配置决定是否自动拉取
+          // 先显示检查中状态
+          setPullStatus('checking')
           setIsLoading(true)
-          const content = await pullRemoteFile(activeFilePath)
 
-          if (pendingFileRef.current !== activeFilePath) {
+          if (autoPullOnSwitch) {
+            // 禁用编辑器
+            editor.setEditable(false)
+            const content = await pullRemoteFile(activeFilePath)
+
+            if (pendingFileRef.current !== activeFilePath) {
+              setIsLoading(false)
+              editor.setEditable(true)
+              return
+            }
+
+            await saveLocalFile(activeFilePath, content)
+            editor.commands.setContent(content, { contentType: 'markdown' })
+            // 恢复编辑器
+            editor.setEditable(true)
             setIsLoading(false)
-            return
+          } else {
+            // 不自动拉取，只显示冲突状态
+            setPullStatus('conflict')
+            setIsLoading(false)
           }
-
-          await saveLocalFile(activeFilePath, content)
-          editor.commands.setContent(content, { contentType: 'markdown' })
-          setIsLoading(false)
         } else if (result.action === 'pull') {
-          // 切换文件时检测到更新，自动拉取
+          // 切换文件时检测到更新，根据 autoPullOnSwitch 配置决定是否自动拉取
+          // 先显示检查中状态
+          setPullStatus('checking')
           setIsLoading(true)
-          const content = await pullRemoteFile(activeFilePath)
 
-          // 拉取后再次检查是否还是当前文件
-          if (pendingFileRef.current !== activeFilePath) {
+          if (autoPullOnSwitch) {
+            // 禁用编辑器
+            editor.setEditable(false)
+            const content = await pullRemoteFile(activeFilePath)
+
+            // 拉取后再次检查是否还是当前文件
+            if (pendingFileRef.current !== activeFilePath) {
+              setIsLoading(false)
+              editor.setEditable(true)
+              return
+            }
+
+            await saveLocalFile(activeFilePath, content)
+
+            editor.commands.setContent(content, { contentType: 'markdown' })
+            await updateFileSyncTime(activeFilePath)
+            emitter.emit('sync-pulled', { path: activeFilePath })
+            // 恢复编辑器
+            editor.setEditable(true)
             setIsLoading(false)
-            return
+            setHasUpdate(false)
+          } else {
+            // 不自动拉取，只提示有更新，但先显示 loading 状态
+            try {
+              const content = await pullRemoteFile(activeFilePath)
+              remoteContentRef.current = content
+              setPullStatus('update-available')
+              setHasUpdate(true)
+              setIsLoading(false)
+            } catch {
+              setPullStatus('error')
+              setIsLoading(false)
+            }
           }
-
-          await saveLocalFile(activeFilePath, content)
-
-          editor.commands.setContent(content, { contentType: 'markdown' })
-          await updateFileSyncTime(activeFilePath)
-          emitter.emit('sync-pulled', { path: activeFilePath })
-          setIsLoading(false)
-          setHasUpdate(false)
         } else {
           setPullStatus('idle')
           setHasUpdate(false)
@@ -268,7 +306,7 @@ export function PullButton({ editor }: PullButtonProps) {
         pullTimeoutRef.current = null
       }
     }
-  }, [activeFilePath, isConfigured, editor, isUserActive])
+  }, [activeFilePath, isConfigured, editor, isUserActive, autoPullOnSwitch])
 
   // 监听用户输入事件，重置计时器
   useEffect(() => {
@@ -364,10 +402,14 @@ export function PullButton({ editor }: PullButtonProps) {
             检查中
           </span>
         ) : (
-          /* 无需拉取 */
-          <span className="p-0.5 opacity-30 cursor-not-allowed" title="无需拉取">
+          /* 无需拉取时也显示可点击的按钮，让用户可以手动拉取 */
+          <button
+            onClick={handlePull}
+            className="p-0.5 rounded transition-colors hover:bg-accent text-muted-foreground flex items-center gap-1"
+            title="手动拉取远程文件"
+          >
             <ArrowDownCircle size={14} />
-          </span>
+          </button>
         )}
       </div>
 

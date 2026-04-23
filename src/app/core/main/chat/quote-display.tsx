@@ -1,6 +1,8 @@
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useTranslations } from "next-intl"
+import { useState } from "react"
+import { getQuotePreview } from "./quote-preview"
 
 interface QuoteData {
   quote: string
@@ -8,6 +10,8 @@ interface QuoteData {
   fileName: string
   startLine: number
   endLine: number
+  from: number
+  to: number
   articlePath: string
 }
 
@@ -19,6 +23,7 @@ interface QuoteDisplayProps {
 export function QuoteDisplay({ quoteData, onRemove }: QuoteDisplayProps) {
   const t = useTranslations('editor.quoteDisplay')
   const { fileName, startLine, endLine, fullContent } = quoteData
+  const [expanded, setExpanded] = useState(false)
 
   // Generate display text
   const getDisplayText = () => {
@@ -32,13 +37,8 @@ export function QuoteDisplay({ quoteData, onRemove }: QuoteDisplayProps) {
     return t('fromFile', { fileName })
   }
 
-  // Generate preview content
-  const getPreviewContent = () => {
-    if (fullContent.length > 100) {
-      return fullContent.substring(0, 100) + '...'
-    }
-    return fullContent
-  }
+  const previewContent = expanded ? fullContent : getQuotePreview(fullContent, 180)
+  const canExpand = fullContent.length > previewContent.length
 
   return (
     <div className="flex items-start gap-2 p-2 mb-2 border rounded-lg bg-muted/50">
@@ -48,9 +48,18 @@ export function QuoteDisplay({ quoteData, onRemove }: QuoteDisplayProps) {
             {getDisplayText()}
           </span>
         </div>
-        <div className="text-xs text-muted-foreground line-clamp-2 break-words">
-          {getPreviewContent()}
+        <div className={`text-xs text-muted-foreground break-words whitespace-pre-wrap ${expanded ? '' : 'line-clamp-4'}`}>
+          {previewContent}
         </div>
+        {canExpand && (
+          <button
+            type="button"
+            className="mt-1 text-[11px] text-primary"
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? '收起' : '展开'}
+          </button>
+        )}
       </div>
       <Button
         variant="ghost"

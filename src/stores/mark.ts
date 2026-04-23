@@ -3,9 +3,16 @@ import { uploadFile as uploadGithubFile, getFiles as githubGetFiles, decodeBase6
 import { uploadFile as uploadGiteeFile, getFiles as giteeGetFiles } from '@/lib/sync/gitee';
 import { uploadFile as uploadGitlabFile, getFiles as gitlabGetFiles, getFileContent as gitlabGetFileContent } from '@/lib/sync/gitlab';
 import { uploadFile as uploadGiteaFile, getFiles as giteaGetFiles, getFileContent as giteaGetFileContent } from '@/lib/sync/gitea';
+import { s3Upload, s3Delete, s3HeadObject, s3Download } from '@/lib/sync/s3'
+import { webdavUpload, webdavDelete, webdavHeadObject, webdavDownload } from '@/lib/sync/webdav'
+import { WebDAVConfig } from '@/types/sync'
 import { getSyncRepoName } from '@/lib/sync/repo-utils';
+import { getRemoteFileContent } from '@/lib/sync/remote-file';
 import { Store } from '@tauri-apps/plugin-store';
 import { create } from 'zustand'
+import { S3Config } from '@/types/sync'
+import { normalizeRecordFilters } from '@/app/core/main/mark/mark-filters'
+import { normalizeRecordViewMode } from '@/app/core/main/mark/mark-view-mode.mjs'
 
 export interface MarkQueue {
   queueId: string
@@ -15,9 +22,58 @@ export interface MarkQueue {
   startTime: number
 }
 
+export type RecordTimePreset = 'all' | 'today' | 'last7Days' | 'last30Days'
+export type RecordViewMode = 'list' | 'compact' | 'cards'
+
+export interface RecordFilters {
+  search: string
+  selectedTypes: Mark["type"][]
+  timePreset: RecordTimePreset
+  tagId: number | 'all'
+}
+
+const DEFAULT_RECORD_FILTERS: RecordFilters = {
+  search: '',
+  selectedTypes: [],
+  timePreset: 'all',
+  tagId: 'all',
+}
+
+async function persistRecordFilters(recordFilters: RecordFilters) {
+  const store = await Store.load('store.json')
+  await store.set('recordFilters', recordFilters)
+}
+
+async function persistRecordViewMode(recordViewMode: RecordViewMode) {
+  const store = await Store.load('store.json')
+  await store.set('recordViewMode', recordViewMode)
+}
+
+async function fetchVisibleMarks(trashState: boolean) {
+  if (trashState) {
+    const res = await getAllMarks()
+    return res.map(item => ({
+      ...item,
+      content: item.content || ''
+    })).filter((item) => item.deleted === 1)
+  }
+
+  const store = await Store.load('store.json')
+  const currentTagId = await store.get<number>('currentTagId')
+  if (!currentTagId) {
+    return []
+  }
+
+  const res = await getMarks(currentTagId)
+  return res.map(item => ({
+    ...item,
+    content: item.content || ''
+  })).filter((item) => item.deleted === 0)
+}
+
 interface MarkState {
   trashState: boolean
-  setTrashState: (flag: boolean) => void
+  setTrashState: (flag: boolean) => Promise<void>
 
   marks: Mark[]
   updateMark: (mark: Mark) => Promise<void>
@@ -41,6 +97,25 @@ interface MarkState {
   selectAll: () => void
   isMultiSelectMode: boolean
   setMultiSelectMode: (mode: boolean) => void
+  visibleMarkIds: number[]
+  setVisibleMarkIds: (ids: number[]) => void
+  pendingScrollMarkId: number | null
+  setPendingScrollMarkId: (id: number | null) => void
+  highlightedMarkId: number | null
+  setHighlightedMarkId: (id: number | null) => void
+
+  recordFilters: RecordFilters
+  setRecordSearch: (search: string) => void
+  toggleRecordType: (type: Mark["type"]) => void
+  setRecordTimePreset: (preset: RecordTimePreset) => void
+  setRecordTagId: (tagId: number | 'all') => void
+  resetRecordFilters: () => void
+  hasActiveRecordFilters: () => boolean
+  initRecordFilters: () => Promise<void>
+
+  recordViewMode: RecordViewMode
+  setRecordViewMode: (mode: RecordViewMode) => void
+  initRecordViewMode: () => Promise<void>
 
   // 同步
   syncState: boolean
@@ -53,8 +128,10 @@ interface MarkState {
 
 const useMarkStore = create<MarkState>((set, get) => ({
   trashState: false,
-  setTrashState: (flag) => {
-    set({ trashState: flag })
+  setTrashState: async (flag) => {
+    set({ trashState: flag, marks: [] })
+    const marks = await fetchVisibleMarks(flag)
+    set({ marks })
   },
 
   marks: [],
@@ -78,28 +155,11 @@ const useMarkStore = create<MarkState>((set, get) => ({
     set({ marks })
   },
   fetchMarks: async () => {
-    const store = await Store.load('store.json');
-    const currentTagId = await store.get<number>('currentTagId')
-    if (!currentTagId) {
-      return
-    }
-    const res = await getMarks(currentTagId)
-    const decodeRes = res.map(item => {
-      return {
-        ...item,
-        content: item.content || ''
-      }
-    }).filter((item) => item.deleted === 0)
+    const decodeRes = await fetchVisibleMarks(false)
     set({ marks: decodeRes })
   },
   fetchAllTrashMarks: async () => {
-    const res = await getAllMarks()
-    const decodeRes = res.map(item => {
-      return {
-        ...item,
-        content: item.content || ''
-      }
-    }).filter((item) => item.deleted === 1)
+    const decodeRes = await fetchVisibleMarks(true)
     set({ marks: decodeRes })
   },
 
@@ -166,8 +226,9 @@ const useMarkStore = create<MarkState>((set, get) => ({
     set({ selectedMarkIds: new Set<number>(), isMultiSelectMode: false })
   },
   selectAll: () => {
-    const { marks } = get()
-    const allIds = new Set(marks.map(mark => mark.id))
+    const { marks, visibleMarkIds } = get()
+    const ids = visibleMarkIds.length > 0 ? visibleMarkIds : marks.map(mark => mark.id)
+    const allIds = new Set(ids)
     set({ selectedMarkIds: allIds, isMultiSelectMode: true })
   },
   isMultiSelectMode: false,
@@ -176,6 +237,105 @@ const useMarkStore = create<MarkState>((set, get) => ({
     if (!mode) {
       set({ selectedMarkIds: new Set<number>() })
     }
+  },
+  visibleMarkIds: [],
+  setVisibleMarkIds: (ids) => {
+    set({ visibleMarkIds: ids })
+  },
+  pendingScrollMarkId: null,
+  setPendingScrollMarkId: (id) => {
+    set({ pendingScrollMarkId: id })
+  },
+  highlightedMarkId: null,
+  setHighlightedMarkId: (id) => {
+    set({ highlightedMarkId: id })
+  },
+
+  recordFilters: DEFAULT_RECORD_FILTERS,
+  setRecordSearch: (search) => {
+    set((state) => {
+      const recordFilters = {
+        ...state.recordFilters,
+        search,
+      }
+      void persistRecordFilters(recordFilters)
+      return { recordFilters }
+    })
+  },
+  toggleRecordType: (type) => {
+    set((state) => {
+      const selectedTypes = state.recordFilters.selectedTypes.includes(type)
+        ? state.recordFilters.selectedTypes.filter((item) => item !== type)
+        : [...state.recordFilters.selectedTypes, type]
+
+      const recordFilters = {
+        ...state.recordFilters,
+        selectedTypes,
+      }
+      void persistRecordFilters(recordFilters)
+
+      return {
+        recordFilters,
+      }
+    })
+  },
+  setRecordTimePreset: (preset) => {
+    set((state) => {
+      const recordFilters = {
+        ...state.recordFilters,
+        timePreset: preset,
+      }
+      void persistRecordFilters(recordFilters)
+      return { recordFilters }
+    })
+  },
+  setRecordTagId: (tagId) => {
+    set((state) => {
+      const recordFilters = {
+        ...state.recordFilters,
+        tagId,
+      }
+      void persistRecordFilters(recordFilters)
+      return { recordFilters }
+    })
+  },
+  resetRecordFilters: () => {
+    void persistRecordFilters(DEFAULT_RECORD_FILTERS)
+    set({
+      recordFilters: DEFAULT_RECORD_FILTERS,
+    })
+  },
+  hasActiveRecordFilters: () => {
+    const { recordFilters } = get()
+    return Boolean(
+      recordFilters.search.trim() ||
+      recordFilters.selectedTypes.length > 0 ||
+      recordFilters.timePreset !== 'all' ||
+      recordFilters.tagId !== 'all'
+    )
+  },
+  initRecordFilters: async () => {
+    const store = await Store.load('store.json')
+    const savedFilters = await store.get<RecordFilters>('recordFilters')
+    set({
+      recordFilters: normalizeRecordFilters(savedFilters),
+    })
+  },
+
+  recordViewMode: 'list',
+  setRecordViewMode: (mode) => {
+    const recordViewMode = normalizeRecordViewMode(mode) as RecordViewMode
+    void persistRecordViewMode(recordViewMode)
+    set({ recordViewMode })
+  },
+  initRecordViewMode: async () => {
+    const store = await Store.load('store.json')
+    const savedRecordViewMode = await store.get<RecordViewMode>('recordViewMode')
+    const recordViewMode = normalizeRecordViewMode(savedRecordViewMode) as RecordViewMode
+    if (savedRecordViewMode !== recordViewMode) {
+      await store.set('recordViewMode', recordViewMode)
+    }
+    set({ recordViewMode })
   },
 
   // 同步
@@ -192,12 +352,15 @@ const useMarkStore = create<MarkState>((set, get) => ({
     const path = '.data'
     const filename = 'marks.json'
     const marks = await getAllMarks()
+    console.log('[mark store] uploadMarks - marks count:', marks.length)
     const store = await Store.load('store.json');
     const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github';
+    console.log('[mark store] uploadMarks - primaryBackupMethod:', primaryBackupMethod)
     let result = false
     let files: any;
     let res;
     const fullPath = `${path}/${filename}`;
+    try {
     switch (primaryBackupMethod) {
       case 'github':
         const githubRepoName = await getSyncRepoName('github')
@@ -211,31 +374,68 @@ const useMarkStore = create<MarkState>((set, get) => ({
         break;
       case 'gitee':
         const giteeRepoName = await getSyncRepoName('gitee')
-        files = await giteeGetFiles({ path: fullPath, repo: giteeRepoName })
-        res = await uploadGiteeFile({
-          file: JSON.stringify(marks),
-          repo: giteeRepoName,
-          path: fullPath,
-          sha: files?.sha,
-        })
+        try {
+          files = await giteeGetFiles({ path: fullPath, repo: giteeRepoName })
+          const sha = files?.sha
+          res = await uploadGiteeFile({
+            file: JSON.stringify(marks),
+            repo: giteeRepoName,
+            path: fullPath,
+            sha: sha,
+          })
+        } catch (err) {
+          console.error('[mark store] Gitee upload error:', err)
+        }
         if (res) {
           result = true
         }
         break;
-      case 'gitlab':
+      case 'gitlab': {
         const gitlabRepoName = await getSyncRepoName('gitlab')
-        files = await gitlabGetFiles({ path, repo: gitlabRepoName })
+        console.log('[mark store] GitLab upload - path:', path, 'filename:', filename, 'repo:', gitlabRepoName)
+        try {
+          files = await gitlabGetFiles({ path, repo: gitlabRepoName })
+        } catch (e) {
+          console.error('[mark store] GitLab getFiles error:', e)
+        }
+        console.log('[mark store] GitLab files:', files)
+
+        // 如果目录不存在（files 为 null），先创建目录标记文件
+        if (!files) {
+          console.log('[mark store] GitLab directory does not exist, creating .gitkeep')
+          try {
+            await uploadGitlabFile({
+              file: '',
+              repo: gitlabRepoName,
+              path,
+              filename: '.gitkeep',
+              sha: '',
+            })
+          } catch (e) {
+            console.log('[mark store] GitLab create .gitkeep error:', e)
+          }
+          // 重新获取文件列表
+          files = await gitlabGetFiles({ path, repo: gitlabRepoName })
+        }
+
         const markFile = Array.isArray(files)
           ? files.find(file => file.name === filename)
           : (files?.name === filename ? files : undefined)
-        res = await uploadGitlabFile({
-          file: JSON.stringify(marks),
-          repo: gitlabRepoName,
-          path,
-          filename,
-          sha: markFile?.sha || '',
-        })
+        console.log('[mark store] GitLab markFile:', markFile)
+        try {
+          res = await uploadGitlabFile({
+            file: JSON.stringify(marks),
+            repo: gitlabRepoName,
+            path,
+            filename,
+            sha: markFile?.sha || '',
+          })
+        } catch (e) {
+          console.error('[mark store] GitLab uploadFile error:', e)
+        }
+        console.log('[mark store] GitLab upload result:', res)
         break;
+      }
       case 'gitea':
         const giteaRepoName = await getSyncRepoName('gitea')
         files = await giteaGetFiles({ path, repo: giteaRepoName })
@@ -249,7 +449,34 @@ const useMarkStore = create<MarkState>((set, get) => ({
           filename,
           sha: giteaMarkFile?.sha || '',
         })
-      break;
+        break;
+      case 's3': {
+        const s3Config = await store.get<S3Config>('s3SyncConfig')
+        if (s3Config) {
+          const s3Key = `${path}/${filename}`
+          const existingFile = await s3HeadObject(s3Config, s3Key)
+          if (existingFile) {
+            await s3Delete(s3Config, s3Key)
+          }
+          res = await s3Upload(s3Config, s3Key, JSON.stringify(marks))
+        }
+        break;
+      }
+      case 'webdav': {
+        const webdavConfig = await store.get<WebDAVConfig>('webdavSyncConfig')
+        if (webdavConfig) {
+          const webdavKey = `${path}/${filename}`
+          const existingFile = await webdavHeadObject(webdavConfig, webdavKey)
+          if (existingFile) {
+            await webdavDelete(webdavConfig, webdavKey)
+          }
+          res = await webdavUpload(webdavConfig, webdavKey, JSON.stringify(marks))
+        }
+        break;
+      }
+    }
+    } catch (error) {
+      console.error('[mark store] uploadMarks error:', error)
     }
     if (res) {
       result = true
@@ -281,13 +508,39 @@ const useMarkStore = create<MarkState>((set, get) => ({
         const giteaRepoName = await getSyncRepoName('gitea')
         files = await giteaGetFileContent({ path: `${path}/${filename}`, ref: 'main', repo: giteaRepoName })
         break;
+      case 's3': {
+        const s3Config = await store.get<S3Config>('s3SyncConfig')
+        if (s3Config) {
+          const s3Key = `${path}/${filename}`
+          const s3Result = await s3Download(s3Config, s3Key)
+          if (s3Result) {
+            // S3 返回的 content 是字符串，直接解析
+            result = JSON.parse(s3Result.content)
+          }
+        }
+        break;
+      }
+      case 'webdav': {
+        const webdavConfig = await store.get<WebDAVConfig>('webdavSyncConfig')
+        if (webdavConfig) {
+          const webdavKey = `${path}/${filename}`
+          const webdavResult = await webdavDownload(webdavConfig, webdavKey)
+          if (webdavResult) {
+            result = JSON.parse(webdavResult.content)
+          }
+        }
+        break;
+      }
     }
+    // S3 已经直接解析到 result 了，这里处理 Git 平台
     if (files) {
-      const configJson = decodeBase64ToString(files.content)
+      const configJson = decodeBase64ToString(getRemoteFileContent(files, `${path}/${filename}`))
       result = JSON.parse(configJson)
     }
-    await deleteAllMarks()
-    await insertMarks(result)
+    if (result.length > 0) {
+      await deleteAllMarks()
+      await insertMarks(result)
+    }
     set({ syncState: false })
     return result
   },

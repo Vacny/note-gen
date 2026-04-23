@@ -1,5 +1,7 @@
 import { getDb } from "./index"
-import { BaseDirectory, exists, mkdir } from "@tauri-apps/plugin-fs"
+import { BaseDirectory, exists, mkdir, remove } from "@tauri-apps/plugin-fs"
+import { insertActivityEvent } from './activity'
+import { truncateActivityText } from '@/lib/activity/events'
 
 export interface Mark {
   id: number
@@ -12,12 +14,88 @@ export interface Mark {
   createdAt: number
 }
 
+const HTTP_URL_PATTERN = /^https?:\/\//i
+
+function isHttpUrl(path?: string): boolean {
+  return !!path && HTTP_URL_PATTERN.test(path)
+}
+
+function normalizeStoredPath(path: string): string {
+  return path.replace(/^[/\\]+/, '').replace(/\\/g, '/')
+}
+
+function getStoredFileName(path: string): string {
+  const normalizedPath = normalizeStoredPath(path)
+  const segments = normalizedPath.split('/')
+
+  return segments[segments.length - 1] || ''
+}
+
+export function getMarkLocalAssetPath(mark: Pick<Mark, 'type' | 'url'>): string | null {
+  if (!mark.url || isHttpUrl(mark.url)) {
+    return null
+  }
+
+  if (mark.type === 'scan') {
+    const fileName = getStoredFileName(mark.url)
+    return fileName ? `screenshot/${fileName}` : null
+  }
+
+  if (mark.type === 'image') {
+    const fileName = getStoredFileName(mark.url)
+    return fileName ? `image/${fileName}` : null
+  }
+
+  if (mark.type === 'recording') {
+    const relativePath = normalizeStoredPath(mark.url)
+    return relativePath || null
+  }
+
+  return null
+}
+
+async function deleteMarkLocalAsset(mark: Pick<Mark, 'type' | 'url'>) {
+  const assetPath = getMarkLocalAssetPath(mark)
+  if (!assetPath) {
+    return
+  }
+
+  const fileExists = await exists(assetPath, { baseDir: BaseDirectory.AppData })
+  if (!fileExists) {
+    return
+  }
+
+  await remove(assetPath, { baseDir: BaseDirectory.AppData })
+}
+
+async function deleteMarkLocalAssets(marks: Pick<Mark, 'type' | 'url'>[]) {
+  for (const mark of marks) {
+    try {
+      await deleteMarkLocalAsset(mark)
+    } catch (error) {
+      console.error('Error deleting mark local asset:', mark.url, error)
+    }
+  }
+}
+
 
 // 创建 marks 表
 export async function initMarksDb() {
   const isExist = await exists('screenshot', { baseDir: BaseDirectory.AppData})
   if (!isExist) {
     await mkdir('screenshot', { baseDir: BaseDirectory.AppData})
+  }
+  const isImageDirExist = await exists('image', { baseDir: BaseDirectory.AppData })
+  if (!isImageDirExist) {
+    await mkdir('image', { baseDir: BaseDirectory.AppData })
+  }
+  const isRecordingDirExist = await exists('recordings', { baseDir: BaseDirectory.AppData })
+  if (!isRecordingDirExist) {
+    await mkdir('recordings', { baseDir: BaseDirectory.AppData })
+  }
+  const isTempScreenshotDirExist = await exists('temp_screenshot', { baseDir: BaseDirectory.AppData })
+  if (isTempScreenshotDirExist) {
+    await remove('temp_screenshot', { baseDir: BaseDirectory.AppData, recursive: true })
   }
   const db = await getDb()
   await db.execute(`
@@ -43,10 +121,23 @@ export async function getMarks(id: number) {
 export async function insertMark(mark: Partial<Mark>) {
   const db = await getDb();
   const createdAt = Date.now();
-  return await db.execute(
+  const result = await db.execute(
     "insert into marks (tagId, type, content, url, desc, createdAt, deleted) values ($1, $2, $3, $4, $5, $6, $7)",
     [mark.tagId, mark.type,  mark.content, mark.url, mark.desc, createdAt, 0]
   )
+
+  const preview = truncateActivityText(mark.desc || mark.content || mark.url || '', 140)
+
+  await insertActivityEvent({
+    source: 'record',
+    title: preview || mark.type || 'record',
+    description: preview || mark.type || '',
+    tagId: mark.tagId ?? null,
+    dedupeKey: result.lastInsertId ? `record:${result.lastInsertId}` : `record:${createdAt}:${mark.type || 'record'}`,
+    createdAt,
+  })
+
+  return result
 }
 
 export async function getAllMarks() {
@@ -108,11 +199,15 @@ export async function insertMarks(marks: Partial<Mark>[]) {
 
 export async function delMarkForever(id: number) {
   const db = await getDb();
+  const marks = await db.select<Mark[]>("select type, url from marks where id = $1", [id])
+  await deleteMarkLocalAssets(marks)
   return await db.execute("delete from marks where id = $1", [id])
 }
 
 export async function clearTrash() {
   const db = await getDb();
+  const marks = await db.select<Mark[]>("select type, url from marks where deleted = $1", [1])
+  await deleteMarkLocalAssets(marks)
   return await db.execute("delete from marks where deleted = $1", [1])
 }
 

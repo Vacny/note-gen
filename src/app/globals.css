@@ -85,6 +85,30 @@
   to {
     background-position: 0% 0%;}}}
 
+@keyframes recordSearchBreathe {
+  0% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.45);
+    background-color: rgba(254, 243, 199, 0.4);
+  }
+
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.18);
+    border-color: rgba(245, 158, 11, 0.9);
+    background-color: rgba(254, 243, 199, 0.9);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.35);
+    background-color: rgba(254, 243, 199, 0.35);
+  }
+}
+
+.record-search-highlight {
+  animation: recordSearchBreathe 1.5s ease-in-out 2;
+}
+
 /* 基础样式 - 包含主题变量定义 */
 @layer base {
   :root {
@@ -353,4 +377,31 @@ ol {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Tiptap 搜索替换高亮样式 */
+.search-result {
+  background-color: #ffeb3b !important;
+  color: #000 !important;
+  padding: 0 2px !important;
+  border-radius: 2px !important;
+  text-decoration: none !important;
+}
+
+.search-result.search-result-current,
+.search-result.is-current {
+  background-color: #ff9800 !important;
+  color: #fff !important;
+}
+
+/* 暗色模式适配 */
+.dark .search-result {
+  background-color: #f59e0b !important;
+  color: #000 !important;
+}
+
+.dark .search-result.search-result-current,
+.dark .search-result.is-current {
+  background-color: #ea580c !important;
+  color: #fff !important;
 }

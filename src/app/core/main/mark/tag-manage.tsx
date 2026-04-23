@@ -18,12 +18,16 @@ import {
   EmptyDescription,
 } from "@/components/ui/empty"
 import { initTagsDb, insertTag, Tag, delTag, updateTag, updateTagsOrder } from "@/db/tags"
+import type { Mark } from "@/db/marks"
 import useTagStore from "@/stores/tag"
 import useMarkStore from "@/stores/mark"
 import useChatStore from "@/stores/chat"
-import { MarkItem } from './mark-item'
 import { MarkLoading } from './mark-loading'
 import { ImageGallery } from './image-gallery'
+import { filterMarks } from './mark-filters'
+import { MarkListDefaultView } from './mark-list-default-view'
+import { MarkListCompactView } from './mark-list-compact-view'
+import { MarkListCardView } from './mark-list-card-view'
 import emitter from '@/lib/emitter'
 import { EmitterRecordEvents } from '@/config/emitters'
 import {
@@ -169,7 +173,19 @@ export function TagManage() {
     getCurrentTag
   } = useTagStore()
 
-  const { marks, queues, fetchMarks } = useMarkStore()
+  const {
+    marks,
+    queues,
+    fetchMarks,
+    recordFilters,
+    recordViewMode,
+    hasActiveRecordFilters,
+    setVisibleMarkIds,
+    pendingScrollMarkId,
+    setPendingScrollMarkId,
+    highlightedMarkId,
+    setHighlightedMarkId,
+  } = useMarkStore()
 
   async function handleAddTag() {
     if (!newTagName.trim()) return
@@ -217,6 +233,34 @@ export function TagManage() {
   const getTagMarks = (tagId: number) => {
     return marks.filter(mark => mark.tagId === tagId)
   }
+
+  const filtersActive = hasActiveRecordFilters()
+
+  const getFilteredTagMarks = React.useCallback((tagId: number) => {
+    return filterMarks(getTagMarks(tagId), {
+      ...recordFilters,
+      tagId: 'all',
+    })
+  }, [marks, recordFilters])
+
+  const visibleTags = React.useMemo(() => {
+    return tags.filter((tag) => {
+      if (recordFilters.tagId !== 'all' && tag.id !== recordFilters.tagId) {
+        return false
+      }
+
+      if (!filtersActive) {
+        return true
+      }
+
+      const hasQueue = queues.some((queue) => queue.tagId === tag.id)
+      return getFilteredTagMarks(tag.id).length > 0 || hasQueue
+    })
+  }, [filtersActive, getFilteredTagMarks, queues, recordFilters.tagId, tags])
+
+  const visibleMarkIds = React.useMemo(() => {
+    return visibleTags.flatMap((tag) => getFilteredTagMarks(tag.id).map((mark: Mark) => mark.id))
+  }, [getFilteredTagMarks, visibleTags])
 
   // 处理拖拽结束
   async function handleDragEnd(event: DragEndEvent) {
@@ -274,6 +318,100 @@ export function TagManage() {
     }
   }, [currentTagId, fetchMarks])
 
+  React.useEffect(() => {
+    if (!pendingScrollMarkId || expandedTagId !== currentTagId.toString()) {
+      return
+    }
+
+    if (!marks.some((mark) => mark.id === pendingScrollMarkId && mark.tagId === currentTagId)) {
+      return
+    }
+
+    let cancelled = false
+    let attempts = 0
+    const maxAttempts = 20
+
+    const scrollToTarget = () => {
+      if (cancelled) return
+
+      const target = document.querySelector<HTMLElement>(`[data-mark-id="${pendingScrollMarkId}"]`)
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        setHighlightedMarkId(pendingScrollMarkId)
+        setPendingScrollMarkId(null)
+        return
+      }
+
+      if (attempts >= maxAttempts) {
+        setPendingScrollMarkId(null)
+        return
+      }
+
+      attempts += 1
+      window.setTimeout(scrollToTarget, 50)
+    }
+
+    scrollToTarget()
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentTagId, expandedTagId, marks, pendingScrollMarkId, setHighlightedMarkId, setPendingScrollMarkId])
+
+  React.useEffect(() => {
+    if (!highlightedMarkId) {
+      return
+    }
+
+    const clearHighlightTimer = window.setTimeout(() => {
+      setHighlightedMarkId(null)
+    }, 3000)
+
+    return () => {
+      clearTimeout(clearHighlightTimer)
+    }
+  }, [highlightedMarkId, setHighlightedMarkId])
+
+  React.useEffect(() => {
+    setVisibleMarkIds(visibleMarkIds)
+    return () => setVisibleMarkIds([])
+  }, [setVisibleMarkIds, visibleMarkIds])
+
+  const renderTagRecords = React.useCallback((tagId: number) => {
+    const filteredMarks = getFilteredTagMarks(tagId).filter((mark: Mark) => {
+      if (mark.type === 'image' || mark.type === 'scan') {
+        return mark.content && mark.content.trim() !== ''
+      }
+      return true
+    })
+
+    if (filteredMarks.length === 0 && queues.filter(queue => queue.tagId === tagId).length === 0) {
+      return (
+        <Empty className="border-0 py-8">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Inbox />
+            </EmptyMedia>
+            <EmptyTitle className="text-sm">{t('record.mark.empty')}</EmptyTitle>
+            <EmptyDescription className="text-xs">
+              {t('record.mark.mark.emptyHint')}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )
+    }
+
+    switch (recordViewMode) {
+    case 'compact':
+      return <MarkListCompactView marks={filteredMarks} />
+    case 'cards':
+      return <MarkListCardView marks={filteredMarks} />
+    case 'list':
+    default:
+      return <MarkListDefaultView marks={filteredMarks} />
+    }
+  }, [getFilteredTagMarks, queues, recordViewMode, t])
+
   return (
     <div className="w-full">
       <DndContext
@@ -283,7 +421,7 @@ export function TagManage() {
         onDragEnd={handleDragEnd}
       >
         <SortableContext
-          items={tags.map(tag => tag.id)}
+          items={visibleTags.map(tag => tag.id)}
           strategy={verticalListSortingStrategy}
         >
           {/* 标签列表 */}
@@ -297,7 +435,19 @@ export function TagManage() {
             }}
             className="w-full"
           >
-            {tags?.map((tag) => (
+            {visibleTags.length === 0 ? (
+              <Empty className="border-0 py-10">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <Inbox />
+                  </EmptyMedia>
+                  <EmptyTitle className="text-sm">{t('record.mark.list.emptyFiltered')}</EmptyTitle>
+                  <EmptyDescription className="text-xs">
+                    {t('record.mark.list.emptyFilteredHint')}
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : visibleTags.map((tag) => (
               <SortableTagItem key={tag.id} tag={tag}>
                 <AccordionItemWrapper value={tag.id.toString()}>
                   <ContextMenu>
@@ -361,37 +511,10 @@ export function TagManage() {
                     ))}
 
                     {/* 图片画廊 - 显示当前标签下所有无内容的图片 */}
-                    <ImageGallery marks={getTagMarks(tag.id)} />
+                    <ImageGallery marks={getFilteredTagMarks(tag.id)} />
                     
                     {/* 显示已完成的记录 - 过滤掉没有内容的图片记录 */}
-                    {(() => {
-                      const filteredMarks = getTagMarks(tag.id).filter(mark => {
-                        // 如果是图片类型（scan 或 image），只显示有内容或描述的
-                        if (mark.type === 'image' || mark.type === 'scan') {
-                          return mark.content && mark.content.trim() !== ''
-                        }
-                        // 其他类型的记录正常显示
-                        return true
-                      })
-                      
-                      return filteredMarks.length === 0 && queues.filter(queue => queue.tagId === tag.id).length === 0 ? (
-                        <Empty className="border-0 py-8">
-                          <EmptyHeader>
-                            <EmptyMedia variant="icon">
-                              <Inbox />
-                            </EmptyMedia>
-                            <EmptyTitle className="text-sm">{t('record.mark.empty')}</EmptyTitle>
-                            <EmptyDescription className="text-xs">
-                              {t('record.mark.mark.emptyHint')}
-                            </EmptyDescription>
-                          </EmptyHeader>
-                        </Empty>
-                      ) : (
-                        filteredMarks.map((mark) => (
-                          <MarkItem key={mark.id} mark={mark} />
-                        ))
-                      )
-                    })()}
+                    {renderTagRecords(tag.id)}
                   </AccordionContent>
                 </AccordionItemWrapper>
               </SortableTagItem>

@@ -6,8 +6,7 @@ import { useState } from "react";
 import useArticleStore, { DirTree } from "@/stores/article";
 import { computedParentPath } from "@/lib/path";
 import { collectMarkdownFiles } from "@/lib/files";
-import { readTextFile, exists } from "@tauri-apps/plugin-fs";
-import { getFilePathOptions } from "@/lib/workspace";
+import { calculateFolderVectors } from "@/lib/folder-vector";
 
 interface FolderVectorMenuProps {
   item: DirTree;
@@ -51,51 +50,25 @@ export function FolderVectorMenu({ item }: FolderVectorMenuProps) {
         return;
       }
 
-      let successCount = 0;
-      let failedCount = 0;
+      const result = await calculateFolderVectors({
+        folderPath: path,
+        mode: 'missing',
+        checkFileVectorIndexed,
+        setVectorCalcStatus,
+      });
 
-      for (const file of markdownFiles) {
-        try {
-          const hasVector = await checkFileVectorIndexed(file.name);
-
-          if (!hasVector) {
-            // 设置文件为计算中状态
-            setVectorCalcStatus(file.path, 'calculating');
-
-            // 读取文件内容
-            const pathOptions = await getFilePathOptions(file.path);
-            let content = '';
-
-            const fileExists = await exists(pathOptions.path, { baseDir: pathOptions.baseDir });
-            if (!fileExists) {
-              console.warn(`文件不存在: ${file.path}`);
-              failedCount++;
-              setVectorCalcStatus(file.path, 'idle');
-              continue;
-            }
-
-            if (pathOptions.baseDir) {
-              content = await readTextFile(pathOptions.path, { baseDir: pathOptions.baseDir });
-            } else {
-              content = await readTextFile(pathOptions.path);
-            }
-
-            // 计算向量 - 直接从 RAG 库导入
-            const { processMarkdownFile } = await import('@/lib/rag');
-            await processMarkdownFile(file.name, content);
-
-            // 设置文件为完成状态
-            setVectorCalcStatus(file.path, 'completed');
-            successCount++;
-          } else {
-            successCount++; // 已有向量，跳过
-          }
-        } catch (error) {
-          console.error(`计算文件 ${file.name} 向量失败:`, error);
-          setVectorCalcStatus(file.path, 'idle');
-          failedCount++;
-        }
+      if (!result.embeddingModelAvailable) {
+        toast({
+          title: '向量处理',
+          description: '未配置嵌入模型或模型不可用，请在AI设置中配置嵌入模型',
+          variant: 'destructive'
+        });
+        setVectorCalcStatus(path, 'idle');
+        return;
       }
+
+      const successCount = result.success + result.skipped;
+      const failedCount = result.failed;
 
       if (failedCount === 0) {
         toast({
@@ -104,13 +77,13 @@ export function FolderVectorMenu({ item }: FolderVectorMenuProps) {
       } else {
         toast({
           title: t('context.batchCalcPartial', { success: successCount, failed: failedCount }),
-          variant: failedCount === markdownFiles.length ? 'destructive' : 'default'
+          variant: failedCount === result.total ? 'destructive' : 'default'
         });
       }
 
       // 刷新向量索引状态 - 检查所有文件的向量状态
       for (const file of markdownFiles) {
-        await checkFileVectorIndexed(file.name);
+        await checkFileVectorIndexed(file.path);
       }
 
       // 设置文件夹为完成状态
@@ -161,7 +134,7 @@ export function FolderVectorMenu({ item }: FolderVectorMenuProps) {
 
       for (const file of markdownFiles) {
         try {
-          await clearFileVector(file.name);
+          await clearFileVector(file.path);
           successCount++;
         } catch (error) {
           console.error(`删除文件 ${file.name} 向量失败:`, error);

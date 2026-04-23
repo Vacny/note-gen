@@ -14,72 +14,199 @@ import ChatEmpty from './chat-empty'
 import { useTranslations } from 'next-intl'
 import ChatThinking from './chat-thinking'
 import { Separator } from '@/components/ui/separator'
-import { scrollToBottom } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { McpToolCallCard } from './mcp-tool-call'
 import { AgentExecutionStatus } from './agent-execution-status'
 import { AgentPanelWithRag } from './agent-panel-with-rag'
 import { ChatImages } from "./chat-images"
+import { useIsMobile } from '@/hooks/use-mobile'
+
+const BOTTOM_THRESHOLD = 24
+const USER_SCROLL_GRACE_MS = 300
 
 const ChatContent = React.memo(function ChatContent() {
   const { chats, init, agentState, loading } = useChatStore()
   const { currentTagId } = useTagStore()
   const [isOnBottom, setIsOnBottom] = useState(true)
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true)
+  const wrapperRef = React.useRef<HTMLDivElement>(null)
+  const contentRef = React.useRef<HTMLDivElement>(null)
+  const bottomAnchorRef = React.useRef<HTMLDivElement>(null)
+  const programmaticScrollRef = React.useRef(false)
+  const autoScrollEnabledRef = React.useRef(true)
+  const delayedScrollTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastUserScrollAtRef = React.useRef(0)
+
+  const isNearBottom = useCallback((element: Element) => {
+    return element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_THRESHOLD
+  }, [])
 
   const handleScroll = useCallback(() => {
-    const md = document.querySelector('#chats-wrapper')
+    const md = wrapperRef.current
     if (!md) return
-    const onBottom = md.scrollHeight - md.scrollTop - md.clientHeight < 1
+
+    const onBottom = isNearBottom(md)
     setIsOnBottom(onBottom)
 
-    // 当用户滚动到顶部时，禁用自动滚动；滚动到底部时，启用自动滚动
+    if (programmaticScrollRef.current) {
+      if (onBottom) {
+        programmaticScrollRef.current = false
+      }
+      return
+    }
+
+    const isLikelyUserScroll = Date.now() - lastUserScrollAtRef.current < USER_SCROLL_GRACE_MS
+
+    // 只有用户主动离开底部时才关闭自动滚动
     if (onBottom) {
       setAutoScrollEnabled(true)
-    } else {
+    } else if (isLikelyUserScroll) {
       setAutoScrollEnabled(false)
     }
+  }, [isNearBottom])
+
+  const markUserScrollIntent = useCallback(() => {
+    lastUserScrollAtRef.current = Date.now()
   }, [])
+
+  const performAutoScroll = useCallback(() => {
+    programmaticScrollRef.current = true
+    bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
+    setIsOnBottom(true)
+
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        programmaticScrollRef.current = false
+        const md = wrapperRef.current
+        if (md) {
+          setIsOnBottom(isNearBottom(md))
+        }
+      }, 0)
+    })
+
+    if (delayedScrollTimeoutRef.current) {
+      clearTimeout(delayedScrollTimeoutRef.current)
+    }
+
+    delayedScrollTimeoutRef.current = setTimeout(() => {
+      if (!autoScrollEnabledRef.current) return
+
+      programmaticScrollRef.current = true
+      bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
+      setIsOnBottom(true)
+
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          programmaticScrollRef.current = false
+          const md = wrapperRef.current
+          if (md) {
+            setIsOnBottom(isNearBottom(md))
+          }
+        }, 0)
+      })
+    }, 500)
+  }, [isNearBottom])
 
   // 手动滚动到底部并启用自动滚动
   const handleScrollToBottom = useCallback(() => {
-    scrollToBottom()
+    performAutoScroll()
     setAutoScrollEnabled(true)
-  }, [])
+  }, [performAutoScroll])
 
   useEffect(() => {
-    const md = document.querySelector('#chats-wrapper')
+    const md = wrapperRef.current
     if (!md) return
+
+    const handleTouchStart = () => markUserScrollIntent()
+    const handleTouchMove = () => markUserScrollIntent()
+    const handleWheel = () => markUserScrollIntent()
+    const handlePointerDown = () => markUserScrollIntent()
+
     md.addEventListener('scroll', handleScroll)
+    md.addEventListener('touchstart', handleTouchStart, { passive: true })
+    md.addEventListener('touchmove', handleTouchMove, { passive: true })
+    md.addEventListener('wheel', handleWheel, { passive: true })
+    md.addEventListener('pointerdown', handlePointerDown, { passive: true })
+
     return () => {
       md.removeEventListener('scroll', handleScroll)
+      md.removeEventListener('touchstart', handleTouchStart)
+      md.removeEventListener('touchmove', handleTouchMove)
+      md.removeEventListener('wheel', handleWheel)
+      md.removeEventListener('pointerdown', handlePointerDown)
     }
-  }, [handleScroll])
+  }, [handleScroll, markUserScrollIntent])
 
   useEffect(() => {
     init(currentTagId)
   }, [currentTagId, init])
 
+  useEffect(() => {
+    autoScrollEnabledRef.current = autoScrollEnabled
+  }, [autoScrollEnabled])
+
+  useEffect(() => {
+    const md = wrapperRef.current
+    const content = contentRef.current
+    if (!md || !content) return
+
+    const syncScrollState = () => {
+      const onBottom = isNearBottom(md)
+
+      if (autoScrollEnabled) {
+        performAutoScroll()
+        return
+      }
+
+      setIsOnBottom(onBottom)
+    }
+
+    const observer = new ResizeObserver(syncScrollState)
+    const mutationObserver = new MutationObserver(() => {
+      syncScrollState()
+    })
+
+    observer.observe(content)
+    mutationObserver.observe(content, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    })
+
+    return () => {
+      observer.disconnect()
+      mutationObserver.disconnect()
+    }
+  }, [autoScrollEnabled, isNearBottom, performAutoScroll])
+
   // 监听消息变化，仅在启用自动滚动时才滚动
   useEffect(() => {
     if (autoScrollEnabled) {
-      scrollToBottom()
+      performAutoScroll()
     }
-  }, [chats, autoScrollEnabled])
+  }, [chats, autoScrollEnabled, performAutoScroll])
 
   // Agent 执行时，仅在启用自动滚动时才滚动到底部
   useEffect(() => {
     if (autoScrollEnabled && agentState.isRunning) {
-      scrollToBottom()
+      performAutoScroll()
     }
-  }, [agentState.currentThought, agentState.thoughtHistory, agentState.pendingConfirmation, agentState.isRunning, autoScrollEnabled])
+  }, [agentState.currentThought, agentState.thoughtHistory, agentState.pendingConfirmation, agentState.isRunning, autoScrollEnabled, performAutoScroll])
 
   // Loading 状态变化时，仅在启用自动滚动时才滚动到底部
   useEffect(() => {
     if (autoScrollEnabled && loading) {
-      scrollToBottom()
+      performAutoScroll()
     }
-  }, [loading, autoScrollEnabled])
+  }, [loading, autoScrollEnabled, performAutoScroll])
+
+  useEffect(() => {
+    return () => {
+      if (delayedScrollTimeoutRef.current) {
+        clearTimeout(delayedScrollTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // 判断是否应该显示 loading：loading=true 且最后一个 AI 消息还没有内容
   const shouldShowLoading = useMemo(() => {
@@ -95,25 +222,26 @@ const ChatContent = React.memo(function ChatContent() {
     return true
   }, [loading, agentState.isRunning, chats])
 
-  return <div id="chats-wrapper" className="flex-1 relative overflow-y-auto overflow-x-hidden w-full flex flex-col items-end p-4 gap-6">
-    {
-      chats.length ? chats.map((chat) => {
-        return <Message key={chat.id} chat={chat} />
-      }) : <ChatEmpty />
-    }
+  return <div ref={wrapperRef} id="chats-wrapper" className="flex-1 relative overflow-y-auto overflow-x-hidden w-full flex flex-col items-end p-4 gap-6 [overflow-anchor:none]">
+    <div ref={contentRef} className="w-full flex flex-col items-end gap-6">
+      {
+        chats.length ? chats.map((chat) => {
+          return <Message key={chat.id} chat={chat} />
+        }) : <ChatEmpty />
+      }
 
-    {/* Agent 执行状态 - 在底部实时显示 */}
-    <AgentExecutionStatusWrapper />
-
-    {/* Loading 指示器 - 服务器等待时显示 */}
-    {shouldShowLoading && (
-      <div className="flex w-full min-w-0 -mt-6">
-        <div className='text-sm leading-6 flex-1 flex items-center gap-2 text-muted-foreground'>
-          <Loader2 className="size-4 animate-spin" />
-          <span>正在思考...</span>
+      {/* Loading 指示器 - 服务器等待时显示 */}
+      {shouldShowLoading && (
+        <div className="flex w-full min-w-0 -mt-6">
+          <div className='text-sm leading-6 flex-1 flex items-center gap-2 text-muted-foreground'>
+            <Loader2 className="size-4 animate-spin" />
+            <span>正在思考...</span>
+          </div>
         </div>
-      </div>
-    )}
+      )}
+
+      <div ref={bottomAnchorRef} className="h-px w-full" />
+    </div>
 
     {
       !isOnBottom && <Button variant="outline" className='sticky bottom-0 size-8 right-0' onClick={handleScrollToBottom}>
@@ -127,10 +255,12 @@ ChatContent.displayName = 'ChatContent'
 const MessageWrapper = React.memo(function MessageWrapper({ chat, children }: { chat: Chat, children: React.ReactNode }) {
   const { deleteChat } = useChatStore()
   const [showDelete, setShowDelete] = useState(false)
+  const isMobile = useIsMobile()
 
   const handleDelete = useCallback(() => {
     deleteChat(chat.id)
   }, [chat.id, deleteChat])
+  const shouldShowDelete = showDelete
 
   // 用户消息：右对齐，带边框和背景
   if (chat.role === 'user') {
@@ -138,15 +268,25 @@ const MessageWrapper = React.memo(function MessageWrapper({ chat, children }: { 
       <div className="flex w-full justify-end">
         <div
           className="group relative max-w-[85%] rounded-lg border px-3 py-2"
-          onMouseEnter={() => setShowDelete(true)}
-          onMouseLeave={() => setShowDelete(false)}
+          onMouseEnter={() => {
+            if (!isMobile) setShowDelete(true)
+          }}
+          onMouseLeave={() => {
+            if (!isMobile) setShowDelete(false)
+          }}
+          onClick={() => {
+            if (isMobile) setShowDelete((prev) => !prev)
+          }}
         >
           <div className='text-sm leading-6 wrap-break-word text-primary-foreground'>
             {children}
           </div>
-          {showDelete && (
+          {shouldShowDelete && (
             <Button
-              onClick={handleDelete}
+              onClick={(event) => {
+                event.stopPropagation()
+                handleDelete()
+              }}
               size="icon"
               variant="ghost"
               className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-background border shadow-sm"
@@ -170,50 +310,12 @@ const MessageWrapper = React.memo(function MessageWrapper({ chat, children }: { 
 })
 MessageWrapper.displayName = 'MessageWrapper'
 
-const AgentExecutionStatusWrapper = React.memo(function AgentExecutionStatusWrapper() {
-  const { agentState, loading } = useChatStore()
-
-  // 只在 Agent 运行时或 Final Answer 模式下显示
-  if (!agentState.isRunning && !agentState.isFinalAnswerMode) {
-    return null
-  }
-
-  // Final Answer 模式：同时显示 Markdown 内容 和 步骤历史面板
-  if (agentState.isFinalAnswerMode && agentState.finalAnswerContent) {
-    return (
-      <div className="flex flex-col w-full min-w-0 gap-2">
-        {/* 步骤历史面板 - 始终显示 */}
-        {(agentState.completedSteps?.length > 0 || agentState.thoughtHistory?.length > 0) && (
-          <div className="flex w-full min-w-0">
-            <div className='text-sm leading-6 flex-1 wrap-break-word min-w-0 overflow-hidden'>
-              <AgentExecutionStatus />
-            </div>
-          </div>
-        )}
-        {/* Final Answer 内容 */}
-        <div className="flex w-full min-w-0">
-          <div className='text-sm leading-6 flex-1 wrap-break-word min-w-0 overflow-hidden'>
-            <ChatPreview text={agentState.finalAnswerContent} streaming={loading} />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex w-full min-w-0">
-      <div className='text-sm leading-6 flex-1 wrap-break-word min-w-0 overflow-hidden'>
-        <AgentExecutionStatus />
-      </div>
-    </div>
-  )
-})
-AgentExecutionStatusWrapper.displayName = 'AgentExecutionStatusWrapper'
-
 const Message = React.memo(function Message({ chat }: { chat: Chat }) {
   const t = useTranslations()
-  const { deleteChat, getMcpToolCallsByChatId, loading } = useChatStore()
+  const { deleteChat, getMcpToolCallsByChatId, loading, agentState } = useChatStore()
   const content = chat.content
+  const isActiveAgentMessage = chat.role === 'system' && agentState.activeChatId === chat.id
+  const isLiveAgentVisible = isActiveAgentMessage && (agentState.isRunning || agentState.isFinalAnswerMode)
 
   const handleRemoveClearContext = useCallback(() => {
     deleteChat(chat.id)
@@ -266,6 +368,8 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
         fileName: string
         startLine: number
         endLine: number
+        from: number
+        to: number
         articlePath: string
       }
     } catch {
@@ -317,7 +421,8 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
         (chat.agentHistory && chat.agentHistory.length > 0) ||
         ragSources.length > 0 ||
         ragSourceDetails.length > 0 ||
-        mcpToolCalls.length > 0
+        mcpToolCalls.length > 0 ||
+        isLiveAgentVisible
       )
 
       // 用户消息或有内容的 AI 消息才渲染
@@ -339,6 +444,20 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
               />
             )}
 
+            {isLiveAgentVisible && (
+              <div className="space-y-2">
+                {!agentState.isFinalAnswerMode && (agentState.isRunning || agentState.completedSteps?.length > 0 || agentState.thoughtHistory?.length > 0) && (
+                  <AgentExecutionStatus />
+                )}
+                {agentState.isFinalAnswerMode && agentState.finalAnswerContent && (
+                  <ChatPreview
+                    text={agentState.finalAnswerContent}
+                    streaming={loading && isActiveAgentMessage}
+                  />
+                )}
+              </div>
+            )}
+
             {/* MCP 工具调用展示 */}
             {mcpToolCalls.length > 0 && (
               <div className="space-y-4">
@@ -349,7 +468,7 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
             )}
 
             <ChatThinking chat={chat} />
-            <ChatPreview text={content || ''} streaming={loading && chat.role === 'system'} />
+            <ChatPreview text={content || ''} streaming={loading && isActiveAgentMessage} />
             <MessageControl chat={chat}>
               <MarkText chat={chat} />
             </MessageControl>
