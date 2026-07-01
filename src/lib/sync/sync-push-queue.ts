@@ -7,9 +7,14 @@ import { readTextFile } from '@tauri-apps/plugin-fs'
 import emitter from '@/lib/emitter'
 import { pullRemoteFile, setLocalRecordedSha, getLocalRecordedSha } from './auto-sync'
 import { getRemoteFileInfo } from './auto-sync'
+import { isSyncConfigured } from './sync-manager'
 import useSettingStore from '@/stores/setting'
 import useSyncStore from '@/stores/sync'
 import { S3Config, WebDAVConfig } from '@/types/sync'
+import { debugSyncPerf } from './remote-file'
+import { generateGitSyncCommitMessage } from './commit-message'
+
+type SyncProvider = 'gitee' | 'github' | 'gitlab' | 'gitea' | 's3' | 'webdav'
 
 /**
  * 获取 S3 配置
@@ -47,6 +52,14 @@ async function getProxyConfig(): Promise<{ all: string } | undefined> {
 interface PushTask {
   path: string
   timestamp: number
+}
+
+function getPerfNow() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function roundMs(value: number) {
+  return Math.round(value)
 }
 
 // 使用模块级变量来跟踪初始化状态，避免 HMR 重复注册
@@ -205,6 +218,11 @@ class SyncPushQueue {
       return
     }
 
+    if (!await isSyncConfigured()) {
+      this.clear()
+      return
+    }
+
     // Bug fix: Process all tasks in the queue (newest first)
     // Group by path - keep only the newest task for each path
     const taskMap = new Map<string, PushTask>()
@@ -248,12 +266,40 @@ class SyncPushQueue {
    */
   private async pushToRemote(path: string): Promise<{ success: boolean; sha?: string }> {
     const maxRetries = 3
+    const syncStartedAt = getPerfNow()
+    let previousPerfAt = syncStartedAt
+    let providerForLog: SyncProvider | 'unknown' = 'unknown'
+    const logPerf = (step: string, payload: Record<string, unknown> = {}) => {
+      const now = getPerfNow()
+      debugSyncPerf(`syncQueue.${step}`, {
+        path,
+        provider: providerForLog,
+        stepMs: roundMs(now - previousPerfAt),
+        totalMs: roundMs(now - syncStartedAt),
+        ...payload,
+      })
+      previousPerfAt = now
+    }
+
+    if (!await isSyncConfigured()) {
+      logPerf('skipped', { reason: 'sync-not-configured' })
+      return { success: false }
+    }
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        logPerf('startAttempt', {
+          attempt,
+          maxRetries,
+        })
         const store = await Store.load('store.json')
-        const provider = (await store.get<string>('primaryBackupMethod') || 'github') as 'gitee' | 'github' | 'gitlab' | 'gitea' | 's3' | 'webdav'
+        const provider = (await store.get<string>('primaryBackupMethod') || 'github') as SyncProvider
+        providerForLog = provider
         const repo = (provider !== 's3' && provider !== 'webdav') ? await getSyncRepoName(provider) : undefined
+        logPerf('loadConfig', {
+          attempt,
+          hasRepo: Boolean(repo),
+        })
 
         // 从磁盘读取最新内容，确保上传的是本地最新内容
         const workspace = await getWorkspacePath()
@@ -261,27 +307,69 @@ class SyncPushQueue {
         const content = workspace.isCustom
           ? await readTextFile(pathOptions.path)
           : await readTextFile(pathOptions.path, { baseDir: pathOptions.baseDir })
+        logPerf('readLocalFile', {
+          attempt,
+          workspaceCustom: workspace.isCustom,
+          contentLength: content.length,
+        })
 
         // 检查本地内容是否与远程相同，如果相同则跳过推送
         try {
           const remoteContent = await pullRemoteFile(path)
+          logPerf('pullRemoteFile', {
+            attempt,
+            remoteLength: remoteContent.length,
+            isSameContent: remoteContent === content,
+          })
           if (remoteContent === content) {
             // 获取远程 SHA 用于更新文件树
             const remoteSha = await this.getRemoteSha(path)
+            logPerf('getRemoteShaWhenSame', {
+              attempt,
+              hasSha: Boolean(remoteSha),
+            })
             // 更新本地记录的 SHA，这样下次推送时就会检测到 SHA 匹配而跳过
             if (remoteSha) {
               await setLocalRecordedSha(path, remoteSha)
+              logPerf('recordLocalSha', {
+                attempt,
+                hasSha: true,
+              })
             }
             // 发送完成事件
             emitter.emit('sync-push-completed', { path, success: true, sha: remoteSha })
+            logPerf('completed', {
+              attempt,
+              skippedUpload: true,
+              success: true,
+              hasSha: Boolean(remoteSha),
+            })
             return { success: true, sha: remoteSha }
           }
-        } catch {
+        } catch (remoteError) {
           // 远程文件不存在或获取失败，继续推送
+          logPerf('pullRemoteFileFailed', {
+            attempt,
+            message: remoteError instanceof Error ? remoteError.message : String(remoteError),
+          })
         }
 
-        // 生成提交信息
-        const commitMessage = await this.generateCommitMessage(path, content)
+        const needsCommitMessage = provider !== 's3' && provider !== 'webdav'
+        const commitMessage = needsCommitMessage
+          ? await generateGitSyncCommitMessage(path, content)
+          : ''
+        if (needsCommitMessage) {
+          logPerf('generateCommitMessage', {
+            attempt,
+            messageLength: commitMessage.length,
+            thinkingDisabled: true,
+          })
+        } else {
+          logPerf('skipCommitMessage', {
+            attempt,
+            reason: 'provider-without-commits',
+          })
+        }
 
         let success = false
         let uploadedSha: string | undefined
@@ -289,8 +377,14 @@ class SyncPushQueue {
         switch (provider) {
           case 'github': {
             const githubModule = await import('@/lib/sync/github') as any
+            logPerf('loadProviderModule', { attempt, module: 'github' })
             // 每次尝试都重新获取远程 SHA，因为远程可能在变化
             const fileInfo = await githubModule.getFiles({ path, repo })
+            logPerf('getRemoteFile', {
+              attempt,
+              isDirectory: Array.isArray(fileInfo),
+              hasRemoteSha: Boolean(fileInfo?.sha),
+            })
 
             // 检查返回的是文件还是目录
             // GitHub API 对文件返回对象，对目录返回数组
@@ -298,6 +392,11 @@ class SyncPushQueue {
             if (Array.isArray(fileInfo)) {
               console.warn(`[SyncPushQueue] ${path} 是目录，无法推送`)
               emitter.emit('sync-push-completed', { path, success: false })
+              logPerf('completed', {
+                attempt,
+                success: false,
+                reason: 'remote-is-directory',
+              })
               return { success: false }
             }
 
@@ -310,6 +409,11 @@ class SyncPushQueue {
               repo,
               path
             })
+            logPerf('uploadFile', {
+              attempt,
+              hasData: Boolean(result?.data),
+              hasResultSha: Boolean(result?.data?.content?.sha),
+            })
             // 检查上传是否成功（result 必须存在且有 data）
             if (result && result.data) {
               success = true
@@ -319,8 +423,14 @@ class SyncPushQueue {
           }
           case 'gitee': {
             const giteeModule = await import('@/lib/sync/gitee') as any
+            logPerf('loadProviderModule', { attempt, module: 'gitee' })
             // 每次尝试都重新获取远程 SHA
             const fileInfo = await giteeModule.getFiles({ path, repo})
+            logPerf('getRemoteFile', {
+              attempt,
+              isDirectory: Array.isArray(fileInfo),
+              hasRemoteSha: Boolean(fileInfo?.sha),
+            })
 
             // 检查返回的是文件还是目录
             // Gitee API 对文件返回对象，对目录返回数组
@@ -328,6 +438,11 @@ class SyncPushQueue {
             if (Array.isArray(fileInfo)) {
               console.warn(`[SyncPushQueue] ${path} 是目录，无法推送`)
               emitter.emit('sync-push-completed', { path, success: false })
+              logPerf('completed', {
+                attempt,
+                success: false,
+                reason: 'remote-is-directory',
+              })
               return { success: false }
             }
 
@@ -340,6 +455,11 @@ class SyncPushQueue {
               repo,
               path
             })
+            logPerf('uploadFile', {
+              attempt,
+              hasData: Boolean(result?.data),
+              hasResultSha: Boolean(result?.data?.content?.sha),
+            })
             // 检查上传是否成功
             if (result && result.data) {
               success = true
@@ -350,12 +470,23 @@ class SyncPushQueue {
           }
           case 'gitlab': {
             const gitlabModule = await import('@/lib/sync/gitlab') as any
+            logPerf('loadProviderModule', { attempt, module: 'gitlab' })
             // 先获取远程文件的 SHA（blob_id），uploadFile 会用它获取 last_commit_id
             const fileInfo = await gitlabModule.getFiles({ path, repo })
+            logPerf('getRemoteFile', {
+              attempt,
+              isDirectory: Array.isArray(fileInfo),
+              hasRemoteSha: Boolean(fileInfo?.sha),
+            })
             // GitLab getFiles 返回文件对象或文件数组，检查是否为数组（目录）
             if (Array.isArray(fileInfo)) {
               console.warn(`[SyncPushQueue] ${path} 是目录，无法推送`)
               emitter.emit('sync-push-completed', { path, success: false })
+              logPerf('completed', {
+                attempt,
+                success: false,
+                reason: 'remote-is-directory',
+              })
               return { success: false }
             }
             const result = await gitlabModule.uploadFile({
@@ -366,22 +497,41 @@ class SyncPushQueue {
               repo,
               path
             })
+            logPerf('uploadFile', {
+              attempt,
+              hasData: Boolean(result?.data),
+            })
             // 检查上传是否成功
             if (result && result.data) {
               success = true
               // GitLab 上传成功后从 commit 获取 SHA
               uploadedSha = await this.getRemoteSha(path)
+              logPerf('refreshUploadedSha', {
+                attempt,
+                hasSha: Boolean(uploadedSha),
+              })
             }
             break
           }
           case 'gitea': {
             const giteaModule = await import('@/lib/sync/gitea') as any
+            logPerf('loadProviderModule', { attempt, module: 'gitea' })
             // 先获取远程文件的 SHA
             const fileInfo = await giteaModule.getFiles({ path, repo })
+            logPerf('getRemoteFile', {
+              attempt,
+              isDirectory: Array.isArray(fileInfo),
+              hasRemoteSha: Boolean(fileInfo?.sha),
+            })
             // Gitea getFiles 返回文件对象或文件数组，检查是否为数组（目录）
             if (Array.isArray(fileInfo)) {
               console.warn(`[SyncPushQueue] ${path} 是目录，无法推送`)
               emitter.emit('sync-push-completed', { path, success: false })
+              logPerf('completed', {
+                attempt,
+                success: false,
+                reason: 'remote-is-directory',
+              })
               return { success: false }
             }
             const result = await giteaModule.uploadFile({
@@ -392,28 +542,51 @@ class SyncPushQueue {
               repo,
               path
             })
+            logPerf('uploadFile', {
+              attempt,
+              hasData: Boolean(result?.data),
+            })
             // 检查上传是否成功
             if (result && result.data) {
               success = true
               // Gitea 上传成功后从 commit 获取 SHA
               uploadedSha = await this.getRemoteSha(path)
+              logPerf('refreshUploadedSha', {
+                attempt,
+                hasSha: Boolean(uploadedSha),
+              })
             }
             break
           }
           case 's3': {
             const s3Module = await import('@/lib/sync/s3') as any
             const s3Config = await getS3Config()
+            logPerf('loadProviderModule', { attempt, module: 's3', hasConfig: Boolean(s3Config) })
             if (!s3Config) {
               console.warn('[SyncPushQueue] S3 未配置')
               emitter.emit('sync-push-completed', { path, success: false })
+              logPerf('completed', {
+                attempt,
+                success: false,
+                reason: 'missing-config',
+              })
               return { success: false }
             }
 
             // 获取代理配置
             const proxy = await getProxyConfig()
+            logPerf('loadProxyConfig', {
+              attempt,
+              hasProxy: Boolean(proxy),
+            })
 
             // S3 不需要 SHA 检查，直接上传
             const result = await s3Module.s3Upload(s3Config, path, content, proxy)
+            logPerf('uploadFile', {
+              attempt,
+              hasResult: Boolean(result),
+              hasEtag: Boolean(result?.etag),
+            })
             if (result && result.etag) {
               success = true
               uploadedSha = result.etag // 使用 ETag 作为标识
@@ -425,17 +598,32 @@ class SyncPushQueue {
           case 'webdav': {
             const webdavModule = await import('@/lib/sync/webdav') as any
             const webdavConfig = await getWebDAVConfig()
+            logPerf('loadProviderModule', { attempt, module: 'webdav', hasConfig: Boolean(webdavConfig) })
             if (!webdavConfig) {
               console.warn('[SyncPushQueue] WebDAV 未配置')
               emitter.emit('sync-push-completed', { path, success: false })
+              logPerf('completed', {
+                attempt,
+                success: false,
+                reason: 'missing-config',
+              })
               return { success: false }
             }
 
             // 获取代理配置
             const proxy = await getProxyConfig()
+            logPerf('loadProxyConfig', {
+              attempt,
+              hasProxy: Boolean(proxy),
+            })
 
             // WebDAV 不需要 SHA 检查，直接上传
             const result = await webdavModule.webdavUpload(webdavConfig, path, content, proxy)
+            logPerf('uploadFile', {
+              attempt,
+              hasResult: Boolean(result),
+              hasEtag: Boolean(result?.etag),
+            })
             if (result) {
               success = true
               uploadedSha = result.etag || 'uploaded' // 使用 ETag 作为标识，空字符串使用默认值
@@ -450,15 +638,34 @@ class SyncPushQueue {
           // 推送成功后，保存远程 SHA 到本地 store
           if (uploadedSha) {
             await setLocalRecordedSha(path, uploadedSha)
+            logPerf('recordLocalSha', {
+              attempt,
+              hasSha: true,
+            })
           }
           emitter.emit('sync-push-completed', { path, success: true, sha: uploadedSha })
+          logPerf('completed', {
+            attempt,
+            success: true,
+            hasSha: Boolean(uploadedSha),
+          })
           return { success: true, sha: uploadedSha }
         } else {
           // 上传失败（result 为空或无效）
           emitter.emit('sync-push-completed', { path, success: false })
+          logPerf('completed', {
+            attempt,
+            success: false,
+            reason: 'empty-upload-result',
+          })
           return { success: false }
         }
       } catch (error: any) {
+        logPerf('failedAttempt', {
+          attempt,
+          message: error instanceof Error ? error.message : String(error),
+          status: error?.status,
+        })
         // 检查是否是 SHA 不匹配错误
         const errorMessage = error?.message || ''
         const errorStatus = error?.status || 0
@@ -485,6 +692,11 @@ class SyncPushQueue {
           const localRecordedSha = await getLocalRecordedSha(path)
           const remoteFileInfo = await getRemoteFileInfo(path)
           const remoteFileSha = remoteFileInfo.sha
+          logPerf('shaMismatchInfo', {
+            attempt,
+            hasLocalSha: Boolean(localRecordedSha),
+            hasRemoteSha: Boolean(remoteFileSha),
+          })
 
           // 发射事件让 UI 显示确认对话框
           emitter.emit('sync-sha-mismatch', {
@@ -496,12 +708,21 @@ class SyncPushQueue {
 
           // 不再自动重试，等待用户确认
           emitter.emit('sync-push-completed', { path, success: false })
+          logPerf('completed', {
+            attempt,
+            success: false,
+            reason: 'sha-mismatch',
+          })
           return { success: false }
         }
 
         if (isShaMismatch && attempt < maxRetries) {
           // 等待一段时间后重试（指数退避）
           const waitTime = Math.pow(2, attempt - 1) * 500
+          logPerf('retryWait', {
+            attempt,
+            waitMs: waitTime,
+          })
           await new Promise(resolve => setTimeout(resolve, waitTime))
           continue
         }
@@ -510,6 +731,11 @@ class SyncPushQueue {
         if (attempt === maxRetries || !isShaMismatch) {
           console.error('[SyncPushQueue] 推送失败:', error)
           emitter.emit('sync-push-completed', { path, success: false })
+          logPerf('completed', {
+            attempt,
+            success: false,
+            reason: 'error',
+          })
           return { success: false }
         }
       }
@@ -536,6 +762,10 @@ class SyncPushQueue {
    */
   async forcePush(path: string): Promise<{ success: boolean; sha?: string }> {
     try {
+      if (!await isSyncConfigured()) {
+        return { success: false }
+      }
+
       const store = await Store.load('store.json')
       const provider = (await store.get<string>('primaryBackupMethod') || 'github') as 'gitee' | 'github' | 'gitlab' | 'gitea' | 's3' | 'webdav'
       const repo = (provider !== 's3' && provider !== 'webdav') ? await getSyncRepoName(provider) : undefined
@@ -547,8 +777,10 @@ class SyncPushQueue {
         ? await readTextFile(pathOptions.path)
         : await readTextFile(pathOptions.path, { baseDir: pathOptions.baseDir })
 
-      // 生成提交信息
-      const commitMessage = await this.generateCommitMessage(path, content)
+      const needsCommitMessage = provider !== 's3' && provider !== 'webdav'
+      const commitMessage = needsCommitMessage
+        ? await generateGitSyncCommitMessage(path, content)
+        : ''
 
       let success = false
       let uploadedSha: string | undefined
@@ -679,24 +911,6 @@ class SyncPushQueue {
       console.error('[SyncPushQueue] 强制推送失败:', error)
       emitter.emit('sync-push-completed', { path, success: false })
       return { success: false }
-    }
-  }
-
-  /**
-   * 生成 AI 提交信息
-   */
-  private async generateCommitMessage(path: string, content: string): Promise<string> {
-    try {
-      const { fetchAi } = await import('@/lib/ai/chat')
-      const prompt = `请为以下文档内容生成一个简洁的 Git 提交信息（不超过 50 个字符）：
-
-${content.slice(0, 1000)}${content.length > 1000 ? '...' : ''}
-
-直接返回提交信息，不需要任何解释或格式。`
-      const message = await fetchAi(prompt, 'commitModel')
-      return message.trim().slice(0, 50) || `Update ${path}`
-    } catch {
-      return `Update ${path}`
     }
   }
 

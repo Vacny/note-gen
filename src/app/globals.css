@@ -198,6 +198,7 @@
     --component-active-bg: var(--secondary);
     --component-line-inactive-color: var(--muted-foreground);
     --component-active-color-default: var(--accent-foreground);
+    --notegen-app-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", Arial, sans-serif;
   }
 
   * {
@@ -207,6 +208,7 @@
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
+    font-family: var(--notegen-app-font-family);
   }
 }
 
@@ -224,14 +226,17 @@ html, body {
   font-size: 0.875rem;
   cursor: pointer;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
-.file-manange-item:hover {
-  background-color: hsl(var(--third));
+.file-manange-item:not(.active):not(.file-selected):not(.file-on-drop):hover {
+  background-color: hsl(var(--third) / 0.55);
 }
 
-.dark .file-manange-item:hover {
-  background-color: hsl(var(--muted));
+.dark .file-manange-item:not(.active):not(.file-selected):not(.file-on-drop):hover {
+  background-color: hsl(var(--muted) / 0.65);
 }
 
 .file-manange-item.active {
@@ -251,6 +256,24 @@ html, body {
 
 .dark .file-manange-item.active .bg-primary-foreground {
   background-color: hsl(var(--secondary-foreground));
+}
+
+.file-manange-item.file-selected {
+  background-color: hsl(var(--primary) / 0.12);
+  color: hsl(var(--foreground));
+  box-shadow: inset 2px 0 0 hsl(var(--primary));
+}
+
+.dark .file-manange-item.file-selected {
+  background-color: hsl(var(--primary) / 0.18);
+  color: hsl(var(--foreground));
+  box-shadow: inset 2px 0 0 hsl(var(--primary));
+}
+
+.file-manange-item.file-on-drop {
+  background-color: hsl(var(--primary) / 0.12);
+  outline: 1px dashed hsl(var(--primary) / 0.7);
+  outline-offset: -2px;
 }
 
 :not(table)::-webkit-scrollbar {
@@ -376,6 +399,7 @@ ol {
 
   body {
     @apply bg-background text-foreground;
+    font-family: var(--notegen-app-font-family);
   }
 }
 
@@ -404,4 +428,30 @@ ol {
 .dark .search-result.is-current {
   background-color: #ea580c !important;
   color: #fff !important;
+}
+
+/* Photo preview should leave breathing room around large images. */
+.PhotoView-Portal.notegen-photo-preview .PhotoView-Slider__BannerWrap {
+  display: none;
+}
+
+.PhotoView-Portal.notegen-photo-preview .PhotoView-Slider__Overlay {
+  pointer-events: none;
+  position: relative;
+  z-index: 30;
+}
+
+.PhotoView-Portal.notegen-photo-preview .notegen-photo-preview-control {
+  pointer-events: auto;
+}
+
+.PhotoView-Portal.notegen-photo-preview .notegen-photo-preview-photo {
+  scale: 0.9;
+  transform-origin: center;
+}
+
+@media (max-width: 640px) {
+  .PhotoView-Portal.notegen-photo-preview .notegen-photo-preview-photo {
+    scale: 0.88;
+  }
 }

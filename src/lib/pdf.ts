@@ -1,7 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import { readFile } from '@tauri-apps/plugin-fs'
-import { createWorker } from 'tesseract.js'
-import { Store } from '@tauri-apps/plugin-store'
+import { recognizeImageBlob } from '@/lib/ocr'
 
 // 初始化 PDF.js worker
 if (typeof window !== 'undefined') {
@@ -18,20 +17,12 @@ function isTextItem(item: any): item is { str: string; transform: number[] } {
  */
 async function ocrPage(canvas: HTMLCanvasElement, pageNum: number): Promise<string> {
   try {
-    const store = await Store.load('store.json')
-    const lang = await store.get<string>('tesseractList')
-    const langArr = (lang as string)?.split(',') || ['eng']
-
     // 将 canvas 转换为图片数据
     const blob = await new Promise<Blob>((resolve) => {
       canvas.toBlob((b) => resolve(b!), 'image/png')
     })
 
-    const worker = await createWorker(langArr)
-    const ret = (await worker.recognize(blob)).data.text
-    await worker.terminate()
-
-    return ret
+    return await recognizeImageBlob(blob)
   } catch (error) {
     console.error(`OCR failed for page ${pageNum}:`, error)
     return ''

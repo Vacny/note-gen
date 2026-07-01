@@ -14,7 +14,7 @@ export default function MobileSettingsIndexPage() {
         <h1 className="text-2xl font-bold">{tSettings('title')}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{tMe('settings.description')}</p>
       </div>
-      <div className="rounded-3xl border border-border/60 bg-card shadow-sm">
+      <div className="mobile-dock-surface rounded-[1.35rem] overflow-hidden">
         <SettingTab />
       </div>
     </div>

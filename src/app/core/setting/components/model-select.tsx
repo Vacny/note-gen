@@ -31,7 +31,15 @@ interface GroupedModel {
   model: ModelConfig
 }
 
-export function ModelSelect({modelKey}: {modelKey: string}) {
+export function ModelSelect({
+  modelKey,
+  emptyLabel,
+  clearTooltip,
+}: {
+  modelKey: string
+  emptyLabel?: string
+  clearTooltip?: string
+}) {
   const [groupedModels, setGroupedModels] = useState<GroupedModel[]>([])
   const { setCompletionModel, setMarkDescModel, setPrimaryModel, setImageMethodModel, setAudioModel, setSttModel, setEmbeddingModel, setRerankingModel, setCondenseModel, setInspirationModel } = useSettingStore()
   const [model, setModel] = useState<string>('')
@@ -260,8 +268,8 @@ export function ModelSelect({modelKey}: {modelKey: string}) {
               className="w-[280px] justify-between"
             >
               {model
-                ? findSelectedModelDisplay()
-                : modelKey === 'primaryModel' ? t('noModel') : t('tooltip')}
+                ? findSelectedModelDisplay() || model
+                : emptyLabel || (modelKey === 'primaryModel' ? t('noModel') : t('tooltip'))}
               <ChevronsUpDown className="opacity-50" />
             </Button>
           </div>
@@ -271,7 +279,7 @@ export function ModelSelect({modelKey}: {modelKey: string}) {
           icon={<X className="h-4 w-4" />}
           onClick={resetDefaultModel}
           variant="default"
-          tooltipText={t('tooltip')}
+          tooltipText={clearTooltip || t('tooltip')}
         />
       </div>
       <PopoverContent align="end" className="p-0">

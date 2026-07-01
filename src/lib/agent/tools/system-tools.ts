@@ -344,6 +344,12 @@ export const executeSkillScriptTool: Tool = {
       required: false,
     },
     {
+      name: 'arguments',
+      type: 'array',
+      description: 'Alias for args. Prefer args; this field is accepted for compatibility with models that emit "arguments".',
+      required: false,
+    },
+    {
       name: 'timeout',
       type: 'number',
       description: 'Timeout in milliseconds for script execution. Default is 60000ms (1 minute). Maximum is 300000ms (5 minutes).',
@@ -352,7 +358,13 @@ export const executeSkillScriptTool: Tool = {
   ],
   execute: async (params: Record<string, any>): Promise<ToolResult> => {
     try {
-      const { skill_id, command, args, timeout } = params
+      const { skill_id, command, timeout } = params
+      const rawArgs = Array.isArray(params.args)
+        ? params.args
+        : Array.isArray(params.arguments)
+          ? params.arguments
+          : []
+      const args = rawArgs.map((arg) => String(arg))
 
       if (!skill_id || typeof skill_id !== 'string') {
         return {
@@ -371,7 +383,7 @@ export const executeSkillScriptTool: Tool = {
       const outcome = await executeSkillRuntime({
         skillId: skill_id,
         command,
-        args: Array.isArray(args) ? args : [],
+        args,
         timeout,
       })
 

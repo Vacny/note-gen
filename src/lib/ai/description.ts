@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { getAISettings, prepareMessages, createOpenAIClient, handleAIError } from './utils';
+import { getAISettings, prepareMessages, createOpenAIClient, handleAIError, withEditorFastAiRequestOptions } from './utils';
 
 /**
  * 生成文本描述
@@ -17,12 +17,13 @@ export async function fetchAiDesc(text: string) {
     const { messages } = await prepareMessages(descContent)
     
     const openai = await createOpenAIClient(aiConfig)
-    const completion = await openai.chat.completions.create({
+    const completion = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig?.model || '',
       messages: messages,
       temperature: aiConfig?.temperature || 1,
       top_p: aiConfig?.topP || 1,
-    })
+      max_tokens: 80,
+    }, aiConfig))
     
     return completion.choices[0].message.content || ''
   } catch (error) {
@@ -40,6 +41,9 @@ export async function fetchAiDescByImage(base64: string) {
   try {
     // 获取AI设置
     const aiConfig = await getAISettings('imageMethodModel')
+    if (!aiConfig?.model) {
+      return null
+    }
 
     const descContent = `Based on the screenshot content, return a description.`
 
@@ -77,12 +81,13 @@ export async function fetchAiDescByImage(base64: string) {
       }
     }
 
-    const completion = await openai.chat.completions.create({
+    const completion = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig?.model || '',
       messages: messages,
       temperature: aiConfig?.temperature || 1,
       top_p: aiConfig?.topP || 1,
-    })
+      max_tokens: 120,
+    }, aiConfig))
 
     return completion.choices[0].message.content || ''
   } catch (error) {

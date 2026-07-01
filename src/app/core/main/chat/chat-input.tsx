@@ -27,9 +27,13 @@ import { TooltipButton } from "@/components/tooltip-button"
 import { isMobileDevice } from '@/lib/check'
 import { QuoteDisplay } from "./quote-display"
 import type { PendingQuote } from "@/stores/chat"
+import { AgentApprovalPanel } from "./agent-approval-panel"
+import { cancelPendingAgentAction, confirmPendingAgentAction } from "./agent-approval-actions"
 import { convertFileSrc } from "@tauri-apps/api/core"
-import { readTextFile, writeFile, BaseDirectory, exists } from "@tauri-apps/plugin-fs"
+import { readTextFile, writeFile, BaseDirectory, exists, mkdir, stat } from "@tauri-apps/plugin-fs"
 import { ShineBorder } from "@/components/ui/shine-border"
+import { toast } from "@/hooks/use-toast"
+import { cn } from "@/lib/utils"
 import {
   DndContext,
   closestCenter,
@@ -46,6 +50,56 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { buildTypingFrames } from './onboarding-typing'
+
+const MAX_IMAGE_ATTACHMENTS = 6
+const MAX_IMAGE_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024
+const IMAGE_ATTACHMENT_DIR = 'screenshot'
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'])
+const MIME_EXTENSION_MAP: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg',
+}
+
+function getFileName(path: string) {
+  return path.split(/[\\/]/).pop() || path
+}
+
+function getExtension(fileName: string) {
+  return fileName.split('.').pop()?.toLowerCase() || ''
+}
+
+function isSupportedImageName(fileName: string) {
+  return IMAGE_EXTENSIONS.has(getExtension(fileName))
+}
+
+function isSupportedImageType(type: string) {
+  return Object.prototype.hasOwnProperty.call(MIME_EXTENSION_MAP, type)
+}
+
+function getImageExtension(fileName: string, type: string) {
+  const extension = getExtension(fileName)
+  if (IMAGE_EXTENSIONS.has(extension)) {
+    return extension
+  }
+
+  return MIME_EXTENSION_MAP[type] || 'png'
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(bytes % (1024 * 1024) === 0 ? 0 : 1)} MB`
+  }
+
+  return `${Math.max(1, Math.ceil(bytes / 1024))} KB`
+}
+
+function createImageAttachmentId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
 
 // 可排序的工具栏项组件 - 定义在外部以避免每次 ChatInput re-render 时重新创建
 interface SortableToolbarItemProps {
@@ -114,25 +168,34 @@ export const ChatInput = React.memo(function ChatInput() {
     pendingQuote,
     setPendingQuote,
     clearPendingQuote,
+    editorSelectionQuote,
+    clearEditorSelectionQuote,
+    agentState,
   } = useChatStore()
   const { marks, trashState } = useMarkStore()
   const { activeFilePath } = useArticleStore()
   const [isComposing, setIsComposing] = useState(false)
   const [placeholder, setPlaceholder] = useState('')
   const t = useTranslations()
+  const defaultPlaceholder = t('record.chat.input.placeholder.default')
   const [inputHistory, setInputHistory] = useLocalStorage<string[]>('chat-input-history', [])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [tempInput, setTempInput] = useState('')
   const [linkedResource, setLinkedResource] = useState<LinkedResource | null>(null)
   const [attachedImages, setAttachedImages] = useState<ImageAttachment[]>([])
-  const chatSendRef = useRef<any>(null)
+  const [isImageDragOver, setIsImageDragOver] = useState(false)
+  const chatSendRef = useRef<{ sendChat: () => void } | null>(null)
   const isMobile = useIsMobile()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const placeholderTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const placeholderRequestIdRef = useRef(0)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const isMobileDevice_ = isMobileDevice()
+  const imageDragDepthRef = useRef(0)
   const onboardingAgentPromptArmedRef = useRef(false)
   const onboardingTypingTimerRefs = useRef<number[]>([])
+  const maxImageSizeLabel = formatFileSize(MAX_IMAGE_ATTACHMENT_SIZE_BYTES)
+  const activeQuote = pendingQuote || editorSelectionQuote
 
   const applyTypedText = useCallback((value: string) => {
     setText(value)
@@ -211,10 +274,202 @@ export const ChatInput = React.memo(function ChatInput() {
 
   function removeQuote() {
     clearPendingQuote()
+    clearEditorSelectionQuote()
+  }
+
+  function showImageSuccessToast(count: number, key: 'selectSuccess' | 'pasteSuccess' | 'dropSuccess') {
+    toast({
+      description: t(`record.chat.input.imageAttachment.${key}`, { count })
+    })
+  }
+
+  function showImageFailureToast(description: string) {
+    toast({
+      variant: "destructive",
+      description
+    })
+  }
+
+  function showSkippedImageToasts(skipped: {
+    unsupported: string[]
+    oversized: string[]
+    failed: number
+  }) {
+    if (skipped.unsupported.length === 1) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.unsupported', {
+        name: skipped.unsupported[0],
+      }))
+    } else if (skipped.unsupported.length > 1) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.unsupportedMultiple', {
+        count: skipped.unsupported.length,
+      }))
+    }
+
+    if (skipped.oversized.length === 1) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.oversized', {
+        name: skipped.oversized[0],
+        size: maxImageSizeLabel,
+      }))
+    } else if (skipped.oversized.length > 1) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.oversizedMultiple', {
+        count: skipped.oversized.length,
+        size: maxImageSizeLabel,
+      }))
+    }
+
+    if (skipped.failed === 1) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.saveFailed'))
+    } else if (skipped.failed > 1) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.saveFailedMultiple', {
+        count: skipped.failed,
+      }))
+    }
+  }
+
+  function appendImageAttachments(images: ImageAttachment[], successKey: 'selectSuccess' | 'pasteSuccess' | 'dropSuccess') {
+    if (images.length === 0) {
+      return 0
+    }
+
+    const remainingCount = MAX_IMAGE_ATTACHMENTS - attachedImages.length
+    if (remainingCount <= 0) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.maxCount', {
+        count: MAX_IMAGE_ATTACHMENTS,
+      }))
+      return 0
+    }
+
+    const acceptedImages = images.slice(0, remainingCount)
+    if (images.length > remainingCount) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.maxCount', {
+        count: MAX_IMAGE_ATTACHMENTS,
+      }))
+    }
+
+    setAttachedImages(prev => [...prev, ...acceptedImages])
+    showImageSuccessToast(acceptedImages.length, successKey)
+    return acceptedImages.length
+  }
+
+  async function ensureImageAttachmentDir() {
+    const dirExists = await exists(IMAGE_ATTACHMENT_DIR, { baseDir: BaseDirectory.AppData })
+    if (!dirExists) {
+      await mkdir(IMAGE_ATTACHMENT_DIR, { baseDir: BaseDirectory.AppData })
+    }
+  }
+
+  async function resolveAppDataFilePath(filePath: string) {
+    const { appDataDir, join } = await import('@tauri-apps/api/path')
+    const appData = await appDataDir()
+    return await join(appData, filePath)
+  }
+
+  async function createAttachmentFromBlob(blob: Blob, name: string, source: 'file' | 'paste') {
+    const extension = getImageExtension(name, blob.type)
+    const fileName = `${source}-${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`
+    const filePath = `${IMAGE_ATTACHMENT_DIR}/${fileName}`
+    const arrayBuffer = await blob.arrayBuffer()
+    const uint8Array = new Uint8Array(arrayBuffer)
+
+    await ensureImageAttachmentDir()
+    await writeFile(filePath, uint8Array, { baseDir: BaseDirectory.AppData })
+
+    const fullPath = await resolveAppDataFilePath(filePath)
+    return {
+      id: createImageAttachmentId(source),
+      url: convertFileSrc(fullPath),
+      name: fileName,
+      source
+    } satisfies ImageAttachment
+  }
+
+  async function buildAttachmentsFromBrowserFiles(files: File[], source: 'file' | 'paste', maxCount: number) {
+    const newImages: ImageAttachment[] = []
+    const skipped = {
+      unsupported: [] as string[],
+      oversized: [] as string[],
+      failed: 0,
+    }
+
+    for (const file of files) {
+      if (newImages.length >= maxCount) {
+        break
+      }
+
+      const fileName = file.name || `${source}-image`
+      if (!isSupportedImageType(file.type) && !isSupportedImageName(fileName)) {
+        skipped.unsupported.push(fileName)
+        continue
+      }
+
+      if (file.size > MAX_IMAGE_ATTACHMENT_SIZE_BYTES) {
+        skipped.oversized.push(fileName)
+        continue
+      }
+
+      try {
+        newImages.push(await createAttachmentFromBlob(file, fileName, source))
+      } catch (error) {
+        console.error('Failed to save image attachment:', error)
+        skipped.failed += 1
+      }
+    }
+
+    showSkippedImageToasts(skipped)
+    return newImages
+  }
+
+  async function buildAttachmentsFromLocalPaths(paths: string[], maxCount: number) {
+    const newImages: ImageAttachment[] = []
+    const skipped = {
+      unsupported: [] as string[],
+      oversized: [] as string[],
+      failed: 0,
+    }
+
+    for (const path of paths) {
+      if (newImages.length >= maxCount) {
+        break
+      }
+
+      const fileName = getFileName(path)
+      if (!isSupportedImageName(fileName)) {
+        skipped.unsupported.push(fileName)
+        continue
+      }
+
+      try {
+        const fileStat = await stat(path)
+        if (typeof fileStat.size === 'number' && fileStat.size > MAX_IMAGE_ATTACHMENT_SIZE_BYTES) {
+          skipped.oversized.push(fileName)
+          continue
+        }
+
+        newImages.push({
+          id: createImageAttachmentId('local'),
+          url: convertFileSrc(path),
+          name: fileName,
+          source: 'file' as const
+        })
+      } catch (error) {
+        console.error('Failed to read selected image:', error)
+        skipped.failed += 1
+      }
+    }
+
+    showSkippedImageToasts(skipped)
+    return newImages
   }
 
   async function handleSelectLocalImages() {
     try {
+      if (attachedImages.length >= MAX_IMAGE_ATTACHMENTS) {
+        showImageFailureToast(t('record.chat.input.imageAttachment.maxCount', {
+          count: MAX_IMAGE_ATTACHMENTS,
+        }))
+        return
+      }
+
       // 移动端使用 HTML5 file input
       if (isMobileDevice_) {
         imageInputRef.current?.click()
@@ -232,22 +487,31 @@ export const ChatInput = React.memo(function ChatInput() {
       })
 
       if (selected && Array.isArray(selected)) {
-        const newImages: ImageAttachment[] = selected.map((path) => ({
-          id: `local-${Date.now()}-${Math.random()}`,
-          url: convertFileSrc(path),
-          name: path.split('/').pop() || path,
-          source: 'file' as const
-        }))
-        
-        setAttachedImages(prev => [...prev, ...newImages])
+        const remainingCount = MAX_IMAGE_ATTACHMENTS - attachedImages.length
+        if (selected.length > remainingCount) {
+          showImageFailureToast(t('record.chat.input.imageAttachment.maxCount', {
+            count: MAX_IMAGE_ATTACHMENTS,
+          }))
+        }
+
+        const newImages = await buildAttachmentsFromLocalPaths(selected, remainingCount)
+        appendImageAttachments(newImages, 'selectSuccess')
       }
     } catch (error) {
       console.error('Failed to select files:', error)
+      showImageFailureToast(t('record.chat.input.imageAttachment.selectFailed'))
     }
   }
 
   // 移动端图片选择，交给系统决定从相册还是相机获取
   async function handleSelectFromGallery() {
+    if (attachedImages.length >= MAX_IMAGE_ATTACHMENTS) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.maxCount', {
+        count: MAX_IMAGE_ATTACHMENTS,
+      }))
+      return
+    }
+
     if (isMobileDevice_) {
       if (imageInputRef.current) {
         imageInputRef.current.removeAttribute('capture')
@@ -262,24 +526,23 @@ export const ChatInput = React.memo(function ChatInput() {
       const files = event.target.files
       if (!files || files.length === 0) return
 
-      const newImages: ImageAttachment[] = []
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const url = URL.createObjectURL(file)
-        newImages.push({
-          id: `local-${Date.now()}-${Math.random()}`,
-          url,
-          name: file.name,
-          source: 'file' as const
-        })
+      const selectedFiles = Array.from(files)
+      const remainingCount = MAX_IMAGE_ATTACHMENTS - attachedImages.length
+      const imageCandidateCount = selectedFiles.filter(file => isSupportedImageType(file.type) || isSupportedImageName(file.name)).length
+      if (imageCandidateCount > remainingCount) {
+        showImageFailureToast(t('record.chat.input.imageAttachment.maxCount', {
+          count: MAX_IMAGE_ATTACHMENTS,
+        }))
       }
 
-      setAttachedImages(prev => [...prev, ...newImages])
+      const newImages = await buildAttachmentsFromBrowserFiles(selectedFiles, 'file', remainingCount)
+      appendImageAttachments(newImages, 'selectSuccess')
       
       // 重置 input
       event.target.value = ''
     } catch (error) {
       console.error('Error in handleImageInputChange:', error)
+      showImageFailureToast(t('record.chat.input.imageAttachment.selectFailed'))
     }
   }
 
@@ -292,39 +555,99 @@ export const ChatInput = React.memo(function ChatInput() {
 
     e.preventDefault()
 
-    const newImages: ImageAttachment[] = []
-    for (const item of imageItems) {
-      const blob = item.getAsFile()
-      if (!blob) continue
+    const files = imageItems
+      .map(item => item.getAsFile())
+      .filter((file): file is File => Boolean(file))
 
-      try {
-        const arrayBuffer = await blob.arrayBuffer()
-        const uint8Array = new Uint8Array(arrayBuffer)
-        const fileName = `paste-${Date.now()}-${Math.random().toString(36).substring(7)}.png`
-        const filePath = `screenshot/${fileName}`
-        
-        await writeFile(filePath, uint8Array, { baseDir: BaseDirectory.AppData })
-        
-        const fullPath = await (async () => {
-          const { appDataDir, join } = await import('@tauri-apps/api/path')
-          const appData = await appDataDir()
-          return await join(appData, filePath)
-        })()
-
-        newImages.push({
-          id: `paste-${Date.now()}-${Math.random()}`,
-          url: convertFileSrc(fullPath),
-          name: fileName,
-          source: 'paste'
-        })
-      } catch (error) {
-        console.error('Failed to save pasted image:', error)
-      }
+    const remainingCount = MAX_IMAGE_ATTACHMENTS - attachedImages.length
+    const imageCandidateCount = files.filter(file => isSupportedImageType(file.type) || isSupportedImageName(file.name)).length
+    if (imageCandidateCount > remainingCount) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.maxCount', {
+        count: MAX_IMAGE_ATTACHMENTS,
+      }))
     }
 
-    if (newImages.length > 0) {
-      setAttachedImages(prev => [...prev, ...newImages])
+    const newImages = await buildAttachmentsFromBrowserFiles(files, 'paste', remainingCount)
+    appendImageAttachments(newImages, 'pasteSuccess')
+  }
+
+  function hasImageTransfer(dataTransfer: DataTransfer) {
+    const items = Array.from(dataTransfer.items || [])
+    if (items.some(item => item.kind === 'file' && isSupportedImageType(item.type))) {
+      return true
     }
+
+    return Array.from(dataTransfer.files || []).some(file => isSupportedImageType(file.type) || isSupportedImageName(file.name))
+  }
+
+  function hasFileTransfer(dataTransfer: DataTransfer) {
+    const items = Array.from(dataTransfer.items || [])
+    return items.some(item => item.kind === 'file') || Array.from(dataTransfer.files || []).length > 0
+  }
+
+  function handleImageDragEnter(e: React.DragEvent<HTMLDivElement>) {
+    if (loading || !primaryModel || !hasFileTransfer(e.dataTransfer)) {
+      return
+    }
+
+    e.preventDefault()
+    if (!hasImageTransfer(e.dataTransfer)) {
+      return
+    }
+
+    imageDragDepthRef.current += 1
+    setIsImageDragOver(true)
+  }
+
+  function handleImageDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (loading || !primaryModel || !hasFileTransfer(e.dataTransfer)) {
+      return
+    }
+
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    if (hasImageTransfer(e.dataTransfer)) {
+      setIsImageDragOver(true)
+    }
+  }
+
+  function handleImageDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    if (!isImageDragOver && !hasImageTransfer(e.dataTransfer)) {
+      return
+    }
+
+    imageDragDepthRef.current = Math.max(0, imageDragDepthRef.current - 1)
+    if (imageDragDepthRef.current === 0) {
+      setIsImageDragOver(false)
+    }
+  }
+
+  async function handleImageDrop(e: React.DragEvent<HTMLDivElement>) {
+    if (!hasFileTransfer(e.dataTransfer)) {
+      imageDragDepthRef.current = 0
+      setIsImageDragOver(false)
+      return
+    }
+
+    e.preventDefault()
+    imageDragDepthRef.current = 0
+    setIsImageDragOver(false)
+
+    if (loading || !primaryModel) {
+      return
+    }
+
+    const files = Array.from(e.dataTransfer.files || [])
+    const remainingCount = MAX_IMAGE_ATTACHMENTS - attachedImages.length
+    const imageCandidateCount = files.filter(file => isSupportedImageType(file.type) || isSupportedImageName(file.name)).length
+    if (imageCandidateCount > remainingCount) {
+      showImageFailureToast(t('record.chat.input.imageAttachment.maxCount', {
+        count: MAX_IMAGE_ATTACHMENTS,
+      }))
+    }
+
+    const newImages = await buildAttachmentsFromBrowserFiles(files, 'file', remainingCount)
+    appendImageAttachments(newImages, 'dropSuccess')
   }
 
   // 处理发送后的清理工作
@@ -338,14 +661,25 @@ export const ChatInput = React.memo(function ChatInput() {
     setHistoryIndex(-1)
     setAttachedImages([])
     clearPendingQuote()
+    if (isMobileDevice_) {
+      clearEditorSelectionQuote()
+    }
     const textarea = document.querySelector('textarea')
     if (textarea) {
       textarea.style.height = 'auto'
     }
   }
 
+  const normalizePlaceholderText = useCallback((value: unknown) => {
+    return typeof value === 'string' ? value.trim() : ''
+  }, [])
+
   // 获取输入框占位符
-  async function genInputPlaceholder() {
+  const genInputPlaceholder = useCallback(async () => {
+    const requestId = placeholderRequestIdRef.current + 1
+    placeholderRequestIdRef.current = requestId
+    setPlaceholder(defaultPlaceholder)
+
     if (!primaryModel) return
     if (trashState) return
     const lastClearIndex = chats.findLastIndex(item => item.type === 'clear')
@@ -353,17 +687,35 @@ export const ChatInput = React.memo(function ChatInput() {
     const request_content = `
       ${chatsAfterClear.slice(0, 5).map(item => item.content?.slice(0, 60)).join(';\n\n')}
     `.trim()
-    // 使用 fetchAiQuickPrompts 获取4条提示词
-    const prompts = await fetchAiQuickPrompts(request_content)
-    // 发送事件给 chat-empty 组件，显示前3条
-    if (prompts.length >= 3) {
-      emitter.emit('ai-prompts-generated', prompts)
+
+    try {
+      // 使用 fetchAiQuickPrompts 获取4条提示词
+      const prompts = await fetchAiQuickPrompts(request_content)
+      if (requestId !== placeholderRequestIdRef.current) {
+        return
+      }
+
+      const validPrompts = prompts
+        .map(prompt => ({
+          ...prompt,
+          text: normalizePlaceholderText(prompt.text),
+        }))
+        .filter(prompt => prompt.text.length > 0)
+
+      // 发送事件给 chat-empty 组件，显示前3条
+      if (validPrompts.length >= 3) {
+        emitter.emit('ai-prompts-generated', validPrompts)
+      }
+
+      // 取第4条作为 placeholder
+      const placeholderText = validPrompts[3]?.text
+      setPlaceholder(placeholderText ? `${placeholderText} [Tab]` : defaultPlaceholder)
+    } catch {
+      if (requestId === placeholderRequestIdRef.current) {
+        setPlaceholder(defaultPlaceholder)
+      }
     }
-    // 取第4条作为 placeholder
-    if (prompts.length >= 4 && prompts[3]?.text) {
-      setPlaceholder(prompts[3].text + ' [Tab]')
-    }
-  }
+  }, [chats, defaultPlaceholder, normalizePlaceholderText, primaryModel, trashState])
 
   // 防抖的 placeholder 生成函数，延迟 1.5 秒执行，只执行最后一次
   const debouncedGenPlaceholder = useCallback(() => {
@@ -371,19 +723,22 @@ export const ChatInput = React.memo(function ChatInput() {
     if (placeholderTimerRef.current) {
       clearTimeout(placeholderTimerRef.current)
     }
+    placeholderRequestIdRef.current += 1
+    setPlaceholder(defaultPlaceholder)
     
     // 设置新的定时器
     placeholderTimerRef.current = setTimeout(() => {
       genInputPlaceholder()
     }, 1500) // 1.5秒延迟
-  }, [primaryModel, marks, chats, trashState, t])
+  }, [defaultPlaceholder, genInputPlaceholder])
 
 
   // 插入占位符
   function insertPlaceholder() {
     if (placeholder.includes('[Tab]')) {
       setText(placeholder.replace('[Tab]', ''))
-      setPlaceholder('')
+      placeholderRequestIdRef.current += 1
+      setPlaceholder(defaultPlaceholder)
     }
   }
 
@@ -422,9 +777,9 @@ export const ChatInput = React.memo(function ChatInput() {
     if (marks.length > 0) {
       genInputPlaceholder()
     } else {
-      setPlaceholder(t('record.chat.input.placeholder.default'))
+      setPlaceholder(defaultPlaceholder)
     }
-  }, [primaryModel, marks, t])
+  }, [defaultPlaceholder, genInputPlaceholder, marks, primaryModel])
 
   useEffect(() => {
     emitter.on('revertChat', (event: unknown) => {
@@ -453,12 +808,13 @@ export const ChatInput = React.memo(function ChatInput() {
       textareaRef.current?.focus()
     })
     emitter.on('ai-placeholder-generated', (event: unknown) => {
-      const promptText = event as string
-      if (promptText) {
-        setPlaceholder(promptText)
-      }
+      const promptText = normalizePlaceholderText(event)
+      setPlaceholder(promptText || defaultPlaceholder)
     })
     return () => {
+      if (placeholderTimerRef.current) {
+        clearTimeout(placeholderTimerRef.current)
+      }
       onboardingTypingTimerRefs.current.forEach((timerId) => window.clearTimeout(timerId))
       onboardingTypingTimerRefs.current = []
       emitter.off('revertChat')
@@ -468,7 +824,7 @@ export const ChatInput = React.memo(function ChatInput() {
       emitter.off('quick-prompt-insert')
       emitter.off('ai-placeholder-generated')
     }
-  }, [debouncedGenPlaceholder, setPendingQuote])
+  }, [debouncedGenPlaceholder, defaultPlaceholder, normalizePlaceholderText, setPendingQuote])
 
   useEffect(() => {
     if (!onboardingPromptDraft) {
@@ -522,7 +878,7 @@ export const ChatInput = React.memo(function ChatInput() {
           const truncatedNote = totalLines > 100 ? `\n... (共 ${totalLines} 行，后 ${totalLines - 100} 行省略)` : ''
 
           return `已关联当前编辑器文件：${filePath.split('/').pop() || filePath}
-你可以直接基于下面的行号和版本使用 replace_editor_content。
+你可以直接基于下面的行号和版本使用 editor_replace_lines。
 
 编辑器版本：v${editorContent.version}
 行号预览：
@@ -531,7 +887,7 @@ ${previewLines.join('\n')}
 \`\`\`${truncatedNote}
 
 优先使用：
-- 修改某个区块/列表：replace_editor_content({startLine: 4, endLine: 5, replaceContent: "新内容", version: ${editorContent.version}})
+- 修改某个区块/列表：editor_replace_lines({startLine: 4, endLine: 5, replaceContent: "新内容", version: ${editorContent.version}})
 - 仅在有精确选区位置时才使用 from/to
 `
         }
@@ -564,7 +920,7 @@ ${previewLines.join('\n')}
       const truncatedNote = totalLines > 100 ? `\n... (共 ${totalLines} 行，后 ${totalLines - 100} 行省略)` : ''
 
       return `已关联文件：${filePath.split('/').pop() || filePath}
-你可以使用 replace_editor_content 工具通过行号修改内容。
+如需修改这个非当前编辑器文件，请基于完整内容生成更新后的 Markdown，并使用 note_update_file 写入。
 
 行号预览：
 \`\`\`
@@ -572,8 +928,7 @@ ${previewLines.join('\n')}
 \`\`\`${truncatedNote}
 
 使用示例：
-- 修改第 4-5 行：replace_editor_content({startLine: 4, endLine: 5, replaceContent: "新内容"})
-- 替换第 10 行的特定内容：replace_editor_content({startLine: 10, endLine: 10, replaceContent: "新内容"})
+- 更新文件：note_update_file({filePath: "${filePath}", content: "完整更新后的 Markdown"})
 `
     } catch (error) {
       console.error('生成文件预览失败:', error)
@@ -678,7 +1033,13 @@ ${previewLines.join('\n')}
   }, [linkedResource, debouncedGenPlaceholder])
 
   return (
-    <footer id="onboarding-target-chat-input" className="flex flex-col w-full p-1 justify-between items-center">
+    <footer
+      id="onboarding-target-chat-input"
+      className={cn(
+        "flex w-full flex-col items-center justify-between",
+        isMobile ? "px-2 pb-1 pt-0" : "p-1"
+      )}
+    >
       {/* 移动端图片选择 */}
       {isMobileDevice_ && (
         <input
@@ -690,11 +1051,33 @@ ${previewLines.join('\n')}
           className="hidden"
         />
       )}
+      <AgentApprovalPanel
+        pendingConfirmation={agentState.pendingConfirmation}
+        onConfirm={confirmPendingAgentAction}
+        onCancel={cancelPendingAgentAction}
+      />
       <LinkedFileDisplay
         linkedResource={linkedResource}
         onFileRemove={removeLinkedFile}
+        mobileDockStyle={isMobile}
       />
-      <div className="group relative flex flex-col border rounded-xl z-10 gap-1 p-1 w-full bg-background focus-within:border-primary transition-colors overflow-hidden">
+      <div
+        className={cn(
+          "group relative z-10 flex w-full flex-col overflow-hidden border",
+          isMobile
+            ? "mobile-dock-surface gap-1 rounded-[1.35rem] p-1.5 transition-[background-color,border-color,transform] duration-200 focus-within:border-border/80"
+            : "gap-1 rounded-xl bg-background p-1 transition-colors focus-within:border-primary",
+          isImageDragOver && (
+            isMobile
+              ? "border-primary/50 bg-[hsl(var(--component-active-bg))]"
+              : "border-primary bg-primary/5"
+          )
+        )}
+        onDragEnter={handleImageDragEnter}
+        onDragOver={handleImageDragOver}
+        onDragLeave={handleImageDragLeave}
+        onDrop={handleImageDrop}
+      >
         {loading && (
           <ShineBorder
             borderWidth={1}
@@ -702,14 +1085,37 @@ ${previewLines.join('\n')}
             shineColor={["#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A"]}
           />
         )}
-        {pendingQuote && (
-          <QuoteDisplay quoteData={pendingQuote} onRemove={removeQuote} />
+        {isImageDragOver && (
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-0 z-20 flex items-center justify-center",
+              isMobile ? "bg-background/60 backdrop-blur-xl" : "bg-background/80 backdrop-blur-[1px]"
+            )}
+          >
+            <div
+              className={cn(
+                "flex items-center gap-2 border px-3 py-2 text-sm text-foreground",
+                isMobile ? "mobile-dock-surface rounded-2xl" : "rounded-md bg-background shadow-sm"
+              )}
+            >
+              <ImageIcon className="size-4 text-primary" />
+              <span>{t('record.chat.input.imageAttachment.dropHint')}</span>
+            </div>
+          </div>
+        )}
+        {activeQuote && (
+          <QuoteDisplay quoteData={activeQuote} onRemove={removeQuote} />
         )}
         <ImageAttachments images={attachedImages} onRemove={removeImage} />
         <div className="relative w-full flex items-start">
           <Textarea
             ref={textareaRef}
-            className="flex-1 p-2 relative border-none text-xs placeholder:text-sm md:placeholder:text-sm md:text-sm focus-visible:ring-0 shadow-none min-h-[36px] max-h-[240px] resize-none overflow-y-auto"
+            className={cn(
+              "relative flex-1 resize-none overflow-y-auto border-none p-2 shadow-none focus-visible:ring-0",
+              isMobile
+                ? "min-h-[40px] max-h-[220px] bg-transparent text-sm placeholder:text-sm"
+                : "min-h-[36px] max-h-[240px] text-xs placeholder:text-sm md:placeholder:text-sm md:text-sm"
+            )}
             rows={1}
             disabled={!primaryModel || loading}
             value={text}
@@ -720,7 +1126,7 @@ ${previewLines.join('\n')}
               const newHeight = Math.min(textarea.scrollHeight, 240)
               textarea.style.height = `${newHeight}px`
             }}
-            placeholder={placeholder}
+            placeholder={placeholder || defaultPlaceholder}
             onKeyDown={(e) => {
               const textarea = e.target as HTMLTextAreaElement
               const cursorPosition = textarea.selectionStart
@@ -757,7 +1163,7 @@ ${previewLines.join('\n')}
               }
               if (e.key === "Backspace") {
                 if (text === '') {
-                  setPlaceholder(t('record.chat.input.placeholder.default'))
+                  setPlaceholder(defaultPlaceholder)
                 }
               }
             }}
@@ -800,14 +1206,15 @@ ${previewLines.join('\n')}
           </div>
           <div className="flex items-center justify-end gap-2 pr-1">
             <TooltipButton
-              variant="link"
+              variant={isMobile ? "ghost" : "link"}
               size="sm"
               icon={<ImageIcon className="size-4" />}
               tooltipText={t('record.chat.input.attachImage')}
               onClick={isMobile ? handleSelectFromGallery : handleSelectLocalImages}
               disabled={!primaryModel || loading}
+              buttonClassName={isMobile ? "rounded-2xl text-[hsl(var(--component-inactive-color))] hover:bg-[hsl(var(--component-active-bg))] hover:text-foreground" : undefined}
             />
-            <ChatSend inputValue={text} onSent={handleSent} linkedResource={linkedResource} attachedImages={attachedImages} quoteData={pendingQuote} ref={chatSendRef} />
+            <ChatSend inputValue={text} onSent={handleSent} linkedResource={linkedResource} attachedImages={attachedImages} quoteData={activeQuote} dockStyle={isMobile} ref={chatSendRef} />
           </div>
         </div>
 

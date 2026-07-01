@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import baseConfig from '../config'
 import { useTranslations } from 'next-intl'
 import useSettingStore from "@/stores/setting"
+import useUpdateStore from "@/stores/update";
 import { Separator } from "@/components/ui/separator";
 
 export function SettingTab() {
@@ -13,6 +14,7 @@ export function SettingTab() {
   const pathname = usePathname()
   const t = useTranslations('settings')
   const { setLastSettingPage } = useSettingStore()
+  const { hasUpdate } = useUpdateStore()
   
   // Add translations to the config
   const config = baseConfig.map(item => {
@@ -64,6 +66,9 @@ export function SettingTab() {
                   {item.icon}
                 </span>
                 <span className="truncate">{item.title}</span>
+                {item.anchor === 'about' && hasUpdate ? (
+                  <span className="ml-auto size-2 shrink-0 rounded-full bg-red-500" />
+                ) : null}
               </li>
             )
           })

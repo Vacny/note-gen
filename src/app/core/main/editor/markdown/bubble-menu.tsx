@@ -14,7 +14,6 @@ import {
   ListOrdered,
   CheckSquare,
   Sparkles,
-  MessageCircle,
   Minimize2,
   Maximize2,
   Languages,
@@ -37,13 +36,60 @@ const POPULAR_LANGUAGES = [
   { name: 'العربية', code: 'Arabic', i18nKey: 'languages.Arabic' },
 ]
 
+const KEYBOARD_SELECTION_KEYS = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+])
+
 interface BubbleMenuProps {
   editor: Editor
   onAIPolish?: () => void
   onAIConcise?: () => void
   onAIExpand?: () => void
   onAITranslate?: (targetLanguage: string) => void
-  onQuoteToChat?: () => void
+  openAiMenuSignal?: number
+  openTranslateMenuSignal?: number
+  openLinkInputSignal?: number
+}
+
+function getSelectedText(editor: Editor): string {
+  const { from, to } = editor.state.selection
+
+  return editor.state.doc.textBetween(from, to, '\n', '\n')
+}
+
+function hasTextSelection(editor: Editor): boolean {
+  const { doc, selection } = editor.state
+  const { from, to } = selection
+
+  if (selection.empty || from === to || from < 0 || to < 0 || from > doc.content.size || to > doc.content.size) {
+    return false
+  }
+
+  return getSelectedText(editor).trim().length > 0
+}
+
+function isKeyboardSelectionIntent(event: KeyboardEvent): boolean {
+  if (event.isComposing) {
+    return false
+  }
+
+  if (
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === 'a'
+  ) {
+    return true
+  }
+
+  return event.shiftKey && KEYBOARD_SELECTION_KEYS.has(event.key)
 }
 
 export function BubbleMenu({
@@ -52,7 +98,9 @@ export function BubbleMenu({
   onAIConcise,
   onAIExpand,
   onAITranslate,
-  onQuoteToChat,
+  openAiMenuSignal = 0,
+  openTranslateMenuSignal = 0,
+  openLinkInputSignal = 0,
 }: BubbleMenuProps) {
   const t = useTranslations('editor')
   const [show, setShow] = useState(false)
@@ -67,11 +115,32 @@ export function BubbleMenu({
   const menuRef = useRef<HTMLDivElement>(null)
   const aiSubmenuRef = useRef<HTMLDivElement>(null)
   const translateSubmenuRef = useRef<HTMLDivElement>(null)
+  const hasUserSelectionIntentRef = useRef(false)
+  const isPointerSelectingRef = useRef(false)
+  const isComposingRef = useRef(false)
+
+  const hideMenu = useCallback(() => {
+    setShow(false)
+    setShowAISubmenu(false)
+    setShowTranslateSubmenu(false)
+    setShowLinkInput(false)
+  }, [])
+
+  const collapseSelection = useCallback(() => {
+    const { selection } = editor.state
+
+    if (selection.empty) {
+      return
+    }
+
+    const position = Math.max(0, Math.min(selection.to, editor.state.doc.content.size))
+    editor.commands.setTextSelection(position)
+  }, [editor])
 
   // 处理翻译
   const handleTranslate = useCallback(async (targetLanguage: string) => {
-    const selectedText = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)
-    if (!selectedText) {
+    const selectedText = getSelectedText(editor)
+    if (!selectedText.trim()) {
       toast({ title: t('translation.fail'), description: t('translation.failNoSelection'), variant: 'destructive' })
       return
     }
@@ -93,66 +162,213 @@ export function BubbleMenu({
     const { selection } = editor.state
     const { from, to } = selection
 
-    // 检查选区是否有效（空选区、光标位置、无效位置都不显示）
-    if (from === to || from < 0 || to < 0 || from > editor.state.doc.content.size || to > editor.state.doc.content.size) {
-      setShow(false)
-      return
+    if (isComposingRef.current) {
+      hideMenu()
+      return false
     }
 
-    // 检查编辑器是否有焦点（没有焦点时不显示）
-    // 但如果选区有文本内容（from !== to），即使失去焦点也保持显示
-    // 这样可以避免点击工具栏按钮时菜单被隐藏
-    const hasSelection = from !== to
-    if (!hasSelection && !editor.view.hasFocus()) {
-      setShow(false)
-      return
+    if (isPointerSelectingRef.current) {
+      hideMenu()
+      return false
     }
+
+    // 应用启动或文件恢复时可能会还原一个非空选区，但这不是用户本次主动选择的文本。
+    if (!hasUserSelectionIntentRef.current) {
+      if (hasTextSelection(editor)) {
+        collapseSelection()
+      }
+      hideMenu()
+      return false
+    }
+
+    // 检查选区是否有效（空选区、光标位置、无实际文本内容都不显示）
+    if (!hasTextSelection(editor)) {
+      hideMenu()
+      return false
+    }
+
+    if (from < 0 || to < 0 || from > editor.state.doc.content.size || to > editor.state.doc.content.size) {
+      hideMenu()
+      return false
+    }
+
+    const node = editor.state.doc.nodeAt(from)
 
     // 检查是否是图片节点
-    const node = editor.state.doc.nodeAt(from)
     if (node?.type.name === 'image') {
-      setShow(false)
-      return
+      hideMenu()
+      return false
     }
 
     // 检查是否是数学公式节点，如果是则不显示 bubble menu
     if (node?.type.name === 'inlineMath' || node?.type.name === 'blockMath') {
-      setShow(false)
-      return
+      hideMenu()
+      return false
     }
 
     // 获取编辑器元素和滚动容器
     const editorElement = document.querySelector('.ProseMirror')
     const scrollContainer = editorElement?.parentElement
-    if (!editorElement || !scrollContainer) return
-
-    const containerBounds = scrollContainer.getBoundingClientRect()
-
-    // 获取选区坐标（视口坐标）
-    const coords = editor.view.coordsAtPos(from)
-
-    // 转换为滚动容器内的相对坐标
-    const relativeTop = coords.top - containerBounds.top + scrollContainer.scrollTop
-    const relativeLeft = coords.left - containerBounds.left + scrollContainer.scrollLeft
-
-    // 计算菜单位置（顶部在选区上方）
-    const top = relativeTop - 48 // 48 是大约的菜单高度 + 间距
-
-    // 边界检测：left 在 [0, 容器宽度 - 菜单宽度] 范围内
-    const currentMenuWidth = menuRef.current?.offsetWidth || 360
-    // maxLeft 不能为负数
-    const maxLeft = Math.max(0, containerBounds.width - currentMenuWidth)
-    const left = Math.min(relativeLeft, maxLeft)
-
-    // 如果上方空间不够，改为在光标下方显示
-    if (relativeTop < 48) {
-      setPosition({ top: relativeTop + 24, left })
-    } else {
-      setPosition({ top, left })
+    if (!editorElement || !scrollContainer) {
+      hideMenu()
+      return false
     }
 
-    setShow(true)
-  }, [editor])
+    try {
+      // 获取选区坐标（视口坐标）
+      const coords = editor.view.coordsAtPos(from)
+      const containerBounds = scrollContainer.getBoundingClientRect()
+
+      // 转换为滚动容器内的相对坐标
+      const relativeTop = coords.top - containerBounds.top + scrollContainer.scrollTop
+      const relativeLeft = coords.left - containerBounds.left + scrollContainer.scrollLeft
+
+      // 计算菜单位置（顶部在选区上方）
+      const top = relativeTop - 48 // 48 是大约的菜单高度 + 间距
+
+      // 边界检测：left 在 [0, 容器宽度 - 菜单宽度] 范围内
+      const currentMenuWidth = menuRef.current?.offsetWidth || 360
+      // maxLeft 不能为负数
+      const maxLeft = Math.max(0, containerBounds.width - currentMenuWidth)
+      const left = Math.min(relativeLeft, maxLeft)
+
+      // 如果上方空间不够，改为在光标下方显示
+      if (relativeTop < 48) {
+        setPosition({ top: relativeTop + 24, left })
+      } else {
+        setPosition({ top, left })
+      }
+
+      setShow(true)
+      return true
+    } catch {
+      hideMenu()
+      return false
+    }
+  }, [collapseSelection, editor, hideMenu])
+
+  useEffect(() => {
+    hasUserSelectionIntentRef.current = false
+    isPointerSelectingRef.current = false
+    hideMenu()
+
+    const editorElement = editor.view.dom
+    const ownerDocument = editorElement.ownerDocument
+
+    const handleCompositionStart = () => {
+      isComposingRef.current = true
+      hideMenu()
+    }
+
+    const handleCompositionEnd = () => {
+      isComposingRef.current = false
+    }
+
+    const handlePointerStart = () => {
+      isPointerSelectingRef.current = true
+      hasUserSelectionIntentRef.current = false
+      if (hasTextSelection(editor)) {
+        collapseSelection()
+      }
+      hideMenu()
+    }
+
+    const finishPointerSelection = () => {
+      if (!isPointerSelectingRef.current) {
+        return
+      }
+
+      isPointerSelectingRef.current = false
+
+      requestAnimationFrame(() => {
+        const hasSelection = hasTextSelection(editor)
+        hasUserSelectionIntentRef.current = hasSelection
+
+        if (hasSelection) {
+          updatePosition()
+        } else {
+          hideMenu()
+        }
+      })
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isKeyboardSelectionIntent(event)) {
+        return
+      }
+
+      hasUserSelectionIntentRef.current = true
+
+      requestAnimationFrame(() => {
+        const hasSelection = hasTextSelection(editor)
+        hasUserSelectionIntentRef.current = hasSelection
+
+        if (hasSelection) {
+          updatePosition()
+        } else {
+          hideMenu()
+        }
+      })
+    }
+
+    editorElement.addEventListener('mousedown', handlePointerStart)
+    editorElement.addEventListener('touchstart', handlePointerStart, { passive: true })
+    editorElement.addEventListener('keydown', handleKeyDown, true)
+    editorElement.addEventListener('compositionstart', handleCompositionStart)
+    editorElement.addEventListener('compositionend', handleCompositionEnd)
+    ownerDocument.addEventListener('mouseup', finishPointerSelection)
+    ownerDocument.addEventListener('touchend', finishPointerSelection)
+    ownerDocument.addEventListener('touchcancel', finishPointerSelection)
+
+    return () => {
+      editorElement.removeEventListener('mousedown', handlePointerStart)
+      editorElement.removeEventListener('touchstart', handlePointerStart)
+      editorElement.removeEventListener('keydown', handleKeyDown, true)
+      editorElement.removeEventListener('compositionstart', handleCompositionStart)
+      editorElement.removeEventListener('compositionend', handleCompositionEnd)
+      ownerDocument.removeEventListener('mouseup', finishPointerSelection)
+      ownerDocument.removeEventListener('touchend', finishPointerSelection)
+      ownerDocument.removeEventListener('touchcancel', finishPointerSelection)
+    }
+  }, [collapseSelection, editor, hideMenu, updatePosition])
+
+  useEffect(() => {
+    if (!openAiMenuSignal) return
+
+    if (!updatePosition()) {
+      return
+    }
+
+    setShowAISubmenu(true)
+    setShowTranslateSubmenu(false)
+    setShowLinkInput(false)
+  }, [openAiMenuSignal, updatePosition])
+
+  useEffect(() => {
+    if (!openTranslateMenuSignal) return
+
+    if (!updatePosition()) {
+      return
+    }
+
+    setShowAISubmenu(true)
+    setShowTranslateSubmenu(true)
+    setShowLinkInput(false)
+  }, [openTranslateMenuSignal, updatePosition])
+
+  useEffect(() => {
+    if (!openLinkInputSignal) return
+
+    if (!updatePosition()) {
+      return
+    }
+
+    const previousUrl = editor.getAttributes('link').href
+    setLinkUrl(previousUrl || '')
+    setShowLinkInput(true)
+    setShowAISubmenu(false)
+    setShowTranslateSubmenu(false)
+  }, [editor, openLinkInputSignal, updatePosition])
 
   // AI子菜单边界检测
   useEffect(() => {
@@ -216,15 +432,11 @@ export function BubbleMenu({
   useEffect(() => {
     const updateHandler = () => updatePosition()
 
-    // 初始化时检查是否有有效的选区
-    const { selection } = editor.state
-    const { from, to } = selection
-
-    // 只有在有选中文本时才显示工具栏
-    if (from !== to) {
+    // 只有在有实际选中文本时才显示工具栏
+    if (hasTextSelection(editor)) {
       updatePosition()
     } else {
-      setShow(false)
+      hideMenu()
     }
 
     editor.on('selectionUpdate', updateHandler)
@@ -234,20 +446,18 @@ export function BubbleMenu({
       editor.off('selectionUpdate', updateHandler)
       editor.off('transaction', updatePosition)
     }
-  }, [editor, updatePosition])
+  }, [editor, hideMenu, updatePosition])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setShow(false)
-        setShowAISubmenu(false)
-        setShowTranslateSubmenu(false)
+        hideMenu()
         setIsInteractingWithMenu(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+  }, [hideMenu])
 
   // Update position on scroll
   useEffect(() => {
@@ -291,12 +501,6 @@ export function BubbleMenu({
   const toggleOrderedList = () => editor.chain().focus().toggleOrderedList().run()
   const toggleTaskList = () => editor.chain().focus().toggleTaskList().run()
   const toggleCodeBlock = () => editor.chain().focus().toggleCodeBlock().run()
-
-  const handleQuoteToChat = useCallback(() => {
-    onQuoteToChat?.()
-    setShow(false)
-    setShowAISubmenu(false)
-  }, [onQuoteToChat])
 
   const isActive = (name: string, attrs?: Record<string, unknown>) =>
     editor.isActive(name, attrs)
@@ -374,9 +578,6 @@ export function BubbleMenu({
                 )}
               </div>
 
-              <button className="w-full px-3 py-1.5 text-left text-sm hover:bg-muted flex items-center gap-2" onClick={() => { setShowAISubmenu(false); handleQuoteToChat() }}>
-                <MessageCircle className="w-3.5 h-3.5" /><span>{t('bubbleMenu.quoteToChat')}</span>
-              </button>
             </div>
           )}
         </div>

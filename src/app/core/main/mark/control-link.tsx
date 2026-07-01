@@ -30,24 +30,26 @@ import { useState, useEffect, useCallback } from "react"
 import { fetch } from '@tauri-apps/plugin-http'
 import { v4 as uuidv4 } from 'uuid'
 import emitter from '@/lib/emitter'
-import { useRouter } from 'next/navigation'
-import { handleRecordComplete } from '@/lib/record-navigation'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { isMobileDevice as checkIsMobileDevice } from '@/lib/check'
 import { hasText, readText } from 'tauri-plugin-clipboard-api'
 import { Store } from '@tauri-apps/plugin-store'
+import { toast } from '@/hooks/use-toast'
+import { RecordSaveTarget } from './record-save-target'
+import { useRecordCompletion } from './use-record-completion'
 
 export function ControlLink() {
   const t = useTranslations();
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [autoReadClipboard, setAutoReadClipboard] = useState(true)
   const isMobile = useIsMobile() || checkIsMobileDevice()
+  const completeRecord = useRecordCompletion()
 
-  const { currentTagId, fetchTags, getCurrentTag } = useTagStore()
-  const { fetchMarks, addQueue, setQueue, removeQueue } = useMarkStore()
+  const { currentTagId, tags } = useTagStore()
+  const { addQueue, setQueue, removeQueue } = useMarkStore()
+  const [selectedTagId, setSelectedTagId] = useState<number>(currentTagId)
 
   // 初始化时从 store 读取设置
   useEffect(() => {
@@ -129,6 +131,12 @@ export function ControlLink() {
     }
   }, [handleOpen])
 
+  useEffect(() => {
+    if (open) {
+      setSelectedTagId(currentTagId)
+    }
+  }, [currentTagId, open])
+
   // 检查是否是有效的 URL
   function isValidUrl(text: string): boolean {
     if (!text || text.trim().length === 0) return false
@@ -158,15 +166,12 @@ export function ControlLink() {
     // 添加到队列中显示加载状态
     addQueue({
       queueId,
-      tagId: currentTagId!,
+      tagId: selectedTagId,
       type: 'link',
       progress: '0%',
       startTime: Date.now()
     })
-    
-    // 记录完成后的导航处理（桌面端切换tab，移动端跳转页面）
-    handleRecordComplete(router)
-    
+
     try {
       setQueue(queueId, { progress: '30%' });
       
@@ -203,23 +208,30 @@ export function ControlLink() {
       const content = mainContent || bodyText;
       
       // 保存到数据库
-      await insertMark({ 
-        tagId: currentTagId, 
+      const result = await insertMark({
+        tagId: selectedTagId,
         type: 'link', 
         desc: desc, 
         content: content,
         url: targetUrl 
       });
-      
-      await fetchMarks();
-      await fetchTags();
-      getCurrentTag();
+      const markId = Number(result.lastInsertId || 0) || null
+      await completeRecord({
+        markId,
+        tagId: selectedTagId,
+        typeLabel: t('record.mark.type.link'),
+      })
       
       setUrl('');
       setOpen(false);
       
     } catch (error) {
       console.error('Error crawling page:', error);
+      toast({
+        title: t('common.error'),
+        description: error instanceof Error ? error.message : t('record.capture.linkFetchFailed'),
+        variant: 'destructive',
+      })
     } finally {
       removeQueue(queueId);
       setLoading(false);
@@ -300,7 +312,12 @@ export function ControlLink() {
                 {t('record.mark.link.description') || '输入网页链接，系统将自动爬取页面内容并保存'}
               </DrawerDescription>
             </DrawerHeader>
-            <div className="px-4">
+            <div className="space-y-4 px-4">
+              <RecordSaveTarget
+                selectedTagId={selectedTagId}
+                tags={tags}
+                onTagChange={setSelectedTagId}
+              />
               <div className="relative">
                 <Input
                   placeholder="https://example.com"
@@ -361,6 +378,11 @@ export function ControlLink() {
                 {t('record.mark.link.description') || '输入网页链接，系统将自动爬取页面内容并保存'}
               </DialogDescription>
             </DialogHeader>
+            <RecordSaveTarget
+              selectedTagId={selectedTagId}
+              tags={tags}
+              onTagChange={setSelectedTagId}
+            />
             <div className="relative">
               <Input
                 placeholder="https://example.com"

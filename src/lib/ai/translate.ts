@@ -1,4 +1,11 @@
-import { getAISettings, prepareMessages, createOpenAIClient, handleAIError, validateAIService } from './utils';
+import {
+  getAISettings,
+  prepareMessages,
+  createOpenAIClient,
+  handleAIError,
+  validateAIService,
+  withEditorFastAiRequestOptions,
+} from './utils';
 import { createAiStreamContentProcessor } from './sanitize';
 
 /**
@@ -24,12 +31,12 @@ export async function fetchAiTranslate(text: string, targetLanguage: string): Pr
     const { messages } = await prepareMessages(`${translationPrompt}\n\n${text}`)
     const openai = await createOpenAIClient(aiConfig)
     
-    const completion = await openai.chat.completions.create({
+    const completion = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig?.model || '',
       messages: messages,
       temperature: aiConfig?.temperature || 1,
       top_p: aiConfig?.topP || 1,
-    })
+    }, aiConfig))
     
     return completion.choices[0]?.message?.content || ''
   } catch (error) {
@@ -57,13 +64,13 @@ export async function fetchAiTranslateStream(
 
     const processor = createAiStreamContentProcessor()
     let accumulatedThinking = ''
-    const stream = await openai.chat.completions.create({
+    const stream = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig?.model || '',
       messages,
       temperature: aiConfig?.temperature || 1,
       top_p: aiConfig?.topP || 1,
       stream: true,
-    }, {
+    }, aiConfig), {
       signal: abortSignal,
     })
 

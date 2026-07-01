@@ -11,6 +11,13 @@ export default function Writing() {
   const [editor, setEditor] = useState<Editor | null>(null)
 
   useEffect(() => {
+    const activeElement = document.activeElement
+    if (
+      activeElement instanceof HTMLElement
+      && activeElement.matches('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
+    ) {
+      activeElement.blur()
+    }
     initCollapsibleList()
   }, [initCollapsibleList])
 

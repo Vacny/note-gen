@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { updateMark } from "@/db/marks"
 import useMarkStore from "@/stores/mark"
 import useTagStore from "@/stores/tag"
@@ -42,6 +42,7 @@ export function TodoEditDialog({ mark, open, onOpenChange }: TodoEditDialogProps
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<Priority>('medium')
+  const titleInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     if (open && mark) {
@@ -83,9 +84,23 @@ export function TodoEditDialog({ mark, open, onOpenChange }: TodoEditDialogProps
     onOpenChange(false)
   }
 
+  const handleOpenAutoFocus = useCallback((event: Event) => {
+    event.preventDefault()
+  }, [])
+
+  const handleAnimationEnd = useCallback((event: React.AnimationEvent<HTMLDivElement>) => {
+    if (!open || event.currentTarget.dataset.state !== 'open') return
+
+    titleInputRef.current?.focus()
+  }, [open])
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="min-w-full md:min-w-[550px]">
+      <DialogContent
+        className="min-w-full md:min-w-[550px]"
+        onOpenAutoFocus={handleOpenAutoFocus}
+        onAnimationEnd={handleAnimationEnd}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CheckSquare className="w-5 h-5" />
@@ -100,6 +115,7 @@ export function TodoEditDialog({ mark, open, onOpenChange }: TodoEditDialogProps
           <div>
             <Label htmlFor="edit-todo-title">{t('record.mark.todo.title')} *</Label>
             <Input
+              ref={titleInputRef}
               id="edit-todo-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}

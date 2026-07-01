@@ -1,6 +1,6 @@
 'use client'
 
-import { useEditor, EditorContent } from '@tiptap/react'
+import { useEditor, EditorContent, type Editor as TipTapReactEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Link from '@tiptap/extension-link'
@@ -12,6 +12,7 @@ import Underline from '@tiptap/extension-underline'
 import TextAlign from '@tiptap/extension-text-align'
 import Typography from '@tiptap/extension-typography'
 import Dropcursor from '@tiptap/extension-dropcursor'
+import DragHandle from '@tiptap/extension-drag-handle'
 import { Table } from '@tiptap/extension-table'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableCell } from '@tiptap/extension-table-cell'
@@ -21,20 +22,26 @@ import { common, createLowlight } from 'lowlight'
 import { Markdown } from '@tiptap/markdown'
 import { SearchAndReplace } from '@sereneinserenade/tiptap-search-and-replace'
 import UniqueId from '@tiptap/extension-unique-id'
-import { Extension, nodeInputRule } from '@tiptap/core'
-import { Plugin, TextSelection } from '@tiptap/pm/state'
+import { Extension, nodeInputRule, ResizableNodeView, type Editor as CoreEditor, type ResizableNodeViewDirection } from '@tiptap/core'
+import { AllSelection, NodeSelection, Plugin, PluginKey, TextSelection, type Selection } from '@tiptap/pm/state'
+import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
+import { dropPoint } from '@tiptap/pm/transform'
 import 'katex/dist/katex.min.css'
 import { InlineMath, BlockMath } from './math-extension'
 import { MermaidDiagram } from './mermaid-extension'
 import { MathEditorDialog } from './math-editor-dialog'
 import { SearchReplacePanel } from './search-replace-panel'
-import { useEffect, useRef, useCallback, useState } from 'react'
+import { useEffect, useRef, useCallback, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Store } from '@tauri-apps/plugin-store'
-import { openUrl } from '@tauri-apps/plugin-opener'
+import { openPath, openUrl } from '@tauri-apps/plugin-opener'
+import { open } from '@tauri-apps/plugin-dialog'
+import { readFile } from '@tauri-apps/plugin-fs'
+import { appDataDir, join } from '@tauri-apps/api/path'
 import { handleImageUpload } from '@/lib/image-handler'
 import useArticleStore from '@/stores/article'
-import { convertImageByWorkspace } from '@/lib/utils'
+import { cn, convertImageByWorkspace } from '@/lib/utils'
 import { resolveImagePathFromMarkdown } from '@/lib/markdown-image-path'
+import { getFilePathOptions, getWorkspacePath, isAbsoluteFsPath } from '@/lib/workspace'
 import { isMobileDevice } from '@/lib/check'
 import { useTranslations } from 'next-intl'
 import { replaceLinesInRange } from '@/lib/agent/react-diff-helpers'
@@ -46,18 +53,24 @@ import { FooterBar } from './footer-bar/index'
 import { Outline } from './outline'
 import { SlashCommand, suggestionOptions } from './slash-command'
 import { SlashCommandPortal } from './slash-command/slash-command-portal'
-import { fetchCompletionStream } from '@/lib/ai/completion'
+import {
+  fetchCompletionStream,
+  fetchEditorAiGenerationStream,
+  sanitizeEditorAiGenerationOutput,
+  type EditorAiGenerationAction,
+} from '@/lib/ai/completion'
 import { fetchAiPolishStream, fetchAiConciseStream, fetchAiExpandStream } from '@/lib/ai/rewrite'
 import { fetchAiTranslateStream } from '@/lib/ai/translate'
 import { AISuggestion } from './ai-suggestion'
 import { AISuggestionFloating } from './ai-suggestion-floating'
+import { AiSuggestionHighlight } from './ai-suggestion-highlight'
 import emitter from '@/lib/emitter'
 import { QuoteMark } from './quote-mark'
 import { MarkdownParagraph, normalizeMarkdownPlaceholders } from './markdown-paragraph'
 import { StableCodeBlockLowlight } from './code-block-extension'
 import { shouldTransformImageSrcToWorkspaceAsset } from './image-src'
 import useSettingStore from '@/stores/setting'
-import useChatStore from '@/stores/chat'
+import useChatStore, { type PendingQuote } from '@/stores/chat'
 import { Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { buildMobileSelectionContext, isMobileSelectionContextStale } from './mobile-selection-context'
@@ -66,11 +79,503 @@ import { MobileEditorMoreSheet } from './mobile-editor-more-sheet'
 import { shouldRestorePendingQuote } from './quote-session'
 import { getEditorContentContainerClass } from '@/lib/editor-layout-styles'
 import { getResultIndexToFocus } from './search-navigation'
-import { isOutlineOnLeft, type OutlinePosition } from '@/lib/outline-preferences'
-import { OUTLINE_PANEL_PADDING_CLASS } from '@/lib/outline-styles'
+import {
+  DEFAULT_OUTLINE_WIDTH,
+  getOutlineContentPadding,
+  isOutlineOnLeft,
+  type OutlinePosition,
+} from '@/lib/outline-preferences'
+import { EditorShortcutsExtension } from './editor-shortcuts-extension'
+import useEditorShortcutStore from '@/stores/editor-shortcut'
+import type { EditorShortcutCommandId } from '@/config/editor-shortcuts'
+import { isAiSuggestionShortcutVisible } from '@/lib/ai-suggestion-shortcut-state'
+import { getFileManagerDragPath, hasFileManagerDragData } from '@/app/core/main/file/file-dnd'
 import './style.css'
 
 const lowlight = createLowlight(common)
+
+const IMAGE_RESIZE_DIRECTIONS: ResizableNodeViewDirection[] = [
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+]
+
+const AI_GENERATION_LOADING_TEXT = '···'
+
+function createDragHandleElement(): HTMLElement {
+  const element = document.createElement('div')
+  element.className = 'tiptap-drag-handle'
+  element.setAttribute('aria-hidden', 'true')
+  return element
+}
+
+const INTERNAL_TEXT_FILE_PATH_RE = /\.(?:md|txt|markdown|py|js|ts|jsx|tsx|css|scss|less|html|xml|json|yaml|yml|sh|bash|java|c|cpp|h|go|rs|sql|rb|php|vue|svelte|astro|toml|ini|conf|cfg|gitignore|env|example|template)$/i
+const INTERNAL_IMAGE_FILE_PATH_RE = /\.(?:jpg|jpeg|png|gif|bmp|webp|svg)$/i
+const WINDOWS_ABSOLUTE_PATH_RE = /^[a-zA-Z]:[\\/]/
+
+type EditorDragHandleMoveRange = {
+  from: number
+  to: number
+}
+
+function shouldCopyInternalEditorDrag(event: DragEvent) {
+  if (typeof navigator === 'undefined') {
+    return event.ctrlKey
+  }
+
+  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent)
+    ? event.altKey
+    : event.ctrlKey
+}
+
+function getSelectionMoveRange(selection: Selection): EditorDragHandleMoveRange | null {
+  if (selection.empty) {
+    return null
+  }
+
+  return {
+    from: Math.min(selection.from, selection.to),
+    to: Math.max(selection.from, selection.to),
+  }
+}
+
+function isEditorAiGenerationAction(action: unknown): action is EditorAiGenerationAction {
+  return action === 'section' || action === 'summary' || action === 'custom'
+}
+
+function getEditorPositionRect(targetEditor: TipTapReactEditor, position: number) {
+  const safePosition = clampSelectionPosition(position, targetEditor.state.doc.content.size)
+  const coords = targetEditor.view.coordsAtPos(safePosition)
+  return {
+    top: coords.top,
+    left: coords.left,
+    right: coords.right,
+    bottom: coords.bottom,
+  }
+}
+
+function getInsertedContentRange(targetEditor: TipTapReactEditor, from: number, docSizeBeforeInsert: number) {
+  const insertedSize = Math.max(0, targetEditor.state.doc.content.size - docSizeBeforeInsert)
+
+  return {
+    from,
+    to: from + insertedSize,
+  }
+}
+
+type DroppedFileWithPath = File & {
+  path?: string
+  webkitRelativePath?: string
+}
+
+type DroppedFileLink = {
+  label: string
+  path: string
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function getLinkProtocol(href: string): string | null {
+  if (WINDOWS_ABSOLUTE_PATH_RE.test(href)) {
+    return null
+  }
+
+  return href.match(/^([a-z][a-z0-9+.-]*):/i)?.[1].toLowerCase() ?? null
+}
+
+function stripLocalLinkFragment(href: string): string {
+  const hashIndex = href.indexOf('#')
+  return hashIndex >= 0 ? href.slice(0, hashIndex) : href
+}
+
+function normalizeLocalFilePath(path: string): string {
+  const normalized = path.trim().replace(/\\/g, '/')
+  const hasUncPrefix = normalized.startsWith('//')
+  const hasLeadingSlash = normalized.startsWith('/')
+  const segments: string[] = []
+
+  normalized.split('/').forEach((segment) => {
+    if (!segment || segment === '.') {
+      return
+    }
+
+    if (segment === '..') {
+      if (segments.length > 0 && segments[segments.length - 1] !== '..') {
+        segments.pop()
+      } else if (!hasLeadingSlash) {
+        segments.push(segment)
+      }
+      return
+    }
+
+    segments.push(segment)
+  })
+
+  const normalizedPath = segments.join('/')
+  if (hasUncPrefix) {
+    return `//${normalizedPath}`
+  }
+
+  return hasLeadingSlash ? `/${normalizedPath}` : normalizedPath
+}
+
+function getFilePathFromFileUrl(href: string): string {
+  try {
+    const url = new URL(href)
+    let pathname = safeDecodeURIComponent(url.pathname)
+
+    if (url.hostname && url.hostname !== 'localhost') {
+      pathname = `//${url.hostname}${pathname}`
+    }
+
+    if (pathname.startsWith('/') && WINDOWS_ABSOLUTE_PATH_RE.test(pathname.slice(1))) {
+      return pathname.slice(1)
+    }
+
+    return pathname
+  } catch {
+    const withoutProtocol = href.replace(/^file:\/\//i, '')
+    return safeDecodeURIComponent(stripLocalLinkFragment(withoutProtocol))
+  }
+}
+
+function getPathName(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized.split('/').filter(Boolean).pop() || normalized || path
+}
+
+function normalizeWorkspacePathSegments(path: string): string[] {
+  const normalized = path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.?\//, '')
+    .replace(/\/+/g, '/')
+
+  if (!normalized) {
+    return []
+  }
+
+  const segments: string[] = []
+
+  normalized.split('/').forEach((segment) => {
+    if (!segment || segment === '.') {
+      return
+    }
+
+    if (segment === '..') {
+      if (segments.length > 0) {
+        segments.pop()
+      }
+      return
+    }
+
+    segments.push(segment)
+  })
+
+  return segments
+}
+
+function toMarkdownRelativePath(currentFilePath: string, targetWorkspacePath: string): string {
+  const currentSegments = normalizeWorkspacePathSegments(currentFilePath)
+  const currentDirSegments = currentSegments.slice(0, -1)
+  const targetSegments = normalizeWorkspacePathSegments(targetWorkspacePath)
+
+  let commonPrefixLength = 0
+  while (
+    commonPrefixLength < currentDirSegments.length &&
+    commonPrefixLength < targetSegments.length &&
+    currentDirSegments[commonPrefixLength] === targetSegments[commonPrefixLength]
+  ) {
+    commonPrefixLength += 1
+  }
+
+  const upwardSegments = new Array(currentDirSegments.length - commonPrefixLength).fill('..')
+  const downwardSegments = targetSegments.slice(commonPrefixLength)
+  return [...upwardSegments, ...downwardSegments].join('/') || getPathName(targetWorkspacePath)
+}
+
+function encodeLocalLinkHref(path: string): string {
+  return encodeURI(path)
+    .replace(/#/g, '%23')
+    .replace(/\?/g, '%3F')
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29')
+}
+
+function toFileUrl(path: string): string {
+  const normalized = normalizeLocalFilePath(path)
+  const encodedPath = encodeLocalLinkHref(normalized)
+
+  if (normalized.startsWith('//')) {
+    return `file:${encodedPath}`
+  }
+
+  if (normalized.startsWith('/') || WINDOWS_ABSOLUTE_PATH_RE.test(normalized)) {
+    return `file://${normalized.startsWith('/') ? '' : '/'}${encodedPath}`
+  }
+
+  return encodedPath
+}
+
+function escapeMarkdownLinkText(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]')
+}
+
+function escapeMarkdownText(text: string): string {
+  return text.replace(/\\/g, '\\\\')
+}
+
+function createMarkdownLink(href: string, label: string): string {
+  return `[${escapeMarkdownLinkText(label)}](${href})`
+}
+
+function getDroppedFilePath(file: File): string | null {
+  const droppedFile = file as DroppedFileWithPath
+  return droppedFile.path || droppedFile.webkitRelativePath || null
+}
+
+function normalizePathForCompare(path: string): string {
+  const normalized = normalizeLocalFilePath(path).replace(/\/+$/, '')
+  return WINDOWS_ABSOLUTE_PATH_RE.test(normalized) ? normalized.toLowerCase() : normalized
+}
+
+function getPathInsideRoot(path: string, root: string): string | null {
+  const normalizedPath = normalizePathForCompare(path)
+  const normalizedRoot = normalizePathForCompare(root)
+
+  if (normalizedPath === normalizedRoot) {
+    return ''
+  }
+
+  if (!normalizedPath.startsWith(`${normalizedRoot}/`)) {
+    return null
+  }
+
+  return normalizeLocalFilePath(path).slice(normalizeLocalFilePath(root).replace(/\/+$/, '').length + 1)
+}
+
+async function getWorkspaceRelativePathForAbsolutePath(path: string): Promise<string | null> {
+  const workspace = await getWorkspacePath()
+
+  if (workspace.isCustom) {
+    return getPathInsideRoot(path, workspace.path)
+  }
+
+  const appDir = await appDataDir()
+  const defaultWorkspacePath = await join(appDir, 'article')
+  return getPathInsideRoot(path, defaultWorkspacePath)
+}
+
+async function getMarkdownHrefForDroppedPath(path: string, currentFilePath: string): Promise<string> {
+  const normalizedPath = normalizeLocalFilePath(path)
+
+  if (isAbsoluteFsPath(normalizedPath)) {
+    const workspaceRelativePath = await getWorkspaceRelativePathForAbsolutePath(normalizedPath)
+
+    if (workspaceRelativePath !== null) {
+      return encodeLocalLinkHref(toMarkdownRelativePath(currentFilePath, workspaceRelativePath))
+    }
+
+    return toFileUrl(normalizedPath)
+  }
+
+  return encodeLocalLinkHref(toMarkdownRelativePath(currentFilePath, normalizedPath))
+}
+
+async function createMarkdownLinksForDroppedPaths(files: DroppedFileLink[], currentFilePath: string): Promise<string[]> {
+  return await Promise.all(
+    files.map(async (file) => {
+      const href = await getMarkdownHrefForDroppedPath(file.path, currentFilePath)
+      return createMarkdownLink(href, file.label)
+    })
+  )
+}
+
+function getFileUrlsFromDataTransfer(dataTransfer: DataTransfer): string[] {
+  const uriList = dataTransfer.getData('text/uri-list')
+
+  if (uriList) {
+    return uriList
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('#') && line.startsWith('file://'))
+  }
+
+  const plainText = dataTransfer.getData('text/plain') || dataTransfer.getData('text')
+  if (!plainText) {
+    return []
+  }
+
+  return plainText
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line.startsWith('file://'))
+}
+
+async function getDroppedFileMarkdownLinks(dataTransfer: DataTransfer, currentFilePath: string): Promise<string[]> {
+  const droppedFiles: DroppedFileLink[] = []
+
+  if (hasFileManagerDragData(dataTransfer)) {
+    const path = getFileManagerDragPath(dataTransfer).trim()
+    if (path) {
+      droppedFiles.push({ path, label: getPathName(path) })
+    }
+  } else {
+    const fileUrls = getFileUrlsFromDataTransfer(dataTransfer)
+
+    if (fileUrls.length > 0) {
+      fileUrls.forEach((fileUrl) => {
+        const path = normalizeLocalFilePath(getFilePathFromFileUrl(fileUrl))
+        droppedFiles.push({ path, label: getPathName(path) })
+      })
+    } else {
+      Array.from(dataTransfer.files || []).forEach((file) => {
+        const path = getDroppedFilePath(file)
+        if (path) {
+          droppedFiles.push({ path, label: file.name || getPathName(path) })
+        }
+      })
+    }
+  }
+
+  return await createMarkdownLinksForDroppedPaths(droppedFiles, currentFilePath)
+}
+
+function resolveLocalLinkPath(href: string, currentFilePath: string): string {
+  const decodedPath = safeDecodeURIComponent(stripLocalLinkFragment(href)).trim()
+
+  if (!decodedPath) {
+    return ''
+  }
+
+  if (isAbsoluteFsPath(decodedPath)) {
+    return normalizeLocalFilePath(decodedPath)
+  }
+
+  const parentDir = currentFilePath.includes('/')
+    ? currentFilePath.substring(0, currentFilePath.lastIndexOf('/'))
+    : ''
+  return normalizeLocalFilePath(parentDir ? `${parentDir}/${decodedPath}` : decodedPath)
+}
+
+function isInternalFilePath(path: string): boolean {
+  return INTERNAL_TEXT_FILE_PATH_RE.test(path) || INTERNAL_IMAGE_FILE_PATH_RE.test(path)
+}
+
+async function getOpenableLocalPath(path: string): Promise<string> {
+  if (isAbsoluteFsPath(path)) {
+    return path
+  }
+
+  const workspace = await getWorkspacePath()
+
+  if (workspace.isCustom) {
+    const pathOptions = await getFilePathOptions(path)
+    return pathOptions.path
+  }
+
+  const appDir = await appDataDir()
+  return await join(appDir, 'article', path)
+}
+
+async function openLocalPathWithDefaultApp(path: string) {
+  await openPath(await getOpenableLocalPath(path))
+}
+
+function parseImageDimension(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : null
+  }
+
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const trimmed = value.trim()
+  if (!/^\d+(?:\.\d+)?(?:px)?$/i.test(trimmed)) {
+    return null
+  }
+
+  const parsed = Number.parseInt(trimmed.replace(/px$/i, ''), 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function getImageDimensionFromElement(element: HTMLElement, name: 'width' | 'height'): number | null {
+  return (
+    parseImageDimension(element.getAttribute(name)) ||
+    parseImageDimension(element.style[name])
+  )
+}
+
+function applyImageNodeAttributes(element: HTMLImageElement, attrs: Record<string, unknown>) {
+  const src = typeof attrs.src === 'string' ? attrs.src : ''
+  const alt = typeof attrs.alt === 'string' ? attrs.alt : ''
+  const title = typeof attrs.title === 'string' ? attrs.title : ''
+  const relativeSrc = typeof attrs.relativeSrc === 'string' ? attrs.relativeSrc : ''
+  const width = parseImageDimension(attrs.width)
+  const height = parseImageDimension(attrs.height)
+  const currentSrc = element.getAttribute('src')
+  const currentRelativeSrc = element.getAttribute('data-relative-src') || ''
+  const shouldKeepConvertedSrc =
+    Boolean(relativeSrc) &&
+    currentRelativeSrc === relativeSrc &&
+    shouldTransformImageSrcToWorkspaceAsset(src) &&
+    currentSrc !== src
+
+  if (!shouldKeepConvertedSrc && currentSrc !== src) {
+    element.setAttribute('src', src)
+  }
+
+  element.setAttribute('alt', alt)
+  element.className = 'max-w-full rounded-lg'
+
+  if (title) {
+    element.setAttribute('title', title)
+  } else {
+    element.removeAttribute('title')
+  }
+
+  if (relativeSrc) {
+    element.setAttribute('data-relative-src', relativeSrc)
+  } else {
+    element.removeAttribute('data-relative-src')
+  }
+
+  if (width) {
+    element.setAttribute('width', String(width))
+    element.style.width = `${width}px`
+  } else {
+    element.removeAttribute('width')
+    element.style.removeProperty('width')
+  }
+
+  if (height) {
+    element.setAttribute('height', String(height))
+    element.style.height = `${height}px`
+  } else {
+    element.removeAttribute('height')
+    element.style.removeProperty('height')
+  }
+}
 
 // 自定义扩展：处理粘贴 Markdown 文本
 const PasteMarkdown = Extension.create({
@@ -116,6 +621,194 @@ const PasteMarkdown = Extension.create({
   },
 })
 
+interface BlurSelectionState {
+  focused: boolean
+  from: number
+  to: number
+}
+
+const blurSelectionPluginKey = new PluginKey<BlurSelectionState>('blurSelectionHighlight')
+
+function isFullDocumentRange(from: number, to: number, docSize: number): boolean {
+  const start = Math.min(from, to)
+  const end = Math.max(from, to)
+
+  if (start === end || docSize <= 0) {
+    return false
+  }
+
+  if (start <= 0 && end >= docSize) {
+    return true
+  }
+
+  return docSize > 2 && start <= 1 && end >= docSize - 1
+}
+
+function isFullDocumentSelection(selection: Selection, docSize: number): boolean {
+  if (selection.empty) {
+    return false
+  }
+
+  return selection instanceof AllSelection || isFullDocumentRange(selection.from, selection.to, docSize)
+}
+
+function isFocusWithinEditor(view: EditorView): boolean {
+  const activeElement = view.dom.ownerDocument.activeElement
+
+  return view.hasFocus() || Boolean(activeElement && view.dom.contains(activeElement))
+}
+
+const BlurSelectionHighlight = Extension.create({
+  name: 'blurSelectionHighlight',
+
+  addProseMirrorPlugins() {
+    let pendingBlurFrame: number | null = null
+    let pendingBlurWindow: Window | null = null
+
+    const cancelPendingBlur = () => {
+      if (pendingBlurFrame === null) {
+        return
+      }
+
+      pendingBlurWindow?.cancelAnimationFrame(pendingBlurFrame)
+      pendingBlurFrame = null
+      pendingBlurWindow = null
+    }
+
+    const setFocused = (view: EditorView) => {
+      cancelPendingBlur()
+      view.dispatch(view.state.tr.setMeta(blurSelectionPluginKey, {
+        focused: true,
+        from: 0,
+        to: 0,
+      }))
+    }
+
+    const setBlurredIfFocusLeftEditor = (view: EditorView) => {
+      if (isFocusWithinEditor(view)) {
+        setFocused(view)
+        return
+      }
+
+      const { selection } = view.state
+      const { from, to } = selection
+      const shouldKeepSelection = from !== to && !isFullDocumentSelection(selection, view.state.doc.content.size)
+      view.dispatch(view.state.tr.setMeta(blurSelectionPluginKey, {
+        focused: false,
+        from: shouldKeepSelection ? from : 0,
+        to: shouldKeepSelection ? to : 0,
+      }))
+    }
+
+    return [
+      new Plugin<BlurSelectionState>({
+        key: blurSelectionPluginKey,
+        view: () => ({
+          destroy() {
+            cancelPendingBlur()
+          },
+        }),
+        state: {
+          init: () => ({
+            focused: false,
+            from: 0,
+            to: 0,
+          }),
+          apply(tr, value) {
+            const meta = tr.getMeta(blurSelectionPluginKey) as Partial<BlurSelectionState> | undefined
+            const mapped = {
+              ...value,
+              from: tr.mapping.map(value.from),
+              to: tr.mapping.map(value.to),
+            }
+            const next = meta ? { ...mapped, ...meta } : mapped
+            const { from, to } = tr.selection
+
+            if (meta && ('from' in meta || 'to' in meta)) {
+              return next
+            }
+
+            if (!tr.selection.empty) {
+              if (isFullDocumentSelection(tr.selection, tr.doc.content.size)) {
+                return {
+                  ...next,
+                  from: 0,
+                  to: 0,
+                }
+              }
+
+              return {
+                ...next,
+                from,
+                to,
+              }
+            }
+
+            if (tr.selection.empty) {
+              return {
+                ...next,
+                from: 0,
+                to: 0,
+              }
+            }
+
+            return next
+          },
+        },
+        props: {
+          decorations(state) {
+            const pluginState = blurSelectionPluginKey.getState(state)
+            if (!pluginState || pluginState.focused || pluginState.from === pluginState.to) {
+              return DecorationSet.empty
+            }
+
+            const from = Math.max(0, Math.min(pluginState.from, state.doc.content.size))
+            const to = Math.max(0, Math.min(pluginState.to, state.doc.content.size))
+            if (from === to || isFullDocumentRange(from, to, state.doc.content.size)) {
+              return DecorationSet.empty
+            }
+
+            return DecorationSet.create(state.doc, [
+              Decoration.inline(Math.min(from, to), Math.max(from, to), {
+                class: 'tiptap-blur-selection',
+              }),
+            ])
+          },
+          handleDOMEvents: {
+            focus(view) {
+              setFocused(view)
+              return false
+            },
+            mousedown(view, event) {
+              if (event.target instanceof Node && view.dom.contains(event.target)) {
+                setFocused(view)
+              }
+              return false
+            },
+            blur(view) {
+              cancelPendingBlur()
+              pendingBlurWindow = view.dom.ownerDocument.defaultView
+
+              if (!pendingBlurWindow) {
+                setBlurredIfFocusLeftEditor(view)
+                return false
+              }
+
+              pendingBlurFrame = pendingBlurWindow.requestAnimationFrame(() => {
+                pendingBlurFrame = null
+                pendingBlurWindow = null
+                setBlurredIfFocusLeftEditor(view)
+              })
+
+              return false
+            },
+          },
+        },
+      }),
+    ]
+  },
+})
+
 
 // 简单的启发式函数：检查文本是否看起来像 Markdown
 function looksLikeMarkdown(text: string): boolean {
@@ -151,11 +844,11 @@ interface TipTapEditorProps {
   placeholder?: string
   editable?: boolean
   activeFilePath?: string
-  onQuoteToChat?: () => void
   onReady?: () => void
-  onEditorReady?: (editor: any) => void
+  onEditorReady?: (editor: TipTapReactEditor) => void
   outlineOpen?: boolean
   outlinePosition?: OutlinePosition
+  outlineWidth?: number
   onToggleOutline?: () => void
   autoScroll?: boolean
   showOverlay?: boolean
@@ -196,11 +889,11 @@ export function TipTapEditor({
   placeholder,
   editable = true,
   activeFilePath = '',
-  onQuoteToChat,
   onReady,
   onEditorReady,
   outlineOpen,
   outlinePosition = 'right',
+  outlineWidth = DEFAULT_OUTLINE_WIDTH,
   onToggleOutline,
   autoScroll = false,
   showOverlay = false,
@@ -280,6 +973,34 @@ export function TipTapEditor({
 
   // Content version ref for race condition prevention between editor and agent
   const contentVersionRef = useRef(0)
+  const editorDragHandleTargetRangeRef = useRef<EditorDragHandleMoveRange | null>(null)
+  const isEditorDragHandleDraggingRef = useRef(false)
+  const editorDragHandleMoveRangeRef = useRef<EditorDragHandleMoveRange | null>(null)
+  const editorShortcuts = useEditorShortcutStore((state) => state.shortcuts)
+  const editorShortcutsRef = useRef(editorShortcuts)
+  const editorShortcutHandlersRef = useRef<Partial<Record<EditorShortcutCommandId, (targetEditor: CoreEditor) => boolean>>>({})
+  const [openAiMenuSignal, setOpenAiMenuSignal] = useState(0)
+  const [openTranslateMenuSignal, setOpenTranslateMenuSignal] = useState(0)
+  const [openLinkInputSignal, setOpenLinkInputSignal] = useState(0)
+
+  useEffect(() => {
+    editorShortcutsRef.current = editorShortcuts
+  }, [editorShortcuts])
+
+  const runEditorShortcutCommand = useCallback((id: EditorShortcutCommandId, targetEditor: CoreEditor) => {
+    return editorShortcutHandlersRef.current[id]?.(targetEditor) ?? false
+  }, [])
+
+  const clearEditorDragHandleMoveState = useCallback(() => {
+    isEditorDragHandleDraggingRef.current = false
+    editorDragHandleMoveRangeRef.current = null
+  }, [])
+
+  const scheduleClearEditorDragHandleMoveState = useCallback(() => {
+    window.setTimeout(() => {
+      clearEditorDragHandleMoveState()
+    }, 100)
+  }, [clearEditorDragHandleMoveState])
 
   // When file path changes, reset initialization state to avoid old file content overwriting new file
   useEffect(() => {
@@ -296,6 +1017,10 @@ export function TipTapEditor({
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
+      EditorShortcutsExtension.configure({
+        getShortcuts: () => editorShortcutsRef.current,
+        runCommand: runEditorShortcutCommand,
+      }),
       StarterKit.configure({
         heading: {
           levels: [1, 2, 3, 4, 5, 6],
@@ -304,6 +1029,7 @@ export function TipTapEditor({
         link: false,
         paragraph: false,
         underline: false,
+        dropcursor: false,
       }),
       MarkdownParagraph,
       Placeholder.configure({
@@ -312,6 +1038,7 @@ export function TipTapEditor({
       }),
       Link.configure({
         openOnClick: false,
+        protocols: ['file'],
       }),
       TaskList,
       TaskItem.configure({
@@ -331,6 +1058,48 @@ export function TipTapEditor({
       Typography,
       SearchAndReplace,
       Dropcursor,
+      ...(!isMobile
+        ? [
+            DragHandle.configure({
+              render: createDragHandleElement,
+              onNodeChange: (options) => {
+                const { node } = options
+                const dragOptions = options as unknown as { pos?: unknown }
+                const pos = typeof dragOptions.pos === 'number'
+                  ? dragOptions.pos
+                  : -1
+
+                editorDragHandleTargetRangeRef.current = node && pos >= 0
+                  ? {
+                      from: pos,
+                      to: pos + node.nodeSize,
+                    }
+                  : null
+              },
+              onElementDragStart: (event) => {
+                isEditorDragHandleDraggingRef.current = true
+                editorDragHandleMoveRangeRef.current = editorDragHandleTargetRangeRef.current
+
+                if (!event.dataTransfer) {
+                  return
+                }
+
+                event.dataTransfer.effectAllowed = 'move'
+                event.dataTransfer.dropEffect = 'move'
+              },
+              onElementDragEnd: scheduleClearEditorDragHandleMoveState,
+              computePositionConfig: {
+                middleware: [
+                  {
+                    name: 'editorDragHandleOffset',
+                    fn: ({ x, y }) => ({ x: x - 2, y }),
+                  },
+                ],
+              },
+              nested: true,
+            }),
+          ]
+        : []),
       Table.configure({
         resizable: true,
       }),
@@ -348,6 +1117,7 @@ export function TipTapEditor({
       }),
       QuoteMark,
       AISuggestion,
+      AiSuggestionHighlight,
       UniqueId.configure({
         attributeName: 'data-id',
         types: ['paragraph', 'heading', 'blockquote', 'codeBlock', 'listItem', 'bulletList', 'orderedList', 'taskItem', 'table', 'tableRow', 'tableCell', 'tableHeader'],
@@ -377,6 +1147,8 @@ export function TipTapEditor({
               getAttrs: (element) => {
                 const src = element.getAttribute('src')
                 const relativeSrc = element.getAttribute('data-relative-src') || src
+                const width = getImageDimensionFromElement(element, 'width')
+                const height = getImageDimensionFromElement(element, 'height')
                 const uploading = element.getAttribute('data-uploading') === 'true'
                 // 如果是相对路径（非 http/https/asset://），转换为 asset://
                 if (shouldTransformImageSrcToWorkspaceAsset(src)) {
@@ -385,6 +1157,9 @@ export function TipTapEditor({
                     src, // 先保持原样，后续通过其他方式处理
                     relativeSrc: src,
                     alt: element.getAttribute('alt') || '',
+                    title: element.getAttribute('title') || null,
+                    width,
+                    height,
                     uploading,
                   }
                 }
@@ -392,6 +1167,9 @@ export function TipTapEditor({
                   src,
                   relativeSrc,
                   alt: element.getAttribute('alt') || '',
+                  title: element.getAttribute('title') || null,
+                  width,
+                  height,
                   uploading,
                 }
               },
@@ -399,12 +1177,33 @@ export function TipTapEditor({
           ]
         },
         renderHTML({ node }) {
+          const width = parseImageDimension(node.attrs.width)
+          const height = parseImageDimension(node.attrs.height)
+          const style = [
+            width ? `width: ${width}px` : null,
+            height ? `height: ${height}px` : null,
+          ].filter(Boolean).join('; ')
+
           return ['img', {
             src: node.attrs.src,
             alt: node.attrs.alt || '',
-            class: 'max-w-full h-auto rounded-lg',
-            'data-relative-src': node.attrs.relativeSrc,
+            title: node.attrs.title || null,
+            class: 'max-w-full rounded-lg',
+            width,
+            height,
+            style: style || null,
+            'data-relative-src': node.attrs.relativeSrc || null,
           }]
+        },
+        parseMarkdown(token, helpers) {
+          const src = token.href || ''
+
+          return helpers.createNode('image', {
+            src,
+            title: token.title,
+            alt: token.text,
+            relativeSrc: src,
+          })
         },
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         renderMarkdown(node, _helpers) {
@@ -413,7 +1212,102 @@ export function TipTapEditor({
           let src = attrs.relativeSrc || attrs.src || ''
           // 如果是 asset:// 或 tauri:// 路径，提取实际路径
           src = src.replace(/^(tauri|asset|http):\/\/localhost\//, '')
-          return `![${attrs.alt || ''}](${src})`
+          const width = parseImageDimension(attrs.width)
+          const height = parseImageDimension(attrs.height)
+
+          if (!width && !height) {
+            return attrs.title
+              ? `![${attrs.alt || ''}](${src} "${attrs.title}")`
+              : `![${attrs.alt || ''}](${src})`
+          }
+
+          const htmlAttributes = [
+            `src="${escapeHtmlAttribute(src)}"`,
+            `alt="${escapeHtmlAttribute(attrs.alt || '')}"`,
+            attrs.title ? `title="${escapeHtmlAttribute(attrs.title)}"` : null,
+            width ? `width="${width}"` : null,
+            height ? `height="${height}"` : null,
+          ].filter(Boolean).join(' ')
+
+          return `<img ${htmlAttributes}>`
+        },
+        addNodeView() {
+          if (!this.options.resize || !this.options.resize.enabled || typeof document === 'undefined') {
+            return null
+          }
+
+          const { directions, minWidth, minHeight, alwaysPreserveAspectRatio } = this.options.resize
+
+          return ({ node, getPos, editor }) => {
+            const element = document.createElement('img')
+            applyImageNodeAttributes(element, node.attrs)
+
+            const nodeView = new ResizableNodeView({
+              element,
+              editor,
+              node,
+              getPos,
+              onResize: (width, height) => {
+                element.style.width = `${width}px`
+                element.style.height = `${height}px`
+              },
+              onCommit: (width, height) => {
+                const pos = getPos()
+
+                if (typeof pos !== 'number') {
+                  return
+                }
+
+                editor
+                  .chain()
+                  .setNodeSelection(pos)
+                  .updateAttributes(this.name, {
+                    width,
+                    height,
+                  })
+                  .run()
+              },
+              onUpdate: (updatedNode) => {
+                if (updatedNode.type !== node.type) {
+                  return false
+                }
+
+                applyImageNodeAttributes(element, updatedNode.attrs)
+                return true
+              },
+              options: {
+                directions,
+                min: {
+                  width: minWidth,
+                  height: minHeight,
+                },
+                preserveAspectRatio: alwaysPreserveAspectRatio === true,
+                className: {
+                  container: 'image-resize-container',
+                  wrapper: 'image-resize-wrapper',
+                  handle: 'image-resize-handle',
+                  resizing: 'image-resize-active',
+                },
+              },
+            })
+
+            const dom = nodeView.dom as HTMLElement
+            const revealNodeView = () => {
+              dom.style.visibility = ''
+              dom.style.pointerEvents = ''
+            }
+
+            dom.style.visibility = 'hidden'
+            dom.style.pointerEvents = 'none'
+            element.onload = revealNodeView
+            element.onerror = revealNodeView
+
+            if (element.complete) {
+              revealNodeView()
+            }
+
+            return nodeView
+          }
         },
         addInputRules() {
           return [
@@ -429,18 +1323,94 @@ export function TipTapEditor({
             }),
           ]
         },
-              }).configure({
+      }).configure({
         inline: true,
         allowBase64: true,
+        resize: {
+          enabled: true,
+          directions: IMAGE_RESIZE_DIRECTIONS,
+          minWidth: 48,
+          minHeight: 48,
+          alwaysPreserveAspectRatio: true,
+        },
         HTMLAttributes: {
-          class: 'max-w-full h-auto rounded-lg',
+          class: 'max-w-full rounded-lg',
         },
       }),
       // 自定义粘贴 Markdown 扩展
       PasteMarkdown,
+      BlurSelectionHighlight,
     ],
     content: initialContent,
     contentType: 'markdown',
+    editorProps: {
+      dragCopies: (event) => {
+        if (isEditorDragHandleDraggingRef.current) {
+          return false
+        }
+
+        return shouldCopyInternalEditorDrag(event)
+      },
+      handleDrop: (view, event, slice) => {
+        const moveRange = editorDragHandleMoveRangeRef.current ?? getSelectionMoveRange(view.state.selection)
+        if (!isEditorDragHandleDraggingRef.current || !moveRange || moveRange.from === moveRange.to) {
+          return false
+        }
+
+        const eventPos = view.posAtCoords({ left: event.clientX, top: event.clientY })
+        if (!eventPos) {
+          clearEditorDragHandleMoveState()
+          return false
+        }
+
+        const insertPos = dropPoint(view.state.doc, eventPos.pos, slice) ?? eventPos.pos
+        if (insertPos >= moveRange.from && insertPos <= moveRange.to) {
+          event.preventDefault()
+          clearEditorDragHandleMoveState()
+          return true
+        }
+
+        const tr = view.state.tr
+        tr.deleteRange(moveRange.from, moveRange.to)
+
+        const mappedInsertPos = tr.mapping.map(insertPos)
+        const beforeInsert = tr.doc
+        const firstChild = slice.content.firstChild
+        const isNode = slice.openStart === 0 && slice.openEnd === 0 && slice.content.childCount === 1
+
+        if (isNode && firstChild) {
+          tr.replaceRangeWith(mappedInsertPos, mappedInsertPos, firstChild)
+        } else {
+          tr.replaceRange(mappedInsertPos, mappedInsertPos, slice)
+        }
+
+        if (tr.doc.eq(beforeInsert)) {
+          clearEditorDragHandleMoveState()
+          return false
+        }
+
+        const resolvedInsertPos = tr.doc.resolve(Math.min(mappedInsertPos, tr.doc.content.size))
+
+        if (
+          isNode &&
+          firstChild &&
+          NodeSelection.isSelectable(firstChild) &&
+          resolvedInsertPos.nodeAfter &&
+          resolvedInsertPos.nodeAfter.sameMarkup(firstChild)
+        ) {
+          tr.setSelection(new NodeSelection(resolvedInsertPos))
+        } else {
+          const selectionPos = Math.min(tr.doc.content.size, mappedInsertPos + slice.size)
+          tr.setSelection(TextSelection.near(tr.doc.resolve(selectionPos)))
+        }
+
+        view.focus()
+        view.dispatch(tr.setMeta('uiEvent', 'drop'))
+        event.preventDefault()
+        clearEditorDragHandleMoveState()
+        return true
+      },
+    },
     editable,
     onUpdate: ({ editor }) => {
       // Bug fix: Only trigger onChange if editor is ready (not during initialization)
@@ -460,6 +1430,26 @@ export function TipTapEditor({
     },
   })
 
+  const clearBlurSelectionHighlight = useCallback(() => {
+    if (!editor || editor.isDestroyed) {
+      return
+    }
+
+    editor.view.dispatch(editor.state.tr.setMeta(blurSelectionPluginKey, {
+      focused: true,
+      from: 0,
+      to: 0,
+    }))
+  }, [editor])
+
+  const handleEditorMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return
+    }
+
+    clearBlurSelectionHighlight()
+  }, [clearBlurSelectionHighlight])
+
   const persistEditorViewState = useCallback(() => {
     if (!editor || !activeFilePath || !scrollContainerRef.current) {
       return
@@ -469,15 +1459,32 @@ export function TipTapEditor({
       return
     }
 
-    const { from, to } = editor.state.selection
+    const { selection } = editor.state
+    const docSize = editor.state.doc.content.size
+    const previousState = lastViewStateRef.current
+    let selectionFrom = selection.from
+    let selectionTo = selection.to
+
+    if (isFullDocumentSelection(selection, docSize)) {
+      if (
+        previousState?.path === activeFilePath &&
+        !isFullDocumentRange(previousState.selectionFrom, previousState.selectionTo, docSize)
+      ) {
+        selectionFrom = previousState.selectionFrom
+        selectionTo = previousState.selectionTo
+      } else {
+        selectionFrom = clampSelectionPosition(selection.to, docSize)
+        selectionTo = selectionFrom
+      }
+    }
+
     const nextState = {
       path: activeFilePath,
-      selectionFrom: from,
-      selectionTo: to,
+      selectionFrom,
+      selectionTo,
       scrollTop: scrollContainerRef.current.scrollTop,
     }
 
-    const previousState = lastViewStateRef.current
     if (
       previousState &&
       previousState.path === nextState.path &&
@@ -490,8 +1497,8 @@ export function TipTapEditor({
 
     lastViewStateRef.current = nextState
     setEditorViewState(activeFilePath, {
-      selectionFrom: from,
-      selectionTo: to,
+      selectionFrom,
+      selectionTo,
       scrollTop: nextState.scrollTop,
     })
   }, [activeFilePath, editor, setEditorViewState])
@@ -556,9 +1563,15 @@ export function TipTapEditor({
     }
 
     const docSize = editor.state.doc.content.size
-    const selectionFrom = clampSelectionPosition(savedViewState.selectionFrom, docSize)
-    const selectionTo = clampSelectionPosition(savedViewState.selectionTo, docSize)
+    let selectionFrom = clampSelectionPosition(savedViewState.selectionFrom, docSize)
+    let selectionTo = clampSelectionPosition(savedViewState.selectionTo, docSize)
     const wantedSelection = Math.max(savedViewState.selectionFrom, savedViewState.selectionTo)
+    const normalizedFullDocumentSelection = isFullDocumentRange(selectionFrom, selectionTo, docSize)
+
+    if (normalizedFullDocumentSelection) {
+      selectionFrom = clampSelectionPosition(selectionTo, docSize)
+      selectionTo = selectionFrom
+    }
 
     if (docSize < wantedSelection && attempt < 5) {
       setTimeout(() => {
@@ -572,10 +1585,17 @@ export function TipTapEditor({
         return
       }
 
-      editor.chain().focus().setTextSelection({
-        from: selectionFrom,
-        to: selectionTo,
-      }).run()
+      if (isMobile) {
+        editor.commands.setTextSelection({
+          from: selectionFrom,
+          to: selectionTo,
+        })
+      } else {
+        editor.chain().focus().setTextSelection({
+          from: selectionFrom,
+          to: selectionTo,
+        }).run()
+      }
 
       requestAnimationFrame(() => {
         if (!scrollContainerRef.current) {
@@ -590,9 +1610,103 @@ export function TipTapEditor({
           selectionTo,
           scrollTop: savedViewState.scrollTop,
         }
+        if (normalizedFullDocumentSelection) {
+          setEditorViewState(path, {
+            selectionFrom,
+            selectionTo,
+            scrollTop: savedViewState.scrollTop,
+          })
+        }
       })
     })
-  }, [editor, getEditorViewState])
+  }, [editor, getEditorViewState, setEditorViewState])
+
+  const scrollMobileSelectionIntoView = useCallback(() => {
+    if (!isMobile || !editor || editor.isDestroyed || !scrollContainerRef.current) {
+      return
+    }
+
+    const scrollContainer = scrollContainerRef.current
+    let selectionCoords: { top: number; bottom: number }
+
+    try {
+      selectionCoords = editor.view.coordsAtPos(editor.state.selection.from)
+    } catch {
+      return
+    }
+
+    const containerRect = scrollContainer.getBoundingClientRect()
+    const visualViewport = window.visualViewport
+    const viewportTop = visualViewport?.offsetTop ?? 0
+    const viewportBottom = viewportTop + (visualViewport?.height ?? window.innerHeight)
+    const visibleTop = Math.max(containerRect.top, viewportTop) + 16
+    const visibleBottom = Math.min(containerRect.bottom, viewportBottom) - 24
+
+    if (visibleBottom <= visibleTop) {
+      return
+    }
+
+    let nextScrollTop = scrollContainer.scrollTop
+
+    if (selectionCoords.bottom > visibleBottom) {
+      nextScrollTop += selectionCoords.bottom - visibleBottom
+    } else if (selectionCoords.top < visibleTop) {
+      nextScrollTop -= visibleTop - selectionCoords.top
+    } else {
+      return
+    }
+
+    const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight)
+    const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, nextScrollTop))
+
+    if (Math.abs(clampedScrollTop - scrollContainer.scrollTop) < 1) {
+      return
+    }
+
+    scrollContainer.scrollTo({
+      top: clampedScrollTop,
+      behavior: 'auto',
+    })
+  }, [editor, isMobile])
+
+  useEffect(() => {
+    if (!editor || !isMobile) {
+      return
+    }
+
+    const timers = new Set<number>()
+    const scrollDelays = [0, 80, 180, 360, 600]
+
+    const clearTimers = () => {
+      timers.forEach((timer) => window.clearTimeout(timer))
+      timers.clear()
+    }
+
+    const scheduleSelectionScroll = () => {
+      clearTimers()
+
+      scrollDelays.forEach((delay) => {
+        const timer = window.setTimeout(() => {
+          timers.delete(timer)
+          requestAnimationFrame(scrollMobileSelectionIntoView)
+        }, delay)
+        timers.add(timer)
+      })
+    }
+
+    editor.on('focus', scheduleSelectionScroll)
+    editor.on('selectionUpdate', scheduleSelectionScroll)
+    window.visualViewport?.addEventListener('resize', scheduleSelectionScroll)
+    window.visualViewport?.addEventListener('scroll', scheduleSelectionScroll)
+
+    return () => {
+      clearTimers()
+      editor.off('focus', scheduleSelectionScroll)
+      editor.off('selectionUpdate', scheduleSelectionScroll)
+      window.visualViewport?.removeEventListener('resize', scheduleSelectionScroll)
+      window.visualViewport?.removeEventListener('scroll', scheduleSelectionScroll)
+    }
+  }, [editor, isMobile, scrollMobileSelectionIntoView])
 
   // 处理编辑器内链接点击
   useEffect(() => {
@@ -600,100 +1714,62 @@ export function TipTapEditor({
 
     const editorElement = editorContainerRef.current
 
+    const openFileInApp = async (path: string) => {
+      await useArticleStore.getState().setActiveFilePath(path)
+    }
+
     const handleClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement
       const anchor = target.closest('a')
 
       if (!anchor) return
 
-      let href = anchor.getAttribute('href')
+      const href = anchor.getAttribute('href')?.trim()
       if (!href) return
+      if (href.startsWith('#')) return
 
       // 阻止默认行为
       event.preventDefault()
       // 阻止事件冒泡，防止其他处理器触发
       event.stopPropagation()
 
-      // 处理 file:// 协议
-      if (href.startsWith('file://')) {
-        href = href.replace(/^file:\/\//, '')
-        // Windows 路径处理
-        if (href.startsWith('/') && !href.match(/^[A-Z]:/)) {
-          href = href.substring(1)
-        }
-        openUrl(`file://${href}`).catch(console.error)
-        return
-      }
+      void (async () => {
+        const protocol = getLinkProtocol(href)
 
-      // 检查是否是本地开发服务器的 URL (localhost 或 127.0.0.1)
-      const isLocalUrl = href.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//)
+        if (protocol === 'file') {
+          const filePath = normalizeLocalFilePath(getFilePathFromFileUrl(href))
 
-      // 根据链接类型执行不同操作
-      if (href.startsWith('http://') || href.startsWith('https://')) {
-        if (isLocalUrl) {
-          // 本地开发服务器 URL，提取路径部分作为本地文件
-          const url = new URL(href)
-          let filePath = url.pathname
-          // 移除开头的斜杠（如果是 Unix 风格路径）
-          if (filePath.startsWith('/')) {
-            filePath = filePath.substring(1)
-          }
-          // Windows 路径处理
-          if (filePath.match(/^[A-Z]:/)) {
-            // 已经是 Windows 绝对路径
-          } else if (filePath.startsWith('/')) {
-            filePath = filePath.substring(1)
-          }
-          // URL 解码
-          filePath = decodeURIComponent(filePath)
-
-          // 获取当前文件的父目录，计算相对路径
-          const currentFilePath = useArticleStore.getState().activeFilePath
-          let fullPath: string
-
-          if (filePath.startsWith('/') || filePath.match(/^[A-Z]:/)) {
-            // 绝对路径
-            fullPath = filePath
-          } else {
-            // 相对路径，基于当前文件所在目录
-            const parentDir = currentFilePath.includes('/')
-              ? currentFilePath.substring(0, currentFilePath.lastIndexOf('/'))
-              : ''
-            fullPath = parentDir ? `${parentDir}/${filePath}` : filePath
+          if (!filePath) {
+            return
           }
 
-          // 在软件内部打开文件
-          useArticleStore.getState().setActiveFilePath(fullPath)
-          return
-        } else {
-          // 外部 HTTP/HTTPS 链接：用浏览器打开
-          openUrl(href).catch(console.error)
+          if (isInternalFilePath(filePath)) {
+            await openFileInApp(filePath)
+            return
+          }
+
+          await openLocalPathWithDefaultApp(filePath)
           return
         }
-      } else if (href.startsWith('mailto:') || href.startsWith('tel:')) {
-        // 邮件和电话链接，用默认应用打开
-        openUrl(href).catch(console.error)
-        return
-      } else {
-        // 本地路径相对路径，基于当前文件所在目录
-        const currentFilePath = useArticleStore.getState().activeFilePath
-        let fullPath: string
 
-        if (href.startsWith('/') || href.match(/^[A-Z]:/)) {
-          // 绝对路径
-          fullPath = href
-        } else {
-          // 相对路径
-          const parentDir = currentFilePath.includes('/')
-            ? currentFilePath.substring(0, currentFilePath.lastIndexOf('/'))
-            : ''
-          fullPath = parentDir ? `${parentDir}/${href}` : href
+        if (protocol) {
+          await openUrl(href)
+          return
         }
 
-        // 在软件内部打开文件
-        useArticleStore.getState().setActiveFilePath(fullPath)
-        return
-      }
+        const localPath = resolveLocalLinkPath(href, useArticleStore.getState().activeFilePath)
+
+        if (!localPath) {
+          return
+        }
+
+        if (isInternalFilePath(localPath)) {
+          await openFileInApp(localPath)
+          return
+        }
+
+        await openLocalPathWithDefaultApp(localPath)
+      })().catch(() => {})
     }
 
     editorElement.addEventListener('click', handleClick)
@@ -780,11 +1856,6 @@ export function TipTapEditor({
     if (!editor || !mobileContext) return
 
     switch (action) {
-      case 'quote':
-        if (restoreMobileContextSelection()) {
-          onQuoteToChat?.()
-        }
-        return
       case 'bold':
         if (restoreMobileContextSelection()) {
           editor.chain().focus().toggleBold().run()
@@ -909,7 +1980,6 @@ export function TipTapEditor({
   }, [
     editor,
     mobileContext,
-    onQuoteToChat,
     restoreMobileContextSelection,
     updateMobileContext,
   ])
@@ -1056,7 +2126,7 @@ export function TipTapEditor({
     activeFilePathRef.current = activeFilePath
   }, [activeFilePath])
 
-  // Handle image paste and drop
+  // Handle image paste and file drop
   useEffect(() => {
     // Check if editor is fully initialized
     if (!editor || !editor.view || !editor.view.dom) return
@@ -1115,8 +2185,6 @@ export function TipTapEditor({
             .deleteRange({ from: placeholderStart, to: placeholderEnd })
             .run()
 
-          // Show error toast
-          console.error('Image upload failed:', error)
           toast({
             title: tImage('failed'),
             description: error instanceof Error ? error.message : undefined,
@@ -1126,69 +2194,60 @@ export function TipTapEditor({
     }
 
     const handleDrop = (event: DragEvent) => {
-      const files = event.dataTransfer?.files
-      if (!files || files.length === 0) return
+      const dataTransfer = event.dataTransfer
+      if (!dataTransfer) return
 
-      const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'))
-      if (imageFiles.length === 0) return
+      const hasDroppedFiles =
+        hasFileManagerDragData(dataTransfer) ||
+        dataTransfer.files.length > 0 ||
+        getFileUrlsFromDataTransfer(dataTransfer).length > 0
+      if (!hasDroppedFiles) return
 
-      const imageFile = imageFiles[0]
-
-      // Prevent default to avoid base64 image being inserted
       event.preventDefault()
+      event.stopPropagation()
 
-      // Get drop position
-      const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })
-      const insertPos = pos?.pos || editor.state.selection.from
+      void (async () => {
+        const links = await getDroppedFileMarkdownLinks(dataTransfer, activeFilePathRef.current)
+        const droppedFileNames = Array.from(dataTransfer.files || [])
+          .map(file => file.name.trim())
+          .filter(Boolean)
+        const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })
+        const insertPos = pos?.pos || editor.state.selection.from
 
-      // Insert "Uploading..." text as placeholder
-      editor.chain()
-        .focus()
-        .insertContentAt(insertPos, {
-          type: 'text',
-          text: 'Uploading... ',
-        })
-        .run()
+        if (links.length === 0) {
+          if (droppedFileNames.length > 0) {
+            editor.chain()
+              .focus()
+              .insertContentAt(
+                insertPos,
+                droppedFileNames.map(escapeMarkdownText).join('\n'),
+                { contentType: 'markdown' }
+              )
+              .run()
+            return
+          }
 
-      // Get the position range of the placeholder
-      const placeholderStart = insertPos
-      const placeholderEnd = insertPos + 'Uploading... '.length
-
-      handleImageUpload(imageFile, activeFilePathRef.current)
-        .then(result => {
-          // Delete the placeholder text
-          editor.chain()
-            .focus()
-            .deleteRange({ from: placeholderStart, to: placeholderEnd })
-            .run()
-
-          // Insert the actual image
-          editor.chain()
-            .insertContentAt(placeholderStart, {
-              type: 'image',
-              attrs: {
-                src: result.src,
-                alt: imageFile.name,
-                relativeSrc: result.relativePath,
-              },
-            })
-            .run()
-        })
-        .catch(error => {
-          // Remove the placeholder on error
-          editor.chain()
-            .focus()
-            .deleteRange({ from: placeholderStart, to: placeholderEnd })
-            .run()
-
-          // Show error toast
-          console.error('Image upload failed:', error)
           toast({
-            title: tImage('failed'),
-            description: error instanceof Error ? error.message : undefined,
+            title: '无法获取文件路径',
+            description: '当前拖拽来源没有提供真实文件路径，无法生成可打开的链接。',
             variant: 'destructive',
           })
+          return
+        }
+
+        const markdown = links.join('\n')
+
+        editor.chain()
+          .focus()
+          .insertContentAt(insertPos, markdown, { contentType: 'markdown' })
+          .run()
+      })().catch(error => {
+        toast({
+          title: '插入文件链接失败',
+          description: error instanceof Error ? error.message : undefined,
+          variant: 'destructive',
         })
+      })
     }
 
     // Add event listeners to editor DOM element
@@ -1307,17 +2366,21 @@ export function TipTapEditor({
       // Streaming complete - replace all content with proper Markdown parsing
       editor.chain()
         .deleteRange({ from: startPosition, to: startPosition + accumulatedResult.length })
-        .insertContent(accumulatedResult, { contentType: 'markdown' })
         .run()
 
+      const docSizeBeforeInsert = editor.state.doc.content.size
+      editor.chain()
+        .insertContentAt(startPosition, accumulatedResult, { contentType: 'markdown' })
+        .run()
+      const generatedRange = getInsertedContentRange(editor, startPosition, docSizeBeforeInsert)
+
       // Send completion event
-      const finalCoords = editor.view.coordsAtPos(startPosition + accumulatedResult.length)
       emitter.emit('ai-streaming-complete', {
         originalText: selectedText,
         suggestedText: accumulatedResult,
         type: 'polish',
-        position: finalCoords,
-        generatedRange: { from: startPosition, to: startPosition + accumulatedResult.length },
+        position: getEditorPositionRect(editor, generatedRange.to),
+        generatedRange,
       })
       emitter.emit('onboarding-step-complete', { step: 'ai-polish' })
     } catch (error) {
@@ -1397,17 +2460,21 @@ export function TipTapEditor({
       // Streaming complete - replace all content with proper Markdown parsing
       editor.chain()
         .deleteRange({ from: startPosition, to: startPosition + accumulatedResult.length })
-        .insertContent(accumulatedResult, { contentType: 'markdown' })
         .run()
 
+      const docSizeBeforeInsert = editor.state.doc.content.size
+      editor.chain()
+        .insertContentAt(startPosition, accumulatedResult, { contentType: 'markdown' })
+        .run()
+      const generatedRange = getInsertedContentRange(editor, startPosition, docSizeBeforeInsert)
+
       // Send completion event
-      const finalCoords = editor.view.coordsAtPos(startPosition + accumulatedResult.length)
       emitter.emit('ai-streaming-complete', {
         originalText: selectedText,
         suggestedText: accumulatedResult,
         type: 'concise',
-        position: finalCoords,
-        generatedRange: { from: startPosition, to: startPosition + accumulatedResult.length },
+        position: getEditorPositionRect(editor, generatedRange.to),
+        generatedRange,
       })
       emitter.emit('onboarding-step-complete', { step: 'ai-polish' })
     } catch (error) {
@@ -1487,17 +2554,21 @@ export function TipTapEditor({
       // Streaming complete - replace all content with proper Markdown parsing
       editor.chain()
         .deleteRange({ from: startPosition, to: startPosition + accumulatedResult.length })
-        .insertContent(accumulatedResult, { contentType: 'markdown' })
         .run()
 
+      const docSizeBeforeInsert = editor.state.doc.content.size
+      editor.chain()
+        .insertContentAt(startPosition, accumulatedResult, { contentType: 'markdown' })
+        .run()
+      const generatedRange = getInsertedContentRange(editor, startPosition, docSizeBeforeInsert)
+
       // Send completion event
-      const finalCoords = editor.view.coordsAtPos(startPosition + accumulatedResult.length)
       emitter.emit('ai-streaming-complete', {
         originalText: selectedText,
         suggestedText: accumulatedResult,
         type: 'expand',
-        position: finalCoords,
-        generatedRange: { from: startPosition, to: startPosition + accumulatedResult.length },
+        position: getEditorPositionRect(editor, generatedRange.to),
+        generatedRange,
       })
       emitter.emit('onboarding-step-complete', { step: 'ai-polish' })
     } catch (error) {
@@ -1569,16 +2640,20 @@ export function TipTapEditor({
 
       editor.chain()
         .deleteRange({ from: startPosition, to: startPosition + accumulatedResult.length })
-        .insertContent(accumulatedResult, { contentType: 'markdown' })
         .run()
 
-      const finalCoords = editor.view.coordsAtPos(startPosition + accumulatedResult.length)
+      const docSizeBeforeInsert = editor.state.doc.content.size
+      editor.chain()
+        .insertContentAt(startPosition, accumulatedResult, { contentType: 'markdown' })
+        .run()
+      const generatedRange = getInsertedContentRange(editor, startPosition, docSizeBeforeInsert)
+
       emitter.emit('ai-streaming-complete', {
         originalText: selectedText,
         suggestedText: accumulatedResult,
         type: 'translate',
-        position: finalCoords,
-        generatedRange: { from: startPosition, to: startPosition + accumulatedResult.length },
+        position: getEditorPositionRect(editor, generatedRange.to),
+        generatedRange,
       })
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
@@ -1600,6 +2675,209 @@ export function TipTapEditor({
       translate: handleAITranslate,
     }
   }, [handleAIPolish, handleAIConcise, handleAIExpand, handleAITranslate])
+
+  const insertImageAtSelection = useCallback(async () => {
+    if (!editor) return
+
+    const insertPos = editor.state.selection.from
+    const placeholder = 'Uploading... '
+
+    editor.chain()
+      .focus()
+      .insertContentAt(insertPos, {
+        type: 'text',
+        text: placeholder,
+      })
+      .run()
+
+    const placeholderEnd = insertPos + placeholder.length
+
+    try {
+      const file = await open({
+        multiple: false,
+        filters: [
+          {
+            name: 'Images',
+            extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'],
+          },
+        ],
+      })
+
+      if (!file) {
+        editor.chain().focus().deleteRange({ from: insertPos, to: placeholderEnd }).run()
+        return
+      }
+
+      let fileObject: File
+
+      if (typeof file === 'string') {
+        const fileData = await readFile(file)
+        const ext = file.split('.').pop() || 'png'
+        const fileName = file.split('/').pop() || `image.${ext}`
+        const arrayBuffer = new Uint8Array(fileData).buffer
+        fileObject = new File([arrayBuffer], fileName, { type: `image/${ext}` })
+      } else {
+        fileObject = file
+      }
+
+      const result = await handleImageUpload(fileObject, activeFilePath)
+
+      editor.chain().focus().deleteRange({ from: insertPos, to: placeholderEnd }).run()
+      editor.chain().focus().insertContentAt(insertPos, {
+        type: 'image',
+        attrs: {
+          src: result.src,
+          alt: fileObject.name,
+          relativeSrc: result.relativePath,
+        },
+      }).run()
+    } catch (error) {
+      editor.chain().focus().deleteRange({ from: insertPos, to: placeholderEnd }).run()
+      toast({
+        title: tImage('failed'),
+        description: error instanceof Error ? error.message : undefined,
+        variant: 'destructive',
+      })
+    }
+  }, [activeFilePath, editor, tImage])
+
+  useEffect(() => {
+    editorShortcutHandlersRef.current = {
+      undo: (targetEditor) => targetEditor.chain().focus().undo().run(),
+      redo: (targetEditor) => targetEditor.chain().focus().redo().run(),
+      setParagraph: (targetEditor) => targetEditor.chain().focus().setParagraph().run(),
+      toggleHeading1: (targetEditor) => targetEditor.chain().focus().toggleHeading({ level: 1 }).run(),
+      toggleHeading2: (targetEditor) => targetEditor.chain().focus().toggleHeading({ level: 2 }).run(),
+      toggleHeading3: (targetEditor) => targetEditor.chain().focus().toggleHeading({ level: 3 }).run(),
+      toggleHeading4: (targetEditor) => targetEditor.chain().focus().toggleHeading({ level: 4 }).run(),
+      toggleHeading5: (targetEditor) => targetEditor.chain().focus().toggleHeading({ level: 5 }).run(),
+      toggleHeading6: (targetEditor) => targetEditor.chain().focus().toggleHeading({ level: 6 }).run(),
+      openSearch: () => {
+        setSearchReplaceOpen(true)
+        return true
+      },
+      openSlashCommand: (targetEditor) => targetEditor.commands.triggerSlashCommand(),
+      toggleOutline: () => {
+        if (isMobile) {
+          setMobileOutlineOpen((prev) => !prev)
+        } else {
+          onToggleOutline?.()
+        }
+        return true
+      },
+      toggleBold: (targetEditor) => targetEditor.chain().focus().toggleBold().run(),
+      toggleItalic: (targetEditor) => targetEditor.chain().focus().toggleItalic().run(),
+      toggleStrike: (targetEditor) => targetEditor.chain().focus().toggleStrike().run(),
+      toggleUnderline: (targetEditor) => targetEditor.chain().focus().toggleUnderline().run(),
+      toggleInlineCode: (targetEditor) => targetEditor.chain().focus().toggleCode().run(),
+      toggleHighlight: (targetEditor) => targetEditor.chain().focus().toggleHighlight().run(),
+      openLinkInput: () => {
+        setOpenLinkInputSignal((value) => value + 1)
+        return true
+      },
+      toggleBlockquote: (targetEditor) => targetEditor.chain().focus().toggleBlockquote().run(),
+      toggleBulletList: (targetEditor) => targetEditor.chain().focus().toggleBulletList().run(),
+      toggleOrderedList: (targetEditor) => targetEditor.chain().focus().toggleOrderedList().run(),
+      toggleTaskList: (targetEditor) => targetEditor.chain().focus().toggleTaskList().run(),
+      toggleCodeBlock: (targetEditor) => targetEditor.chain().focus().toggleCodeBlock().run(),
+      openAiMenu: () => {
+        setOpenAiMenuSignal((value) => value + 1)
+        return true
+      },
+      aiContinue: () => {
+        document.dispatchEvent(new CustomEvent('tiptap-ai-continue'))
+        return true
+      },
+      aiPolish: () => {
+        void aiActionHandlersRef.current.polish()
+        return true
+      },
+      aiConcise: () => {
+        void aiActionHandlersRef.current.concise()
+        return true
+      },
+      aiExpand: () => {
+        void aiActionHandlersRef.current.expand()
+        return true
+      },
+      aiTranslate: () => {
+        setOpenTranslateMenuSignal((value) => value + 1)
+        return true
+      },
+      acceptAiSuggestion: () => {
+        if (!isAiSuggestionShortcutVisible()) {
+          return false
+        }
+        emitter.emit('accept-ai-suggestion')
+        return true
+      },
+      rejectAiSuggestion: () => {
+        if (!isAiSuggestionShortcutVisible()) {
+          return false
+        }
+        emitter.emit('reject-ai-suggestion')
+        return true
+      },
+      abortAiGeneration: () => {
+        if (onTerminate) {
+          onTerminate()
+        } else {
+          emitter.emit('abort-ai-streaming')
+        }
+        return true
+      },
+      insertTable: (targetEditor) => targetEditor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+      addColumnBefore: (targetEditor) => targetEditor.chain().focus().addColumnBefore().run(),
+      addColumnAfter: (targetEditor) => targetEditor.chain().focus().addColumnAfter().run(),
+      addRowBefore: (targetEditor) => targetEditor.chain().focus().addRowBefore().run(),
+      addRowAfter: (targetEditor) => targetEditor.chain().focus().addRowAfter().run(),
+      deleteColumn: (targetEditor) => targetEditor.chain().focus().deleteColumn().run(),
+      deleteRow: (targetEditor) => targetEditor.chain().focus().deleteRow().run(),
+      deleteTable: (targetEditor) => targetEditor.chain().focus().deleteTable().run(),
+      alignLeft: (targetEditor) => {
+        if (targetEditor.isActive('table')) {
+          return targetEditor.chain().focus().setCellAttribute('align', 'left').run()
+        }
+        return targetEditor.chain().focus().setTextAlign('left').run()
+      },
+      alignCenter: (targetEditor) => {
+        if (targetEditor.isActive('table')) {
+          return targetEditor.chain().focus().setCellAttribute('align', 'center').run()
+        }
+        return targetEditor.chain().focus().setTextAlign('center').run()
+      },
+      alignRight: (targetEditor) => {
+        if (targetEditor.isActive('table')) {
+          return targetEditor.chain().focus().setCellAttribute('align', 'right').run()
+        }
+        return targetEditor.chain().focus().setTextAlign('right').run()
+      },
+      insertImage: () => {
+        void insertImageAtSelection()
+        return true
+      },
+      insertInlineMath: () => {
+        setMathType('inline')
+        setMathDialogOpen(true)
+        return true
+      },
+      insertBlockMath: () => {
+        setMathType('block')
+        setMathDialogOpen(true)
+        return true
+      },
+      insertMermaid: () => {
+        document.dispatchEvent(new CustomEvent('tiptap-insert-mermaid', { detail: { type: 'flowchart' } }))
+        return true
+      },
+      insertHorizontalRule: (targetEditor) => targetEditor.chain().focus().setHorizontalRule().run(),
+    }
+  }, [
+    insertImageAtSelection,
+    isMobile,
+    onTerminate,
+    onToggleOutline,
+  ])
 
   // Initialize content only once - preserves undo/redo history when switching tabs
   // Bug fix: Only initialize if the editor is for the current file path
@@ -1952,49 +3230,78 @@ export function TipTapEditor({
         return
       }
 
-      // Create new AbortController for this request
+      abortController?.abort()
       abortController = new AbortController()
 
-      // Insert loading indicator at cursor position
-      const loadingMark = editor.state.schema.marks.strong
-      if (!loadingMark) {
-        // If no strong mark available, insert simple text
-        editor.chain().focus().insertContent('...').run()
-      } else {
-        editor.chain().focus().insertContent('···').run()
+      const startPosition = from
+      let accumulatedResult = ''
+      let loadingVisible = true
+
+      const removeLoadingIndicator = () => {
+        if (!loadingVisible) {
+          return
+        }
+        editor.chain()
+          .focus()
+          .deleteRange({
+            from: startPosition,
+            to: startPosition + AI_GENERATION_LOADING_TEXT.length,
+          })
+          .run()
+        loadingVisible = false
       }
 
-      // Track accumulated result for streaming
-      let accumulatedResult = ''
-      const startPosition = from
+      editor.chain().focus().insertContent(AI_GENERATION_LOADING_TEXT).run()
 
       try {
         await fetchCompletionStream(
           context,
           (chunk, isFirst) => {
             if (isFirst) {
-              // Delete the loading indicator before inserting first chunk
-              const { to } = editor.state.selection
-              editor.chain().focus().deleteRange({ from: to - 3, to }).run()
+              removeLoadingIndicator()
             }
-            // Insert chunk as plain text during streaming
-            editor.chain().focus().insertContent(chunk).run()
+            editor.chain()
+              .focus()
+              .insertContentAt(startPosition + accumulatedResult.length, chunk)
+              .run()
             accumulatedResult += chunk
           },
           abortController.signal
         )
 
-        // Streaming complete - replace content with proper Markdown parsing
-        if (accumulatedResult) {
-          editor.chain()
-            .deleteRange({ from: startPosition, to: startPosition + accumulatedResult.length })
-            .insertContent(accumulatedResult, { contentType: 'markdown' })
-            .run()
+        if (!accumulatedResult) {
+          removeLoadingIndicator()
+          return
         }
+
+        editor.chain()
+          .focus()
+          .deleteRange({ from: startPosition, to: startPosition + accumulatedResult.length })
+          .run()
+
+        const docSizeBeforeInsert = editor.state.doc.content.size
+        editor.chain()
+          .focus()
+          .insertContentAt(startPosition, accumulatedResult, { contentType: 'markdown' })
+          .run()
+
+        const insertedSize = Math.max(0, editor.state.doc.content.size - docSizeBeforeInsert)
+        const generatedRange = {
+          from: startPosition,
+          to: startPosition + insertedSize,
+        }
+
+        editor.commands.setTextSelection(generatedRange.to)
+
+        emitter.emit('show-ai-suggestion', {
+          originalText: '',
+          suggestedText: accumulatedResult,
+          type: 'continue',
+          position: getEditorPositionRect(editor, generatedRange.to),
+          generatedRange,
+        })
       } catch (error) {
-        // Delete loading indicator on error
-        const { to } = editor.state.selection
-        editor.chain().focus().deleteRange({ from: to - 3, to }).run()
+        removeLoadingIndicator()
 
         // Show error toast (but not for aborted requests)
         if (error instanceof Error && error.message !== 'Request was aborted.') {
@@ -2010,6 +3317,159 @@ export function TipTapEditor({
     document.addEventListener('tiptap-ai-continue', handleAIContinue)
     return () => {
       document.removeEventListener('tiptap-ai-continue', handleAIContinue)
+      abortController?.abort()
+    }
+  }, [editor])
+
+  // Handle slash-command AI generation actions that operate without selected text.
+  useEffect(() => {
+    let abortController: AbortController | null = null
+
+    const actionTitle: Record<EditorAiGenerationAction, string> = {
+      section: '生成章节',
+      summary: '总结',
+      custom: '自定义指令',
+    }
+
+    const handleAIGenerate = async (event: Event) => {
+      if (!editor) return
+
+      const detail = (event as CustomEvent<{
+        action?: unknown
+        instruction?: string
+      }>).detail
+
+      if (!isEditorAiGenerationAction(detail?.action)) {
+        return
+      }
+
+      const action = detail.action
+      const instruction = detail.instruction?.trim()
+
+      if (action === 'custom' && !instruction) {
+        toast({
+          title: '自定义指令失败',
+          description: '请输入指令',
+          variant: 'destructive',
+        })
+        return
+      }
+
+      const { from } = editor.state.selection
+      const fullText = normalizeMarkdownPlaceholders(editor.getMarkdown())
+      const plainText = editor.getText()
+      const textBeforeCursor = editor.state.doc.textBetween(0, from, '\n')
+      const textAfterCursor = editor.state.doc.textBetween(from, editor.state.doc.content.size, '\n')
+
+      if (action !== 'custom' && !plainText.trim()) {
+        toast({
+          title: `${actionTitle[action]}失败`,
+          description: '请先输入一些内容',
+          variant: 'destructive',
+        })
+        return
+      }
+
+      abortController?.abort()
+      abortController = new AbortController()
+
+      const startPosition = from
+      let accumulatedResult = ''
+      let loadingVisible = true
+
+      const removeLoadingIndicator = () => {
+        if (!loadingVisible) {
+          return
+        }
+        editor.chain()
+          .focus()
+          .deleteRange({
+            from: startPosition,
+            to: startPosition + AI_GENERATION_LOADING_TEXT.length,
+          })
+          .run()
+        loadingVisible = false
+      }
+
+      editor.chain().focus().insertContent(AI_GENERATION_LOADING_TEXT).run()
+
+      try {
+        await fetchEditorAiGenerationStream(
+          {
+            action,
+            fullText,
+            textBeforeCursor,
+            textAfterCursor,
+            instruction,
+          },
+          (chunk, isFirst) => {
+            if (isFirst) {
+              removeLoadingIndicator()
+            }
+            editor.chain()
+              .focus()
+              .insertContentAt(startPosition + accumulatedResult.length, chunk)
+              .run()
+            accumulatedResult += chunk
+          },
+          abortController.signal
+        )
+
+        if (!accumulatedResult) {
+          removeLoadingIndicator()
+          return
+        }
+
+        const sanitizedResult = sanitizeEditorAiGenerationOutput(accumulatedResult)
+        editor.chain()
+          .focus()
+          .deleteRange({
+            from: startPosition,
+            to: startPosition + accumulatedResult.length,
+          })
+          .run()
+
+        if (!sanitizedResult) {
+          return
+        }
+
+        const docSizeBeforeInsert = editor.state.doc.content.size
+        editor.chain()
+          .focus()
+          .insertContentAt(startPosition, sanitizedResult, { contentType: 'markdown' })
+          .run()
+
+        const insertedSize = Math.max(0, editor.state.doc.content.size - docSizeBeforeInsert)
+        const generatedRange = {
+          from: startPosition,
+          to: startPosition + insertedSize,
+        }
+
+        editor.commands.setTextSelection(generatedRange.to)
+
+        emitter.emit('show-ai-suggestion', {
+          originalText: '',
+          suggestedText: sanitizedResult,
+          type: action,
+          position: getEditorPositionRect(editor, generatedRange.to),
+          generatedRange,
+        })
+      } catch (error) {
+        removeLoadingIndicator()
+
+        if (error instanceof Error && error.message !== 'Request was aborted.') {
+          toast({
+            title: `${actionTitle[action]}失败`,
+            description: error.message || '网络错误',
+            variant: 'destructive',
+          })
+        }
+      }
+    }
+
+    document.addEventListener('tiptap-ai-generate', handleAIGenerate)
+    return () => {
+      document.removeEventListener('tiptap-ai-generate', handleAIGenerate)
       abortController?.abort()
     }
   }, [editor])
@@ -2078,6 +3538,83 @@ export function TipTapEditor({
 
   // Editor tools event handlers for Agent integration
   useEffect(() => {
+    let lastEditorSelectionQuote: PendingQuote | null = null
+
+    const buildQuoteDataFromRange = (from: number, to: number): PendingQuote | null => {
+      if (!editor) {
+        return null
+      }
+
+      if (from === to) {
+        return null
+      }
+
+      const quote = editor.state.doc.textBetween(from, to)
+      if (!quote.trim()) {
+        return null
+      }
+
+      let selectedMarkdown = quote
+      if (editor.markdown) {
+        try {
+          const slice = editor.state.doc.slice(from, to)
+          const json = { type: 'doc', content: slice.content.toJSON() }
+          selectedMarkdown = editor.markdown.serialize(json).trim() || quote
+        } catch {
+          selectedMarkdown = quote
+        }
+      }
+
+      const fileName = activeFilePath?.split('/').pop() || ''
+      const textBeforeFrom = editor.state.doc.textBetween(0, from, '\n', '\n')
+      const startLine = (textBeforeFrom.match(/\n/g)?.length || 0) + 1
+
+      const textBeforeTo = editor.state.doc.textBetween(0, to, '\n', '\n')
+      const endLine = (textBeforeTo.match(/\n/g)?.length || 0) + 1
+
+      return {
+        quote,
+        fullContent: selectedMarkdown,
+        fileName,
+        startLine,
+        endLine,
+        from,
+        to,
+        articlePath: activeFilePath || '',
+      }
+    }
+
+    const buildCurrentQuoteData = (): PendingQuote | null => {
+      if (!editor) {
+        return null
+      }
+
+      const { from, to } = editor.state.selection
+      return buildQuoteDataFromRange(from, to)
+    }
+
+    const syncEditorSelectionQuote = () => {
+      if (!editor) {
+        useChatStore.getState().setEditorSelectionQuote(null)
+        return
+      }
+
+      const quoteData = buildCurrentQuoteData()
+      if (quoteData) {
+        lastEditorSelectionQuote = quoteData
+        useChatStore.getState().setEditorSelectionQuote(quoteData)
+        return
+      }
+
+      if (isMobile && !isFocusWithinEditor(editor.view) && lastEditorSelectionQuote) {
+        useChatStore.getState().setEditorSelectionQuote(lastEditorSelectionQuote)
+        return
+      }
+
+      lastEditorSelectionQuote = null
+      useChatStore.getState().setEditorSelectionQuote(null)
+    }
+
     // Get editor selection
     const handleGetSelection = ({ resolve }: { resolve: (data: { text: string; from: number; to: number; html?: string; startLine?: number; endLine?: number }) => void }) => {
       if (!editor) {
@@ -2133,7 +3670,15 @@ export function TipTapEditor({
     }
 
     // Insert content at cursor
-    const handleInsert = ({ content, resolve }: { content: string; resolve: (result: { success: boolean; insertedLength: number; newCursorPosition?: number }) => void }) => {
+    const handleInsert = ({
+      content,
+      position,
+      resolve,
+    }: {
+      content: string;
+      position?: number;
+      resolve: (result: { success: boolean; insertedLength: number; newCursorPosition?: number }) => void;
+    }) => {
       if (!editor) {
         resolve({ success: false, insertedLength: 0 })
         return
@@ -2143,6 +3688,11 @@ export function TipTapEditor({
         // Insert content with markdown parsing
         // Wrap in setTimeout to avoid React lifecycle flushSync conflict
         runDeferredEditorCommand(() => {
+          if (typeof position === 'number') {
+            const insertPosition = clampSelectionPosition(position, editor.state.doc.content.size)
+            editor.commands.setTextSelection({ from: insertPosition, to: insertPosition })
+          }
+
           editor.commands.insertContent(content, { contentType: 'markdown' })
 
           // Use the actual cursor position after transaction
@@ -2306,30 +3856,8 @@ export function TipTapEditor({
 
     // Get quote from editor for chat
     const handleGetQuote = () => {
-      if (!editor) return
-      const { from, to } = editor.state.selection
-      if (from !== to) {
-        const quote = editor.state.doc.textBetween(from, to)
-        const fileName = activeFilePath?.split('/').pop() || ''
-        const textBeforeFrom = editor.state.doc.textBetween(0, from, '\n', '\n')
-        const startLine = (textBeforeFrom.match(/\n/g)?.length || 0) + 1
-
-        const textBeforeTo = editor.state.doc.textBetween(0, to, '\n', '\n')
-        const endLine = (textBeforeTo.match(/\n/g)?.length || 0) + 1
-        const markdownLines = editor.getMarkdown().split('\n')
-        const quotedMarkdown = markdownLines.slice(startLine - 1, endLine).join('\n')
-
-        const quoteData = {
-          quote,
-          fullContent: quotedMarkdown || quote,
-          fileName,
-          startLine,
-          endLine,
-          from,
-          to,
-          articlePath: activeFilePath || '',
-        }
-
+      const quoteData = buildCurrentQuoteData()
+      if (quoteData) {
         useChatStore.getState().setPendingQuote(quoteData)
         emitter.emit('insert-quote', quoteData)
       }
@@ -2399,7 +3927,9 @@ export function TipTapEditor({
       emitter.on('editor-redo', handleRedo)
       emitter.on('mobile-editor-toggle-outline', handleMobileToggleOutline)
       emitter.on('editor-can-undo-redo', handleCanUndoRedo)
+      editor.on('selectionUpdate', syncEditorSelectionQuote)
       document.addEventListener('tiptap-insert-mermaid', handleInsertMermaid as EventListener)
+      syncEditorSelectionQuote()
       listenersSetup = true
     }
 
@@ -2413,6 +3943,10 @@ export function TipTapEditor({
       emitter.off('editor-redo', handleRedo)
       emitter.off('mobile-editor-toggle-outline', handleMobileToggleOutline)
       emitter.off('editor-can-undo-redo', handleCanUndoRedo)
+      editor?.off('selectionUpdate', syncEditorSelectionQuote)
+      if (!isMobile) {
+        useChatStore.getState().clearEditorSelectionQuote()
+      }
       // Only remove event listener if it was actually added
       if (listenersSetup) {
         document.removeEventListener('tiptap-insert-mermaid', handleInsertMermaid as EventListener)
@@ -2433,6 +3967,7 @@ export function TipTapEditor({
   }
 
   const effectiveOutlineOpen = isMobile ? mobileOutlineOpen : outlineOpen
+  const outlineContentPadding = `${getOutlineContentPadding(outlineWidth)}px`
   const handleOutlineToggle = () => {
     if (isMobile) {
       setMobileOutlineOpen((prev) => !prev)
@@ -2455,7 +3990,11 @@ export function TipTapEditor({
       {/* Editor content - scrollable area */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-x-hidden overflow-y-auto relative"
+        className={cn(
+          "flex-1 overflow-x-hidden overflow-y-auto relative",
+          isMobile && "mobile-under-dock-scroll mobile-writing-editor-scroll"
+        )}
+        onMouseDownCapture={handleEditorMouseDownCapture}
         onDragOver={(e) => e.preventDefault()}
         onDrop={handleEditorDrop}
       >
@@ -2469,7 +4008,7 @@ export function TipTapEditor({
           style={
             !isMobile && outlineOpen
               ? {
-                [isOutlineOnLeft(outlinePosition) ? 'paddingLeft' : 'paddingRight']: OUTLINE_PANEL_PADDING_CLASS,
+                [isOutlineOnLeft(outlinePosition) ? 'paddingLeft' : 'paddingRight']: outlineContentPadding,
               }
               : undefined
           }
@@ -2488,7 +4027,9 @@ export function TipTapEditor({
               onAIConcise={handleAIConcise}
               onAIExpand={handleAIExpand}
               onAITranslate={handleAITranslate}
-              onQuoteToChat={onQuoteToChat}
+              openAiMenuSignal={openAiMenuSignal}
+              openTranslateMenuSignal={openTranslateMenuSignal}
+              openLinkInputSignal={openLinkInputSignal}
             />
           )}
         </EditorContent>

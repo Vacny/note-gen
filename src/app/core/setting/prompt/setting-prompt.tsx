@@ -2,12 +2,22 @@
 import { SettingType } from '../components/setting-base'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
-import { CardContent, Card } from '@/components/ui/card'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemFooter,
+  ItemHeader,
+  ItemMedia,
+  ItemTitle,
+} from '@/components/ui/item'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Trash, Pencil, Check, X, Sparkles } from 'lucide-react'
+import { Plus, Trash, Pencil, Check, X, Sparkles, RotateCcw, FileText } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import usePromptStore, { Prompt } from '@/stores/prompt'
+import useSettingStore from '@/stores/setting'
 import {
   Dialog,
   DialogContent,
@@ -33,22 +43,48 @@ import { toast } from '@/hooks/use-toast'
 import { useI18n } from '@/hooks/useI18n'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { isMobileDevice as checkIsMobileDevice } from '@/lib/check'
+import { DEFAULT_SYSTEM_PROMPT } from '@/lib/ai/system-prompt'
 
 export function SettingPrompt({id, icon}: {id: string, icon?: React.ReactNode}) {
   const t = useTranslations('settings')
   const { currentLocale } = useI18n();
   const commonT = useTranslations('common')
   const { promptList, initPromptData, addPrompt, updatePrompt, deletePrompt } = usePromptStore()
+  const { systemPrompt, setSystemPrompt } = useSettingStore()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [newTitle, setNewTitle] = useState('')
   const [newContent, setNewContent] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [systemPromptDialogOpen, setSystemPromptDialogOpen] = useState(false)
   const [isOptimizing, setIsOptimizing] = useState(false)
+  const [systemPromptDraft, setSystemPromptDraft] = useState(systemPrompt)
   const isMobile = useIsMobile() || checkIsMobileDevice()
+  const systemPromptChanged = systemPromptDraft !== systemPrompt
 
   useEffect(() => {
     initPromptData()
   }, [])
+
+  useEffect(() => {
+    setSystemPromptDraft(systemPrompt)
+  }, [systemPrompt])
+
+  const handleSystemPromptDialogChange = (open: boolean) => {
+    setSystemPromptDialogOpen(open)
+    setSystemPromptDraft(systemPrompt)
+  }
+
+  const handleSaveSystemPrompt = async () => {
+    await setSystemPrompt(systemPromptDraft)
+    setSystemPromptDialogOpen(false)
+    toast({
+      description: t('prompt.systemPrompt.saveSuccess')
+    })
+  }
+
+  const handleResetSystemPrompt = async () => {
+    setSystemPromptDraft(DEFAULT_SYSTEM_PROMPT)
+  }
 
   // 添加新prompt
   const handleAddPrompt = async () => {
@@ -145,6 +181,69 @@ ${newContent}`
   return (
     <SettingType id={id} title={t('prompt.title')} desc={t('prompt.desc')} icon={icon}>
       <div className="flex flex-col gap-4">
+        <Item variant="outline">
+          <ItemMedia variant="icon">
+            <FileText className="size-4" />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>{t('prompt.systemPrompt.title')}</ItemTitle>
+            <ItemDescription>{t('prompt.systemPrompt.desc')}</ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Dialog open={systemPromptDialogOpen} onOpenChange={handleSystemPromptDialogChange}>
+              <DialogTrigger asChild>
+                <Button type="button" variant="outline">
+                  <Pencil data-icon="inline-start" />
+                  {commonT('edit')}
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-3xl">
+                <DialogHeader>
+                  <DialogTitle>{t('prompt.systemPrompt.title')}</DialogTitle>
+                  <DialogDescription>
+                    {t('prompt.systemPrompt.help')}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="system-prompt">{t('prompt.systemPrompt.label')}</Label>
+                  <Textarea
+                    id="system-prompt"
+                    value={systemPromptDraft}
+                    onChange={(e) => setSystemPromptDraft(e.target.value)}
+                    placeholder={t('prompt.systemPrompt.placeholder')}
+                    rows={16}
+                  />
+                </div>
+                <DialogFooter className="gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleResetSystemPrompt}
+                    disabled={systemPromptDraft === DEFAULT_SYSTEM_PROMPT}
+                  >
+                    <RotateCcw data-icon="inline-start" />
+                    {t('prompt.systemPrompt.reset')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handleSystemPromptDialogChange(false)}
+                  >
+                    {commonT('cancel')}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleSaveSystemPrompt}
+                    disabled={!systemPromptChanged}
+                  >
+                    <Check data-icon="inline-start" />
+                    {commonT('save')}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </ItemActions>
+        </Item>
         <div className="flex justify-between items-center">
           {isMobile ? (
             <Drawer open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -265,80 +364,82 @@ ${newContent}`
         </div>
         <div className="grid gap-4">
           {promptList.map((prompt) => (
-            <Card key={prompt.id}>
-              <CardContent className="p-4">
-                {editingId === prompt.id ? (
-                  <div className="flex flex-col gap-4">
+            <Item key={prompt.id} variant="outline">
+              {editingId === prompt.id ? (
+                <>
+                  <ItemHeader>
                     <Input
                       value={newTitle}
                       onChange={(e) => setNewTitle(e.target.value)}
                       placeholder={t('prompt.promptTitlePlaceholder')}
                     />
-                    <div className="space-y-2">
-                      <Textarea
-                        value={newContent}
-                        onChange={(e) => setNewContent(e.target.value)}
-                        placeholder={t('prompt.promptContentPlaceholder')}
-                        rows={5}
-                      />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handleOptimizePrompt}
-                        disabled={isOptimizing || !newContent.trim()}
-                      >
-                        <Sparkles className="h-4 w-4 mr-2" />
-                        {isOptimizing ? t('prompt.optimizing') : t('prompt.optimizePrompt')}
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={handleCancelEdit}
-                      >
-                        <X className="h-4 w-4 mr-2" />
-                        {commonT('cancel')}
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        onClick={() => handleSaveEdit(prompt.id)}
-                      >
-                        <Check className="h-4 w-4 mr-2" />
-                        {commonT('save')}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex justify-between items-center">
-                      <h3 className="font-medium">{prompt.title}</h3>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleStartEdit(prompt)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeletePrompt(prompt.id)}
-                          disabled={prompt.isDefault}
-                        >
-                          <Trash className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-3">
+                  </ItemHeader>
+                  <ItemContent className="basis-full">
+                    <Textarea
+                      value={newContent}
+                      onChange={(e) => setNewContent(e.target.value)}
+                      placeholder={t('prompt.promptContentPlaceholder')}
+                      rows={5}
+                    />
+                  </ItemContent>
+                  <ItemFooter className="justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleOptimizePrompt}
+                      disabled={isOptimizing || !newContent.trim()}
+                    >
+                      <Sparkles data-icon="inline-start" />
+                      {isOptimizing ? t('prompt.optimizing') : t('prompt.optimizePrompt')}
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleCancelEdit}
+                    >
+                      <X data-icon="inline-start" />
+                      {commonT('cancel')}
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      onClick={() => handleSaveEdit(prompt.id)}
+                    >
+                      <Check data-icon="inline-start" />
+                      {commonT('save')}
+                    </Button>
+                  </ItemFooter>
+                </>
+              ) : (
+                <>
+                  <ItemContent>
+                    <ItemTitle>{prompt.title}</ItemTitle>
+                    <ItemDescription className="whitespace-pre-wrap">
                       {prompt.content || t('prompt.noContent')}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                    </ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleStartEdit(prompt)}
+                    >
+                      <Pencil data-icon="inline-start" />
+                      {commonT('edit')}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeletePrompt(prompt.id)}
+                      disabled={prompt.isDefault}
+                    >
+                      <Trash data-icon="inline-start" />
+                      {commonT('delete')}
+                    </Button>
+                  </ItemActions>
+                </>
+              )}
+            </Item>
           ))}
         </div>
       </div>

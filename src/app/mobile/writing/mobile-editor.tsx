@@ -6,7 +6,6 @@ import { TipTapEditor } from '@/app/core/main/editor/markdown/tiptap-editor'
 import type { Editor } from '@tiptap/react'
 import { Loader2 } from 'lucide-react'
 import useArticleStore from '@/stores/article'
-import emitter from '@/lib/emitter'
 import { exists, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { getFilePathOptions, getWorkspacePath } from '@/lib/workspace'
 
@@ -120,11 +119,6 @@ export function MobileEditor({ onEditorReady }: MobileEditorProps) {
     setIsEditorReady(true)
   }, [])
 
-  // 处理引用到聊天
-  const handleQuoteToChat = useCallback(() => {
-    emitter.emit('get-quote-from-editor')
-  }, [])
-
   // 清理定时器
   useEffect(() => {
     return () => {
@@ -151,9 +145,8 @@ export function MobileEditor({ onEditorReady }: MobileEditorProps) {
         onChange={handleContentChange}
         placeholder={tEditor('placeholder')}
         activeFilePath={activeFilePath}
-        onQuoteToChat={handleQuoteToChat}
         onReady={handleEditorReady}
-        onEditorReady={onEditorReady as ((editor: any) => void) | undefined}
+        onEditorReady={onEditorReady}
       />
     </div>
   )

@@ -5,6 +5,8 @@ import { FileText, ChevronRight, Database, ExternalLink } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { useState } from "react"
 import useArticleStore from "@/stores/article"
+import { AgentRunTimeline } from "./agent-run-timeline"
+import type { AgentChange, AgentRunStatus, AgentSkillSummary, AgentTraceEvent, ToolCall } from "@/lib/agent/types"
 
 interface RagSourceDetail {
   filepath: string
@@ -19,6 +21,7 @@ interface AgentPanelWithRagProps {
 
   // Agent 历史模式
   agentHistoryJson?: string
+  showChanges?: boolean
 
   // Agent 实时模式（如果需要）
   isRunning?: boolean
@@ -65,6 +68,15 @@ interface AgentPanelWithRagProps {
   onCancel?: () => void
 }
 
+interface StructuredAgentHistory {
+  runId?: string
+  status?: AgentRunStatus
+  traceEvents?: AgentTraceEvent[]
+  changes?: AgentChange[]
+  toolCalls?: ToolCall[]
+  loadedSkills?: AgentSkillSummary[]
+}
+
 /**
  * Agent 面板组件 - 将知识库检索和 Agent 执行合并在一起
  */
@@ -72,6 +84,7 @@ export function AgentPanelWithRag({
   ragSources = [],
   ragSourceDetails = [],
   agentHistoryJson,
+  showChanges = true,
   isRunning = false,
   isThinking = false,
   currentThought = "",
@@ -90,6 +103,26 @@ export function AgentPanelWithRag({
   const [isRagExpanded, setIsRagExpanded] = useState(false)
   const [expandedFiles, setExpandedFiles] = useState<string[]>([])
   const { setActiveFilePath, readArticle } = useArticleStore()
+
+  const structuredHistory = React.useMemo<StructuredAgentHistory | null>(() => {
+    if (!agentHistoryJson) {
+      return null
+    }
+
+    try {
+      const parsed = JSON.parse(agentHistoryJson) as StructuredAgentHistory
+      return parsed && typeof parsed === "object" ? parsed : null
+    } catch {
+      return null
+    }
+  }, [agentHistoryJson])
+
+  const hasStructuredHistory = Boolean(
+    structuredHistory?.runId ||
+    structuredHistory?.status ||
+    structuredHistory?.traceEvents?.length ||
+    structuredHistory?.changes?.length
+  )
 
   // 创建文件名到详情的映射
   const detailMap = React.useMemo(
@@ -122,6 +155,22 @@ export function AgentPanelWithRag({
 
   if (!hasRag && !hasAgent) {
     return null
+  }
+
+  if (hasStructuredHistory) {
+    return (
+      <AgentRunTimeline
+        status={structuredHistory?.status || "completed"}
+        isRunning={false}
+        traceEvents={structuredHistory?.traceEvents || []}
+        toolCalls={structuredHistory?.toolCalls || []}
+        changes={structuredHistory?.changes || []}
+        showChanges={showChanges}
+        ragSources={ragSources}
+        ragSourceDetails={ragSourceDetails}
+        loadedSkills={structuredHistory?.loadedSkills || []}
+      />
+    )
   }
 
   return (

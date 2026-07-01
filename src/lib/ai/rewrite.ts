@@ -1,4 +1,11 @@
-import { getAISettings, prepareMessages, createOpenAIClient, handleAIError, validateAIService } from './utils';
+import {
+  getAISettings,
+  prepareMessages,
+  createOpenAIClient,
+  handleAIError,
+  validateAIService,
+  withEditorFastAiRequestOptions,
+} from './utils';
 import { createAiStreamContentProcessor, sanitizeAiRewriteOutput } from './sanitize';
 
 const REWRITE_OUTPUT_RULE = 'Never output any thinking, reasoning, analysis, or <think> tags. Output only the final rewritten text.'
@@ -27,12 +34,12 @@ Output:`
     const { messages } = await prepareMessages(polishPrompt)
     const openai = await createOpenAIClient(aiConfig)
 
-    const completion = await openai.chat.completions.create({
+    const completion = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig.model || '',
       messages,
       temperature: 0.7,
       top_p: 0.95,
-    })
+    }, aiConfig))
 
     return sanitizeAiRewriteOutput(completion.choices[0]?.message?.content || '')
   } catch (error) {
@@ -64,12 +71,12 @@ Output:`
     const { messages } = await prepareMessages(concisePrompt)
     const openai = await createOpenAIClient(aiConfig)
 
-    const completion = await openai.chat.completions.create({
+    const completion = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig.model || '',
       messages,
       temperature: 0.7,
       top_p: 0.95,
-    })
+    }, aiConfig))
 
     return sanitizeAiRewriteOutput(completion.choices[0]?.message?.content || '')
   } catch (error) {
@@ -101,12 +108,12 @@ Output:`
     const { messages } = await prepareMessages(expandPrompt)
     const openai = await createOpenAIClient(aiConfig)
 
-    const completion = await openai.chat.completions.create({
+    const completion = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig.model || '',
       messages,
       temperature: 0.7,
       top_p: 0.95,
-    })
+    }, aiConfig))
 
     return sanitizeAiRewriteOutput(completion.choices[0]?.message?.content || '')
   } catch (error) {
@@ -146,13 +153,13 @@ Output:`
 
     const processor = createAiStreamContentProcessor()
     let accumulatedThinking = ''
-    const stream = await openai.chat.completions.create({
+    const stream = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig.model || '',
       messages,
       temperature: 0.7,
       top_p: 0.95,
       stream: true,
-    }, {
+    }, aiConfig), {
       signal: abortSignal
     })
 
@@ -228,13 +235,13 @@ Output:`
 
     const processor = createAiStreamContentProcessor()
     let accumulatedThinking = ''
-    const stream = await openai.chat.completions.create({
+    const stream = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig.model || '',
       messages,
       temperature: 0.7,
       top_p: 0.95,
       stream: true,
-    }, {
+    }, aiConfig), {
       signal: abortSignal
     })
 
@@ -310,13 +317,13 @@ Output:`
 
     const processor = createAiStreamContentProcessor()
     let accumulatedThinking = ''
-    const stream = await openai.chat.completions.create({
+    const stream = await openai.chat.completions.create(withEditorFastAiRequestOptions({
       model: aiConfig.model || '',
       messages,
       temperature: 0.7,
       top_p: 0.95,
       stream: true,
-    }, {
+    }, aiConfig), {
       signal: abortSignal
     })
 

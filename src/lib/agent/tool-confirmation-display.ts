@@ -20,11 +20,62 @@ export interface ConfirmationPreview {
 }
 
 const TOOL_CONFIRMATION_DISPLAY: Record<string, ToolConfirmationDisplayConfig> = {
+  note_create_file: {
+    titleKey: 'record.chat.input.agent.confirmation.tools.create_file.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.tools.create_file.description',
+    summaryFields: ['filePath', 'fileName', 'folderPath', 'content'],
+    contentFields: ['content'],
+  },
   create_file: {
     titleKey: 'record.chat.input.agent.confirmation.tools.create_file.title',
     descriptionKey: 'record.chat.input.agent.confirmation.tools.create_file.description',
     summaryFields: ['filePath', 'content'],
     contentFields: ['content'],
+  },
+  note_update_file: {
+    titleKey: 'record.chat.input.agent.confirmation.fallback.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.fallback.description',
+    summaryFields: ['filePath', 'content'],
+    contentFields: ['content'],
+  },
+  editor_apply_transaction: {
+    titleKey: 'record.chat.input.agent.confirmation.tools.replace_editor_content.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.tools.replace_editor_content.description',
+    summaryFields: ['filePath', 'operations'],
+    contentFields: ['operations'],
+  },
+  editor_replace_range: {
+    titleKey: 'record.chat.input.agent.confirmation.tools.replace_editor_content.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.tools.replace_editor_content.description',
+    summaryFields: ['content'],
+    contentFields: ['content'],
+  },
+  editor_replace_lines: {
+    titleKey: 'record.chat.input.agent.confirmation.tools.replace_editor_content.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.tools.replace_editor_content.description',
+    summaryFields: ['startLine', 'endLine', 'replaceContent'],
+    contentFields: ['replaceContent'],
+  },
+  editor_insert_at_cursor: {
+    titleKey: 'record.chat.input.agent.confirmation.tools.insert_at_cursor.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.tools.insert_at_cursor.description',
+    summaryFields: ['content'],
+    contentFields: ['content'],
+  },
+  note_delete_file: {
+    titleKey: 'record.chat.input.agent.confirmation.tools.delete_markdown_file.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.tools.delete_markdown_file.description',
+    summaryFields: ['filePath'],
+  },
+  folder_delete: {
+    titleKey: 'record.chat.input.agent.confirmation.fallback.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.fallback.description',
+    summaryFields: ['folderPath'],
+  },
+  skill_execute_script: {
+    titleKey: 'record.chat.input.agent.confirmation.tools.execute_skill_script.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.tools.execute_skill_script.description',
+    summaryFields: ['skill_id', 'command', 'args'],
   },
   create_files_batch: {
     titleKey: 'record.chat.input.agent.confirmation.tools.create_files_batch.title',

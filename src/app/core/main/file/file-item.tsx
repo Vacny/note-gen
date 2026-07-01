@@ -1,9 +1,9 @@
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger, ContextMenuShortcut } from "@/components/ui/enhanced-context-menu";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from "@/components/ui/enhanced-context-menu";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import useArticleStore, { DirTree } from "@/stores/article";
-import { BaseDirectory, exists, readTextFile, remove, rename, writeTextFile } from "@tauri-apps/plugin-fs";
-import { Copy, Database, File, FileDown, FileUp, FolderOpen, ImageIcon, LoaderCircle, RefreshCwOff, Trash2 } from "lucide-react"
+import { BaseDirectory, exists, remove, rename, writeTextFile } from "@tauri-apps/plugin-fs";
+import { Copy, Database, Download, File, FileCode, FileDown, FileJson, FileText, FileUp, FolderOpen, ImageIcon, LoaderCircle, RefreshCwOff, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState, useCallback } from "react";
 import { ask } from '@tauri-apps/plugin-dialog';
 import { platform } from '@tauri-apps/plugin-os';
@@ -30,6 +30,13 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import useSettingStore from "@/stores/setting";
 import { VectorKnowledgeMenu } from "./vector-knowledge-menu";
 import { isSkillsFolder } from "@/lib/skills/utils";
+import { exportMarkdownFile, type MarkdownExportFormat } from "../editor/markdown/markdown-export";
+import { setFileManagerDragData } from "./file-dnd";
+import { debugSyncPath } from "@/lib/sync/remote-file";
+import { cn } from "@/lib/utils";
+import { BatchSelectionContextMenu } from "./batch-selection-context-menu";
+import type { FileSelectionEntry } from "./file-selection";
+import { pasteIntoFolder } from "./folder-item/paste-into-folder";
 
 type Platform = 'macos' | 'windows' | 'linux' | 'unknown'
 
@@ -46,9 +53,8 @@ function buildFileRenamePlan({
   currentPath: string
   enteredName: string
 }) {
-  const sanitizedName = enteredName.replace(/\s+/g, '_')
-  const needsMarkdownSuffix = originalName === '' && !sanitizedName.endsWith('.md')
-  const displayName = needsMarkdownSuffix ? `${sanitizedName}.md` : sanitizedName
+  const needsMarkdownSuffix = originalName === '' && !enteredName.endsWith('.md')
+  const displayName = needsMarkdownSuffix ? `${enteredName}.md` : enteredName
   const parentPath = currentPath.split('/').slice(0, -1).join('/')
   const targetRelativePath = parentPath ? `${parentPath}/${displayName}` : displayName
 
@@ -59,17 +65,50 @@ function buildFileRenamePlan({
   } as const
 }
 
-export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?: () => void }) {
+function showPdfExportStartToast() {
+  toast({
+    title: '正在导出 PDF',
+    description: '长篇文档可能需要一些时间，请稍候。',
+  })
+}
+
+export function FileItem({
+  item,
+  focusSidebar,
+  selectedPathSet,
+  selectionEntries,
+}: {
+  item: DirTree
+  focusSidebar?: () => void
+  selectedPathSet: Set<string>
+  selectionEntries: FileSelectionEntry[]
+}) {
   const [isEditing, setIsEditing] = useState(item.isEditing)
   const [name, setName] = useState(item.name)
-  const [isComposing, setIsComposing] = useState(false) // 追踪输入法合成状态
+  const [, setIsComposing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  const { activeFilePath, setActiveFilePath, readArticle, fileTree, setFileTree, loadFileTree, vectorIndexedFiles, checkFileVectorIndexed, cleanTabsByDeletedFile, cleanTabsByDeletedFolder } = useArticleStore()
+  const {
+    activeFilePath,
+    setActiveFilePath,
+    readArticle,
+    fileTree,
+    setFileTree,
+    loadFileTree,
+    vectorIndexedFiles,
+    checkFileVectorIndexed,
+    cleanTabsByDeletedFile,
+    cleanTabsByDeletedFolder,
+    selectedFilePaths,
+    setSelectedFilePaths,
+    clearSelectedFilePaths,
+  } = useArticleStore()
   const setArticleState = useArticleStore.setState
-  const { setClipboardItem, clipboardItem, clipboardOperation } = useClipboardStore()
+  const { setClipboardItem, clipboardItem, clipboardItems, clipboardOperation } = useClipboardStore()
   const { fileManagerTextSize } = useSettingStore()
   const t = useTranslations('article.file')
+  const tCommon = useTranslations('common')
   const isMobile = useIsMobile()
+  const [exportingFormat, setExportingFormat] = useState<MarkdownExportFormat | null>(null)
 
   // 检查路径是否在 skills 文件夹下
   const isInSkillsFolder = (itemPath: string): boolean => {
@@ -99,10 +138,13 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
   const iconSize = getIconSize(fileManagerTextSize)
 
   // 检查文件是否被剪切
-  const isCut = clipboardOperation === 'cut' && clipboardItem?.path === path
+  const isCut = clipboardOperation === 'cut' && clipboardItems.some(entry => entry.path === path)
+  const isSelected = selectedPathSet.has(path)
+  const useSelectionMenu = isSelected && selectionEntries.length > 1
 
   // 检查文件是否已计算向量（skills 文件夹下的文件不显示）
   const hasVector = item.isFile && !isInSkillsFolder(path) && vectorIndexedFiles.has(path)
+  const canExportMarkdownFile = item.isLocale && item.name !== '' && /\.(md|markdown|txt)$/i.test(item.name)
 
   // 向量计算状态图标
   const renderVectorIcon = () => {
@@ -111,9 +153,9 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
     const status = item.vectorCalcStatus
 
     if (status === 'calculating') {
-      return <LoaderCircle className={`${iconSize} mr-2 animate-spin`} />
+      return <LoaderCircle className={`${iconSize} mr-2 shrink-0 animate-spin`} />
     } else if (status === 'completed' || hasVector) {
-      return <Database className={`${iconSize} text-muted-foreground mr-2 opacity-60`} />
+      return <Database className={`${iconSize} mr-2 shrink-0 text-muted-foreground opacity-60`} />
     }
     return null
   }
@@ -125,58 +167,18 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
 
   // 优化的输入处理，支持输入法
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.target
-    const value = input.value
-    const cursorPosition = input.selectionStart || 0
-    
-    // 如果正在使用输入法合成，不进行空格替换
-    if (isComposing) {
-      setName(value)
-      return
-    }
-    
-    // 检查是否包含空格，只有包含空格时才需要处理光标位置
-    if (value.includes(' ')) {
-      const sanitizedValue = value.replace(/\s+/g, '_')
-      setName(sanitizedValue)
-      
-      // 保持光标位置
-      requestAnimationFrame(() => {
-        if (input.selectionStart !== null) {
-          input.setSelectionRange(cursorPosition, cursorPosition)
-        }
-      })
-    } else {
-      setName(value)
-    }
-  }, [isComposing])
+    setName(e.target.value)
+  }, [])
 
   // 输入法合成开始
   const handleCompositionStart = useCallback(() => {
     setIsComposing(true)
   }, [])
 
-  // 输入法合成结束，进行空格替换
+  // 输入法合成结束
   const handleCompositionEnd = useCallback((e: React.CompositionEvent<HTMLInputElement>) => {
     setIsComposing(false)
-    const input = e.currentTarget
-    const value = input.value
-    const cursorPosition = input.selectionStart || 0
-    
-    // 只有当值包含空格时才需要替换和恢复光标位置
-    if (value.includes(' ')) {
-      const sanitizedValue = value.replace(/\s+/g, '_')
-      setName(sanitizedValue)
-      
-      // 计算新的光标位置（空格变为下划线，长度不变，所以位置保持不变）
-      requestAnimationFrame(() => {
-        if (input.selectionStart !== null) {
-          input.setSelectionRange(cursorPosition, cursorPosition)
-        }
-      })
-    } else {
-      setName(value)
-    }
+    setName(e.currentTarget.value)
   }, [])
 
   async function handleSelectFile() {
@@ -196,6 +198,31 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
     } else {
       // 其他文件类型：设置 activeFilePath，让 EditorLayout 显示 UnsupportedFile 组件
       setActiveFilePath(currentPath)
+    }
+  }
+
+  function handleFileClick(e: React.MouseEvent<HTMLDivElement, MouseEvent>) {
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      focusSidebar?.()
+      setSelectedFilePaths(
+        isSelected
+          ? selectedFilePaths.filter(selectedPath => selectedPath !== path)
+          : [...selectedFilePaths, path]
+      )
+      return
+    }
+
+    clearSelectedFilePaths()
+    void handleSelectFile()
+  }
+
+  function handleFileContextMenu(e: React.MouseEvent<HTMLDivElement, MouseEvent>) {
+    e.stopPropagation()
+    focusSidebar?.()
+    if (!isSelected) {
+      setSelectedFilePaths([path])
     }
   }
 
@@ -477,8 +504,7 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
       finalName = await generateUniqueFilename(parentPath, 'Untitled')
       setName(finalName)
     } else {
-      // 统一处理：将空格替换为下划线，确保本地和远程文件名一致
-      finalName = name.replace(/\s+/g, '_')
+      finalName = name
       setName(finalName)
     }
   
@@ -487,6 +513,12 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
         originalName,
         currentPath: path,
         enteredName: finalName,
+      })
+      debugSyncPath('file.renamePlan', {
+        originalName,
+        enteredName: finalName,
+        displayName: renamePlan.displayName,
+        targetRelativePath: renamePlan.targetRelativePath,
       })
       const { displayName, operation, targetRelativePath } = renamePlan
       
@@ -619,8 +651,8 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
     }
   }
 
-  async function handleDragStart(ev: React.DragEvent<HTMLDivElement>) {
-    ev.dataTransfer.setData('text', path)
+  function handleDragStart(ev: React.DragEvent<HTMLElement>) {
+    setFileManagerDragData(ev.dataTransfer, path)
   }
 
   async function handleCopyFile() {
@@ -646,139 +678,43 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
   }
 
   async function handlePasteFile() {
-    if (!clipboardItem) {
-      toast({ title: t('clipboard.empty'), variant: 'destructive' })
-      return
-    }
+    const targetDir = path.includes('/') ? path.split('/').slice(0, -1).join('/') : ''
+    await pasteIntoFolder({
+      clipboardItem,
+      clipboardItems,
+      clipboardOperation,
+      folderPath: targetDir,
+      emptyToastTitle: t('clipboard.empty'),
+      pastedToastTitle: t('clipboard.pasted'),
+      pasteFailedToastTitle: t('clipboard.pasteFailed'),
+      loadFileTree,
+      setClipboardItem,
+      cleanTabsByDeletedFile,
+      cleanTabsByDeletedFolder,
+    })
+  }
 
+  async function handleExportFile(format: MarkdownExportFormat) {
     try {
-      const { getFilePathOptions, getWorkspacePath } = await import('@/lib/workspace')
-      const workspace = await getWorkspacePath()
+      setExportingFormat(format)
+      const exported = await exportMarkdownFile(
+        format,
+        path,
+        { onPdfRenderStart: showPdfExportStartToast },
+      )
 
-      // 粘贴目标：文件所在的目录（同级粘贴）
-      const targetDir = path.includes('/') ? path.split('/').slice(0, -1).join('/') : ''
-
-      // 检查是否会造成循环嵌套
-      if (clipboardItem.isDirectory) {
-        // 检查是否粘贴到其子文件夹内部（targetDir 以 clipboardItem.path/ 开头）
-        // 注意：允许粘贴到自身内部（targetDir === clipboardItem.path），但需要特殊处理避免循环
-        if (targetDir.startsWith(clipboardItem.path + '/')) {
-          toast({ title: '无法将父文件夹粘贴到其子文件夹内部', variant: 'destructive' })
-          return
-        }
+      if (exported) {
+        toast({ title: format === 'pdf' ? 'PDF 导出成功' : '导出成功' })
       }
-
-      if (clipboardItem.isDirectory) {
-        // 粘贴文件夹
-        const { generateCopyFoldername } = await import('@/lib/default-filename')
-        const { mkdir, readDir } = await import('@tauri-apps/plugin-fs')
-
-        const targetName = await generateCopyFoldername(targetDir, clipboardItem.name)
-        const targetPathRelative = targetDir ? `${targetDir}/${targetName}` : targetName
-        const targetPathOptions = await getFilePathOptions(targetPathRelative)
-        const sourcePathOptions = await getFilePathOptions(clipboardItem.path)
-
-        // 检查是否是粘贴到自身内部（需要避免循环引用）
-        const isPasteIntoSelf = targetDir === clipboardItem.path
-
-        // 创建目标文件夹
-        if (workspace.isCustom) {
-          await mkdir(targetPathOptions.path)
-        } else {
-          await mkdir(targetPathOptions.path, { baseDir: targetPathOptions.baseDir })
-        }
-
-        // 递归复制文件夹内容
-        const copyDirRecursively = async (srcRelative: string, destRelative: string) => {
-          const entries = await readDir(
-            srcRelative,
-            workspace.isCustom ? {} : { baseDir: sourcePathOptions.baseDir || BaseDirectory.AppData }
-          )
-
-          for (const entry of entries) {
-            const srcEntryPath = `${srcRelative}/${entry.name}`
-            const destEntryPath = `${destRelative}/${entry.name}`
-
-            if (entry.isDirectory) {
-              // 如果粘贴到自身内部，跳过与目标文件夹同名的子文件夹（避免循环引用）
-              if (isPasteIntoSelf && entry.name === targetName) {
-                continue
-              }
-
-              if (workspace.isCustom) {
-                await mkdir(destEntryPath)
-              } else {
-                await mkdir(destEntryPath, { baseDir: targetPathOptions.baseDir })
-              }
-              await copyDirRecursively(srcEntryPath, destEntryPath)
-            } else {
-              try {
-                let content = ''
-                if (workspace.isCustom) {
-                  content = await readTextFile(srcEntryPath)
-                  await writeTextFile(destEntryPath, content)
-                } else {
-                  content = await readTextFile(srcEntryPath, { baseDir: sourcePathOptions.baseDir || BaseDirectory.AppData })
-                  await writeTextFile(destEntryPath, content, { baseDir: targetPathOptions.baseDir })
-                }
-              } catch (err) {
-                console.error(`Error copying file ${srcEntryPath}:`, err)
-              }
-            }
-          }
-        }
-
-        await copyDirRecursively(sourcePathOptions.path, targetPathOptions.path)
-
-        // 如果是剪切操作，删除原文件夹
-        if (clipboardOperation === 'cut') {
-          if (workspace.isCustom) {
-            await remove(sourcePathOptions.path, { recursive: true })
-          } else {
-            await remove(sourcePathOptions.path, { baseDir: sourcePathOptions.baseDir, recursive: true })
-          }
-          // 清理已被删除的原文件夹对应的 tabs
-          await cleanTabsByDeletedFolder(clipboardItem?.path || '')
-          setClipboardItem(null, 'none')
-        }
-      } else {
-        // 粘贴文件
-        const sourcePathOptions = await getFilePathOptions(clipboardItem.path)
-        const { generateCopyFilename } = await import('@/lib/default-filename')
-        const uniqueFilename = await generateCopyFilename(targetDir, clipboardItem.name)
-        const targetPathRelative = targetDir ? `${targetDir}/${uniqueFilename}` : uniqueFilename
-        const targetPathOptions = await getFilePathOptions(targetPathRelative)
-
-        // Read content from source file
-        let content = ''
-        if (workspace.isCustom) {
-          content = await readTextFile(sourcePathOptions.path)
-          await writeTextFile(targetPathOptions.path, content)
-        } else {
-          content = await readTextFile(sourcePathOptions.path, { baseDir: sourcePathOptions.baseDir })
-          await writeTextFile(targetPathOptions.path, content, { baseDir: targetPathOptions.baseDir })
-        }
-
-        // If cut operation, delete the original file
-        if (clipboardOperation === 'cut') {
-          if (workspace.isCustom) {
-            await remove(sourcePathOptions.path)
-          } else {
-            await remove(sourcePathOptions.path, { baseDir: sourcePathOptions.baseDir })
-          }
-          // 清理已被删除的原文件对应的 tabs
-          await cleanTabsByDeletedFile(clipboardItem?.path || '')
-          // Clear clipboard after cut & paste operation
-          setClipboardItem(null, 'none')
-        }
-      }
-
-      // Refresh file tree
-      loadFileTree()
-      toast({ title: t('clipboard.pasted') })
     } catch (error) {
-      console.error('Paste operation failed:', error)
-      toast({ title: t('clipboard.pasteFailed'), variant: 'destructive' })
+      console.error(`Export selected file failed: ${path}`, error)
+      toast({
+        title: '导出失败',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      })
+    } finally {
+      setExportingFormat(null)
     }
   }
 
@@ -870,19 +806,27 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
   return (
     <>
       <ContextMenu>
-        <ContextMenuTrigger>
+        <ContextMenuTrigger asChild>
           <div
-            className={`${path === activeFilePath ? 'file-manange-item active' : 'file-manange-item'} ${!isRoot && 'translate-x-5 w-[calc(100%-20px)]!'}`}
-            onClick={handleSelectFile}
+            data-file-manager-item-path={path}
+            data-file-manager-item-kind="file"
+            className={cn(
+              "file-manange-item min-w-0 overflow-hidden",
+              path === activeFilePath && "active",
+              isSelected && "file-selected",
+              !isRoot && "translate-x-5 w-[calc(100%-20px)]!"
+            )}
+            onClick={handleFileClick}
+            onContextMenu={handleFileContextMenu}
           >
             {
               isEditing ? 
-              <div className="flex gap-1 items-center w-full select-none">
+              <div className="flex min-w-0 w-full items-center gap-1 select-none">
                 <span className={item.parent ? 'size-0' : `${iconSize} ml-1`} />
-                <File className={iconSize} />
+                <File className={`${iconSize} shrink-0`} />
                 <Input
                   ref={inputRef}
-                  className={`h-5 rounded-sm text-${fileManagerTextSize} px-1 font-normal flex-1 mr-1`}
+                  className={`h-5 min-w-0 flex-1 rounded-sm text-${fileManagerTextSize} px-1 font-normal mr-1`}
                   value={name}
                   onBlur={handleRename}
                   onChange={handleInputChange}
@@ -903,16 +847,19 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
               </div> :
               item.name.match(/\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i) ?
               <span
-                draggable
-                onDragStart={handleDragStart}
                 title={item.name}
-                className={`${!item.isLocale || isCut ? 'opacity-50' : ''} flex justify-between flex-1 select-none items-center gap-1 dark:hover:text-white`}>
-                <div className="flex flex-1 gap-1 select-none relative items-center">
+                className={`${!item.isLocale || isCut ? 'opacity-50' : ''} flex min-w-0 flex-1 select-none items-center justify-between gap-1 overflow-hidden dark:hover:text-white`}>
+                <div
+                  data-file-manager-drag-handle
+                  draggable
+                  onDragStart={handleDragStart}
+                  className="relative flex min-w-0 flex-1 cursor-grab select-none items-center gap-1 overflow-hidden active:cursor-grabbing"
+                >
                   <span className={item.parent ? 'size-0' : `${iconSize} ml-1`}></span>
-                  <div className="relative flex items-center">
-                    <ImageIcon className={iconSize} />
+                  <div className="relative flex shrink-0 items-center">
+                    <ImageIcon className={`${iconSize} shrink-0`} />
                   </div>
-                  <span className={`text-${fileManagerTextSize} flex-1 line-clamp-1`}>{item.name}</span>
+                  <span className={`text-${fileManagerTextSize} min-w-0 flex-1 truncate`}>{item.name}</span>
                   {path === activeFilePath && renderVectorIcon()}
                 </div>
                 {isMobile && (
@@ -927,7 +874,7 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
                     <MobileMenuItem onClick={handleCopyFile}>
                       {t('context.copy')}
                     </MobileMenuItem>
-                    <MobileMenuItem disabled={!clipboardItem} onClick={handlePasteFile}>
+                    <MobileMenuItem disabled={!clipboardItem && clipboardItems.length === 0} onClick={handlePasteFile}>
                       {t('context.paste')}
                     </MobileMenuItem>
                     <MobileSeparator />
@@ -944,22 +891,25 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
                 )}
               </span> :
               <span
-                draggable
-                onDragStart={handleDragStart}
                 title={item.name}
-                className={`${!item.isLocale || isCut ? 'opacity-50' : ''} flex justify-between flex-1 select-none items-center gap-1 dark:hover:text-white`}>
-                <div className="flex flex-1 gap-1 select-none relative items-center">
+                className={`${!item.isLocale || isCut ? 'opacity-50' : ''} flex min-w-0 flex-1 select-none items-center justify-between gap-1 overflow-hidden dark:hover:text-white`}>
+                <div
+                  data-file-manager-drag-handle
+                  draggable
+                  onDragStart={handleDragStart}
+                  className="relative flex min-w-0 flex-1 cursor-grab select-none items-center gap-1 overflow-hidden active:cursor-grabbing"
+                >
                   <span className={item.parent ? 'size-0' : `${iconSize} ml-1`}></span>
-                  <div className="relative flex items-center">
+                  <div className="relative flex shrink-0 items-center">
                     { item.loading ? (
-                      <LoaderCircle className={`${iconSize} animate-spin`} />
+                      <LoaderCircle className={`${iconSize} shrink-0 animate-spin`} />
                     ) : item.isLocale ? (
-                      item.sha ? <FileUp className={iconSize} /> : <File className={iconSize} />
+                      item.sha ? <FileUp className={`${iconSize} shrink-0`} /> : <File className={`${iconSize} shrink-0`} />
                     ) : (
-                      <FileDown className={iconSize} />
+                      <FileDown className={`${iconSize} shrink-0`} />
                     )}
                   </div>
-                  <span className={`text-${fileManagerTextSize} flex-1 line-clamp-1`}>{item.name}</span>
+                  <span className={`text-${fileManagerTextSize} min-w-0 flex-1 truncate`}>{item.name}</span>
                   {path === activeFilePath && renderVectorIcon()}
                 </div>
                 {isMobile && (
@@ -974,7 +924,7 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
                     <MobileMenuItem onClick={handleCopyFile}>
                       {t('context.copy')}
                     </MobileMenuItem>
-                    <MobileMenuItem disabled={!clipboardItem} onClick={handlePasteFile}>
+                    <MobileMenuItem disabled={!clipboardItem && clipboardItems.length === 0} onClick={handlePasteFile}>
                       {t('context.paste')}
                     </MobileMenuItem>
                     <MobileSeparator />
@@ -994,57 +944,107 @@ export function FileItem({ item, focusSidebar }: { item: DirTree; focusSidebar?:
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem inset onClick={handleShowFileManager} menuType="file">
-            <FolderOpen className="mr-2 h-4 w-4" />
-            {t('context.viewDirectory')}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <VectorKnowledgeMenu
-            item={item}
-            hasVector={hasVector}
-            onVectorUpdated={handleVectorUpdated}
-          />
-          <ContextMenuSeparator />
-          <ContextMenuItem inset disabled={!item.isLocale} onClick={handleCutFile} menuType="file">
-            <File className="mr-2 h-4 w-4" />
-            {t('context.cut')}
-            <ContextMenuShortcut menuType="file">
-              <Kbd>{modKey}X</Kbd>
-            </ContextMenuShortcut>
-          </ContextMenuItem>
-          <ContextMenuItem inset onClick={handleCopyFile} menuType="file">
-            <Copy className="mr-2 h-4 w-4" />
-            {t('context.copy')}
-            <ContextMenuShortcut menuType="file">
-              <Kbd>{modKey}C</Kbd>
-            </ContextMenuShortcut>
-          </ContextMenuItem>
-          <ContextMenuItem inset disabled={!clipboardItem} onClick={handlePasteFile} menuType="file">
-            <File className="mr-2 h-4 w-4" />
-            {t('context.paste')}
-            <ContextMenuShortcut menuType="file">
-              <Kbd>{modKey}V</Kbd>
-            </ContextMenuShortcut>
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem disabled={!item.isLocale} inset onClick={handleStartRename} menuType="file">
-            <File className="mr-2 h-4 w-4" />
-            {t('context.rename')}
-            <ContextMenuShortcut menuType="file">
-              <Kbd>{renameKey}</Kbd>
-            </ContextMenuShortcut>
-          </ContextMenuItem>
-          <ContextMenuItem disabled={!item.sha} inset className="text-red-900" onClick={handleDeleteSyncFile} menuType="file">
-            <RefreshCwOff className="mr-2 h-4 w-4" />
-            {t('context.deleteSyncFile')}
-          </ContextMenuItem>
-          <ContextMenuItem disabled={!item.isLocale || item.name === ''} inset className="text-red-900" onClick={handleDeleteFile} menuType="file">
-            <Trash2 className="mr-2 h-4 w-4" />
-            {t('context.deleteLocalFile')}
-            <ContextMenuShortcut menuType="file">
-              <Kbd>{deleteKey}</Kbd>
-            </ContextMenuShortcut>
-          </ContextMenuItem>
+          {useSelectionMenu ? (
+            <BatchSelectionContextMenu entries={selectionEntries} modKey={modKey} deleteKey={deleteKey} />
+          ) : (
+            <>
+              <ContextMenuItem inset onClick={handleShowFileManager} menuType="file">
+                <FolderOpen className="mr-2 h-4 w-4" />
+                {t('context.viewDirectory')}
+              </ContextMenuItem>
+              <ContextMenuSub>
+                <ContextMenuSubTrigger inset disabled={!canExportMarkdownFile || exportingFormat !== null} menuType="file">
+                  <Download className="mr-2 h-4 w-4" />
+                  {tCommon('export')}
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent>
+                  <ContextMenuItem
+                    inset
+                    disabled={exportingFormat !== null}
+                    onClick={() => { void handleExportFile('markdown') }}
+                    menuType="file"
+                  >
+                    <FileText className="mr-2 h-4 w-4" />
+                    Markdown
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    inset
+                    disabled={exportingFormat !== null}
+                    onClick={() => { void handleExportFile('html') }}
+                    menuType="file"
+                  >
+                    <FileCode className="mr-2 h-4 w-4" />
+                    HTML
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    inset
+                    disabled={exportingFormat !== null}
+                    onClick={() => { void handleExportFile('json') }}
+                    menuType="file"
+                  >
+                    <FileJson className="mr-2 h-4 w-4" />
+                    JSON
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    inset
+                    disabled={exportingFormat !== null}
+                    onClick={() => { void handleExportFile('pdf') }}
+                    menuType="file"
+                  >
+                    <FileText className="mr-2 h-4 w-4" />
+                    PDF
+                  </ContextMenuItem>
+                </ContextMenuSubContent>
+              </ContextMenuSub>
+              <ContextMenuSeparator />
+              <VectorKnowledgeMenu
+                item={item}
+                hasVector={hasVector}
+                onVectorUpdated={handleVectorUpdated}
+              />
+              <ContextMenuSeparator />
+              <ContextMenuItem inset disabled={!item.isLocale} onClick={handleCutFile} menuType="file">
+                <File className="mr-2 h-4 w-4" />
+                {t('context.cut')}
+                <ContextMenuShortcut menuType="file">
+                  <Kbd>{modKey}X</Kbd>
+                </ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem inset onClick={handleCopyFile} menuType="file">
+                <Copy className="mr-2 h-4 w-4" />
+                {t('context.copy')}
+                <ContextMenuShortcut menuType="file">
+                  <Kbd>{modKey}C</Kbd>
+                </ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem inset disabled={!clipboardItem && clipboardItems.length === 0} onClick={handlePasteFile} menuType="file">
+                <File className="mr-2 h-4 w-4" />
+                {t('context.paste')}
+                <ContextMenuShortcut menuType="file">
+                  <Kbd>{modKey}V</Kbd>
+                </ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem disabled={!item.isLocale} inset onClick={handleStartRename} menuType="file">
+                <File className="mr-2 h-4 w-4" />
+                {t('context.rename')}
+                <ContextMenuShortcut menuType="file">
+                  <Kbd>{renameKey}</Kbd>
+                </ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem disabled={!item.sha} inset className="text-red-900" onClick={handleDeleteSyncFile} menuType="file">
+                <RefreshCwOff className="mr-2 h-4 w-4" />
+                {t('context.deleteSyncFile')}
+              </ContextMenuItem>
+              <ContextMenuItem disabled={!item.isLocale || item.name === ''} inset className="text-red-900" onClick={handleDeleteFile} menuType="file">
+                <Trash2 className="mr-2 h-4 w-4" />
+                {t('context.deleteLocalFile')}
+                <ContextMenuShortcut menuType="file">
+                  <Kbd>{deleteKey}</Kbd>
+                </ContextMenuShortcut>
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
     </>

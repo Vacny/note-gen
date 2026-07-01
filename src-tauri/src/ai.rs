@@ -1,5 +1,9 @@
 use futures_util::StreamExt;
-use reqwest::{header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE}, multipart::{Form, Part}, Client, Method, Url};
+use reqwest::{
+    header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE},
+    multipart::{Form, Part},
+    Client, Method, Url,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, str::FromStr};
@@ -112,7 +116,10 @@ fn build_url(base_url: &str, path: &str) -> Result<Url, String> {
     Url::parse(&full_url).map_err(|error| format!("Invalid request URL `{full_url}`: {error}"))
 }
 
-fn build_headers(config: &AiConfigPayload, include_json_content_type: bool) -> Result<HeaderMap, String> {
+fn build_headers(
+    config: &AiConfigPayload,
+    include_json_content_type: bool,
+) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     if let Some(api_key) = &config.api_key {
         if !api_key.is_empty() {
@@ -459,7 +466,10 @@ mod tests {
         assert!(first.is_empty());
 
         let second = decoder.push(b"\n\ndata: [DONE]\n\n");
-        assert_eq!(second, vec![r#"{"id":"1"}"#.to_string(), "[DONE]".to_string()]);
+        assert_eq!(
+            second,
+            vec![r#"{"id":"1"}"#.to_string(), "[DONE]".to_string()]
+        );
     }
 
     #[test]

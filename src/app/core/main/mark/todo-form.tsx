@@ -17,29 +17,37 @@ interface TodoFormProps {
   mode: 'create' | 'edit'
   data: TodoFormData
   onChange: (data: TodoFormData) => void
+  autoFocus?: boolean
+  titleInputRef?: React.Ref<HTMLInputElement>
   selectedTagId?: number
   onTagChange?: (tagId: number) => void
   tags?: Array<{ id: number; name: string }>
   showTagSelector?: boolean
+  onSubmit?: () => void
+  onCancel?: () => void
 }
 
 export function TodoForm({
   mode,
   data,
   onChange,
+  autoFocus = true,
+  titleInputRef,
   selectedTagId,
   onTagChange,
   tags = [],
   showTagSelector = false,
+  onSubmit,
+  onCancel,
 }: TodoFormProps) {
   const t = useTranslations()
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      // 父组件处理保存
+      onSubmit?.()
     } else if (e.key === 'Escape') {
-      // 父组件处理关闭
+      onCancel?.()
     }
   }
 
@@ -68,12 +76,13 @@ export function TodoForm({
       <div>
         <Label htmlFor={`todo-title-${mode}`}>{t('record.mark.todo.title')} *</Label>
         <Input
+          ref={titleInputRef}
           id={`todo-title-${mode}`}
           value={data.title}
           onChange={(e) => onChange({ ...data, title: e.target.value })}
           placeholder={t('record.mark.todo.titlePlaceholder')}
           onKeyDown={handleKeyDown}
-          autoFocus
+          autoFocus={autoFocus}
           className="mt-1.5"
         />
       </div>

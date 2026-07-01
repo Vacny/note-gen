@@ -19,6 +19,7 @@ import { useEffect } from 'react'
 import emitter from '@/lib/emitter'
 import { handleRecordComplete } from '@/lib/record-navigation'
 import { getTranscriptionFallbackMessage } from '@/lib/speech/transcription-fallback.ts'
+import { useRecordCompletion } from './use-record-completion'
 
 export function ControlRecording() {
   const t = useTranslations();
@@ -28,9 +29,10 @@ export function ControlRecording() {
   const isMobile = isMobileDevice();
   const lastClickTime = useRef<number>(0);
   const clickTimer = useRef<NodeJS.Timeout | null>(null);
+  const completeRecord = useRecordCompletion();
 
-  const { currentTagId, fetchTags, getCurrentTag } = useTagStore()
-  const { fetchMarks, addQueue, removeQueue } = useMarkStore()
+  const { currentTagId } = useTagStore()
+  const { addQueue, removeQueue } = useMarkStore()
   
   // 大模型录音
   const {
@@ -176,21 +178,23 @@ export function ControlRecording() {
       const fallbackMessage = getTranscriptionFallbackMessage(sttModel)
       const displayContent = noContent ? (fallbackMessage || t('recording.noContentDetected')) : transcription
       
-      await insertMark({
+      const result = await insertMark({
         tagId: currentTagId,
         type: 'recording',
         desc: displayContent.substring(0, 100),
         content: displayContent,
         url: audioPath  // 保存音频文件路径
       })
+      const markId = Number(result.lastInsertId || 0) || null
       
       // 移除队列
       removeQueue(queueId)
-      
-      // 刷新列表
-      await fetchMarks()
-      await fetchTags()
-      getCurrentTag()
+
+      await completeRecord({
+        markId,
+        tagId: currentTagId,
+        typeLabel: t('record.mark.type.recording'),
+      })
       
       // 录制结束后不再显示提示
     } catch (error) {
@@ -317,7 +321,7 @@ export function ControlRecording() {
         clickTimer.current = null
       }
       lastClickTime.current = 0 // 重置，避免三连击
-      handleFileSelect()
+      void handleFileSelect()
     } else {
       // 单击：延迟执行，等待可能的第二次点击
       lastClickTime.current = now
@@ -330,9 +334,9 @@ export function ControlRecording() {
       // 延迟300ms执行单击操作，如果期间有第二次点击则会被取消
       clickTimer.current = setTimeout(() => {
         if (isRecording) {
-          handleStop()
+          void handleStop()
         } else {
-          handleStart()
+          void handleStart()
         }
         clickTimer.current = null
       }, 300)

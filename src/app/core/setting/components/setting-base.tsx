@@ -8,7 +8,7 @@ export function SettingType(
         {icon}
         {title}
       </h2>
-      {desc && <p className="text-sm text-muted-foreground">{desc}</p>}
+      {desc && <p className="whitespace-pre-line text-sm text-muted-foreground">{desc}</p>}
     </div>
     {children}
   </div>

@@ -18,8 +18,10 @@ import { Button } from '@/components/ui/button'
 import { McpToolCallCard } from './mcp-tool-call'
 import { AgentExecutionStatus } from './agent-execution-status'
 import { AgentPanelWithRag } from './agent-panel-with-rag'
+import { AgentChangesPanel } from './agent-changes-panel'
 import { ChatImages } from "./chat-images"
 import { useIsMobile } from '@/hooks/use-mobile'
+import type { AgentChange } from '@/lib/agent/types'
 
 const BOTTOM_THRESHOLD = 24
 const USER_SCROLL_GRACE_MS = 300
@@ -191,7 +193,7 @@ const ChatContent = React.memo(function ChatContent() {
     if (autoScrollEnabled && agentState.isRunning) {
       performAutoScroll()
     }
-  }, [agentState.currentThought, agentState.thoughtHistory, agentState.pendingConfirmation, agentState.isRunning, autoScrollEnabled, performAutoScroll])
+  }, [agentState.currentThought, agentState.thoughtHistory, agentState.traceEvents, agentState.changes, agentState.pendingConfirmation, agentState.isRunning, autoScrollEnabled, performAutoScroll])
 
   // Loading 状态变化时，仅在启用自动滚动时才滚动到底部
   useEffect(() => {
@@ -222,7 +224,7 @@ const ChatContent = React.memo(function ChatContent() {
     return true
   }, [loading, agentState.isRunning, chats])
 
-  return <div ref={wrapperRef} id="chats-wrapper" className="flex-1 relative overflow-y-auto overflow-x-hidden w-full flex flex-col items-end p-4 gap-6 [overflow-anchor:none]">
+  return <div ref={wrapperRef} id="chats-wrapper" className="relative flex min-h-0 flex-1 flex-col items-end gap-6 overflow-y-auto overflow-x-hidden w-full p-4 [overflow-anchor:none]">
     <div ref={contentRef} className="w-full flex flex-col items-end gap-6">
       {
         chats.length ? chats.map((chat) => {
@@ -312,10 +314,22 @@ MessageWrapper.displayName = 'MessageWrapper'
 
 const Message = React.memo(function Message({ chat }: { chat: Chat }) {
   const t = useTranslations()
-  const { deleteChat, getMcpToolCallsByChatId, loading, agentState } = useChatStore()
+  const { chats, deleteChat, getMcpToolCallsByChatId, loading, agentState } = useChatStore()
   const content = chat.content
   const isActiveAgentMessage = chat.role === 'system' && agentState.activeChatId === chat.id
-  const isLiveAgentVisible = isActiveAgentMessage && (agentState.isRunning || agentState.isFinalAnswerMode)
+  const latestChatId = chats[chats.length - 1]?.id
+  const isLatestSystemMessage = chat.role === 'system' && latestChatId === chat.id
+  const isGeneratingMessage = chat.role === 'system' && (
+    (loading && isLatestSystemMessage) ||
+    (isActiveAgentMessage && agentState.isRunning)
+  )
+  const hasLiveAgentTrace = Boolean(
+    agentState.completedSteps?.length ||
+    agentState.traceEvents?.some((event) => event.type !== 'final') ||
+    agentState.changes?.length ||
+    agentState.pendingConfirmation
+  )
+  const isLiveAgentVisible = isActiveAgentMessage && (agentState.isRunning || agentState.isFinalAnswerMode || hasLiveAgentTrace)
 
   const handleRemoveClearContext = useCallback(() => {
     deleteChat(chat.id)
@@ -357,6 +371,17 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
       return []
     }
   }, [chat.images])
+
+  const agentHistoryChanges = useMemo(() => {
+    if (!chat.agentHistory) return []
+
+    try {
+      const parsed = JSON.parse(chat.agentHistory) as { changes?: AgentChange[] }
+      return Array.isArray(parsed?.changes) ? parsed.changes : []
+    } catch {
+      return []
+    }
+  }, [chat.agentHistory])
 
   // 解析引用数据
   const quoteData = useMemo(() => {
@@ -406,9 +431,11 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
                 <ChatPreview text={content || ''} streaming={loading && chat.role === 'system'} />
               </div>
             }
-            <MessageControl chat={chat}>
-              <NoteOutput chat={chat} />
-            </MessageControl>
+            {!isGeneratingMessage && (
+              <MessageControl chat={chat}>
+                <NoteOutput chat={chat} />
+              </MessageControl>
+            )}
           </div>
         }
       </MessageWrapper>
@@ -441,12 +468,13 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
                 ragSources={ragSources}
                 ragSourceDetails={ragSourceDetails}
                 agentHistoryJson={chat.agentHistory}
+                showChanges={false}
               />
             )}
 
             {isLiveAgentVisible && (
               <div className="space-y-2">
-                {!agentState.isFinalAnswerMode && (agentState.isRunning || agentState.completedSteps?.length > 0 || agentState.thoughtHistory?.length > 0) && (
+                {(agentState.isRunning || hasLiveAgentTrace) && (
                   <AgentExecutionStatus />
                 )}
                 {agentState.isFinalAnswerMode && agentState.finalAnswerContent && (
@@ -469,9 +497,14 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
 
             <ChatThinking chat={chat} />
             <ChatPreview text={content || ''} streaming={loading && isActiveAgentMessage} />
-            <MessageControl chat={chat}>
-              <MarkText chat={chat} />
-            </MessageControl>
+            {!isGeneratingMessage && (
+              <AgentChangesPanel changes={isLiveAgentVisible ? agentState.changes || [] : agentHistoryChanges} />
+            )}
+            {!isGeneratingMessage && (
+              <MessageControl chat={chat}>
+                <MarkText chat={chat} />
+              </MessageControl>
+            )}
           </div>
         ) : (
           // 用户消息

@@ -1,5 +1,5 @@
 import { appDataDir } from '@tauri-apps/api/path'
-import { BaseDirectory, exists, mkdir, readDir, rename } from '@tauri-apps/plugin-fs'
+import { BaseDirectory, exists, mkdir, readDir, rename, stat } from '@tauri-apps/plugin-fs'
 import { Command } from '@tauri-apps/plugin-shell'
 import { skillManager } from './manager'
 import { buildShellCommand, resolveSkillDirectory } from './path-utils'
@@ -44,6 +44,11 @@ export interface SkillExecutionOutcome {
   error?: string
   message: string
   data: SkillExecutionData
+}
+
+interface OutputSnapshot {
+  outputFiles: Set<string>
+  skillRootFiles: Map<string, number | null>
 }
 
 const OUTPUT_FILE_EXTENSIONS = new Set([
@@ -109,6 +114,15 @@ async function ensureDir(dir: string, baseDir?: BaseDirectory): Promise<void> {
     } else {
       await mkdir(dir, { recursive: true })
     }
+  }
+}
+
+async function getFileMtime(filePath: string, baseDir?: BaseDirectory): Promise<number | null> {
+  try {
+    const fileStat = baseDir ? await stat(filePath, { baseDir }) : await stat(filePath)
+    return fileStat.mtime?.getTime() ?? null
+  } catch {
+    return null
   }
 }
 
@@ -298,22 +312,37 @@ function determineWorkingDirectory(
   return context.skillDir
 }
 
-async function snapshotOutputFiles(context: SkillRuntimeContext): Promise<Set<string>> {
-  const snapshot = new Set<string>()
+async function snapshotOutputFiles(context: SkillRuntimeContext): Promise<OutputSnapshot> {
+  const outputFiles = new Set<string>()
+  const skillRootFiles = new Map<string, number | null>()
   const entries = context.fsBaseDir
     ? await readDir(context.outputDirFsPath, { baseDir: context.fsBaseDir })
     : await readDir(context.outputDirFsPath)
 
   for (const entry of entries) {
     if (entry.isFile && entry.name && isOutputLikeFile(entry.name) && !isScriptLikeFile(entry.name)) {
-      snapshot.add(`outputs/${context.skillId}/${entry.name}`)
+      outputFiles.add(`outputs/${context.skillId}/${entry.name}`)
     }
   }
 
-  return snapshot
+  const skillRootEntries = context.fsBaseDir
+    ? await readDir(context.skillDirFsPath, { baseDir: context.fsBaseDir })
+    : await readDir(context.skillDirFsPath)
+
+  for (const entry of skillRootEntries) {
+    if (entry.isFile && entry.name && isOutputLikeFile(entry.name) && !isScriptLikeFile(entry.name)) {
+      const filePath = `${context.skillDirFsPath}/${entry.name}`.replace(/\/+/g, '/')
+      skillRootFiles.set(entry.name, await getFileMtime(filePath, context.fsBaseDir))
+    }
+  }
+
+  return {
+    outputFiles,
+    skillRootFiles,
+  }
 }
 
-async function collectGeneratedOutputs(context: SkillRuntimeContext, previousOutputs: Set<string>): Promise<string[]> {
+async function collectGeneratedOutputs(context: SkillRuntimeContext, previousSnapshot: OutputSnapshot): Promise<string[]> {
   const movedFiles: string[] = []
   const seenTargets = new Set<string>()
 
@@ -388,6 +417,27 @@ async function collectGeneratedOutputs(context: SkillRuntimeContext, previousOut
 
   await walkRuntime(context.runtimeDirFsPath)
 
+  const skillRootEntries = context.fsBaseDir
+    ? await readDir(context.skillDirFsPath, { baseDir: context.fsBaseDir })
+    : await readDir(context.skillDirFsPath)
+
+  for (const entry of skillRootEntries) {
+    if (!entry.isFile || !entry.name || !isOutputLikeFile(entry.name) || isScriptLikeFile(entry.name)) {
+      continue
+    }
+
+    const fullPathFs = `${context.skillDirFsPath}/${entry.name}`.replace(/\/+/g, '/')
+    const hadPreviousFile = previousSnapshot.skillRootFiles.has(entry.name)
+    const previousMtime = previousSnapshot.skillRootFiles.get(entry.name) ?? null
+    const currentMtime = await getFileMtime(fullPathFs, context.fsBaseDir)
+    const isNewOrModified = !hadPreviousFile
+      || (previousMtime !== null && currentMtime !== null && currentMtime > previousMtime)
+
+    if (isNewOrModified) {
+      await moveOutputFile(fullPathFs, entry.name)
+    }
+  }
+
   const existingOutputEntries = context.fsBaseDir
     ? await readDir(context.outputDirFsPath, { baseDir: context.fsBaseDir })
     : await readDir(context.outputDirFsPath)
@@ -395,7 +445,7 @@ async function collectGeneratedOutputs(context: SkillRuntimeContext, previousOut
   for (const entry of existingOutputEntries) {
     if (entry.isFile && entry.name && isOutputLikeFile(entry.name) && !isScriptLikeFile(entry.name)) {
       const outputRelativePath = `outputs/${context.skillId}/${entry.name}`
-      if (!seenTargets.has(outputRelativePath) && !previousOutputs.has(outputRelativePath)) {
+      if (!seenTargets.has(outputRelativePath) && !previousSnapshot.outputFiles.has(outputRelativePath)) {
         movedFiles.push(outputRelativePath)
       }
     }

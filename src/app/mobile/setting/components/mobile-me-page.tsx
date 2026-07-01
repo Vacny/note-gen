@@ -368,7 +368,7 @@ export function MobileMePage() {
     <div
       id="mobile-me"
       ref={containerRef}
-      className="flex h-full w-full flex-col overflow-y-auto"
+      className="mobile-setting-screen mobile-under-dock-scroll flex h-full w-full flex-col overflow-y-auto"
       onScroll={(event) => {
         window.sessionStorage.setItem(MOBILE_ME_SCROLL_KEY, String(event.currentTarget.scrollTop))
       }}
@@ -383,7 +383,7 @@ export function MobileMePage() {
           providerType={profileProviderType}
         />
 
-        <section className="rounded-3xl border border-border/60 bg-card p-4 shadow-sm">
+        <section className="mobile-dock-surface rounded-[1.35rem] p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold">{tActivity('drawer.title')}</h2>
@@ -419,19 +419,19 @@ export function MobileMePage() {
         </section>
 
         <section className="grid grid-cols-2 gap-3">
-          <div className="rounded-3xl border border-border/60 bg-card p-4 shadow-sm">
+          <div className="mobile-dock-surface rounded-[1.35rem] p-4">
             <p className="text-xs text-muted-foreground">{tMe('stats.weekly')}</p>
             <p className="mt-2 text-2xl font-semibold">{currentWeekCount}</p>
             <p className="mt-1 text-xs text-muted-foreground">{tMe('stats.weeklyHint')}</p>
           </div>
-          <div className="rounded-3xl border border-border/60 bg-card p-4 shadow-sm">
+          <div className="mobile-dock-surface rounded-[1.35rem] p-4">
             <p className="text-xs text-muted-foreground">{tMe('stats.streak')}</p>
             <p className="mt-2 text-2xl font-semibold">{currentStreak}</p>
             <p className="mt-1 text-xs text-muted-foreground">{tMe('stats.streakHint')}</p>
           </div>
         </section>
 
-        <section className="rounded-3xl border border-border/60 bg-card shadow-sm">
+        <section className="mobile-dock-surface rounded-[1.35rem] overflow-hidden">
           <div className="border-b border-border/60 px-4 py-3">
             <h2 className="text-base font-semibold">{tMe('settings.title')}</h2>
             <p className="mt-1 text-xs text-muted-foreground">{tMe('settings.description')}</p>

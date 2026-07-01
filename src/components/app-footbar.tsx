@@ -5,93 +5,113 @@ import { usePathname, useRouter } from 'next/navigation'
 import { cn } from "@/lib/utils"
 import { Store } from "@tauri-apps/plugin-store"
 import { useTranslations } from 'next-intl'
-import { useSidebarStore } from "@/stores/sidebar"
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
 import useSettingStore from "@/stores/setting"
 import useSyncStore from "@/stores/sync"
 import { UserInfo } from "@/lib/sync/github.types"
 import { getUserInfo } from "@/lib/sync/github"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
-  PopoverTrigger,
 } from '@/components/ui/popover'
 import { MobileRecordTools } from '@/components/mobile-record-tools'
+import { OrganizeNotes } from "@/app/core/main/mark/organize-notes"
+import {
+  InteractiveMenu,
+  type InteractiveMenuItem,
+} from '@/components/ui/modern-mobile-menu'
+import {
+  getAutoDataSyncState,
+  subscribeAutoDataSyncState,
+  type AutoDataSyncState,
+} from '@/lib/sync/auto-data-sync-queue'
 
-// 普通导航按钮组件
-interface NormalNavButtonProps {
-  item: {
-    title: string
-    url: string
-    icon: React.ComponentType<{ className?: string }>
-  }
-  isActive: boolean
-  onClick: () => void
+type MobileSyncIndicator = 'none' | 'syncing' | 'warning' | 'attention'
+
+type FootbarItem = InteractiveMenuItem & {
+  url: string
+  isQuickRecord?: boolean
 }
 
-function NormalNavButton({ item, isActive, onClick }: NormalNavButtonProps) {
+function getSyncIndicatorClassName(indicator: MobileSyncIndicator) {
+  switch (indicator) {
+    case 'attention':
+      return 'bg-destructive'
+    case 'warning':
+      return 'bg-amber-500'
+    case 'syncing':
+      return 'bg-primary animate-pulse'
+    case 'none':
+    default:
+      return ''
+  }
+}
+
+function SyncIndicator({ indicator }: { indicator: MobileSyncIndicator }) {
+  if (indicator === 'none') {
+    return null
+  }
+
   return (
-    <button
-      onClick={onClick}
+    <span
       className={cn(
-        "flex flex-col items-center justify-center w-1/5 py-1 transition-colors relative",
-        isActive ? "text-primary" : "text-muted-foreground hover:text-primary"
+        'absolute -right-1 -top-1 size-2 rounded-full ring-2 ring-[hsl(var(--component-active-bg))]',
+        getSyncIndicatorClassName(indicator)
       )}
-    >
-      <item.icon className="h-5 w-5" />
-      <span className="text-xs mt-0.5">{item.title}</span>
-      {isActive && (
-        <div className="absolute -bottom-1 w-1 h-1 rounded-full bg-primary" />
-      )}
-    </button>
+    />
   )
 }
 
-// 头像导航按钮组件
-interface AvatarNavButtonProps {
-  item: {
-    title: string
-    url: string
-  }
-  isActive: boolean
-  avatarUrl: string
-  onClick: () => void
+function ProfileAvatarIcon({ avatarUrl }: { avatarUrl: string }) {
+  return (
+    <Avatar className="size-5">
+      <AvatarImage
+        src={avatarUrl}
+        alt="Profile"
+      />
+      <AvatarFallback>
+        <User className="size-3.5" />
+      </AvatarFallback>
+    </Avatar>
+  )
 }
 
-function AvatarNavButton({ item, isActive, avatarUrl, onClick }: AvatarNavButtonProps) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex flex-col items-center justify-center w-1/5 py-1 transition-colors relative",
-        isActive ? "text-primary" : "text-muted-foreground hover:text-primary"
-      )}
-    >
-      <div className="flex flex-col items-center">
-        <Avatar className="h-6 w-6">
-          <AvatarImage 
-            src={avatarUrl} 
-            alt="Profile" 
-          />
-          <AvatarFallback>
-            <User className="h-4 w-4" />
-          </AvatarFallback>
-        </Avatar>
-        <span className="text-xs mt-0.5">{item.title}</span>
-        {isActive && (
-          <div className="absolute -bottom-1 w-1 h-1 rounded-full bg-primary" />
-        )}
-      </div>
-    </button>
-  )
+function getMobileSyncIndicator(
+  autoDataSyncEnabled: boolean,
+  autoDataSyncState: AutoDataSyncState
+): MobileSyncIndicator {
+  if (!autoDataSyncEnabled) {
+    return 'none'
+  }
+
+  if (autoDataSyncState.phase === 'failed' || autoDataSyncState.phase === 'conflict') {
+    return 'attention'
+  }
+
+  if (autoDataSyncState.phase === 'waiting_provider') {
+    return 'warning'
+  }
+
+  if (
+    autoDataSyncState.isSyncing ||
+    autoDataSyncState.phase === 'checking_remote' ||
+    autoDataSyncState.phase === 'uploading' ||
+    autoDataSyncState.phase === 'downloading'
+  ) {
+    return 'syncing'
+  }
+
+  return 'none'
 }
 
 export function AppFootbar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { toggleFileSidebar } = useSidebarStore()
   const [quickRecordOpen, setQuickRecordOpen] = useState(false)
+  const [autoDataSyncState, setAutoDataSyncState] = useState<AutoDataSyncState>(getAutoDataSyncState())
+  const organizeRef = useRef<{ openOrganize: () => void }>(null)
   const { 
     githubUsername,
     accessToken,
@@ -99,6 +119,7 @@ export function AppFootbar() {
     giteeAccessToken,
     gitlabAccessToken,
     giteaAccessToken,
+    autoDataSyncEnabled,
     setGithubUsername,
     setGitlabUsername,
     setGiteaUsername,
@@ -124,6 +145,7 @@ export function AppFootbar() {
   const hasGitlabAccount = Boolean(gitlabAccessToken)
   const hasGiteaAccount = Boolean(giteaAccessToken)
   const showAvatar = hasGithubAccount || hasGiteeAccount || hasGitlabAccount || hasGiteaAccount
+  const syncIndicator = getMobileSyncIndicator(autoDataSyncEnabled, autoDataSyncState)
 
   // 获取当前主要备份方式的用户信息
   async function handleGetUserInfo() {
@@ -211,50 +233,66 @@ export function AppFootbar() {
   const avatarUrl = getAvatarUrl()
     
   // 底部导航菜单项
-  const items = [
+  const items: FootbarItem[] = [
     {
-      title: t('navigation.chat'),
+      id: 'chat',
+      label: t('navigation.mobileDock.chat'),
       url: "/mobile/chat",
       icon: MessageSquare,
     },
     {
-      title: t('navigation.record'),
+      id: 'record',
+      label: t('navigation.mobileDock.record'),
       url: "/mobile/record",
       icon: Highlighter,
     },
     {
-      title: t('navigation.quickRecord'),
+      id: 'quick-record',
+      label: t('navigation.mobileDock.quickRecord'),
       url: "#quick-record",
       icon: Plus,
       isQuickRecord: true,
     },
     {
-      title: t('navigation.write'),
+      id: 'writing',
+      label: t('navigation.mobileDock.write'),
       url: "/mobile/writing",
       icon: SquarePen,
     },
     {
-      title: t('navigation.me'),
+      id: 'setting',
+      label: t('navigation.mobileDock.me'),
       url: "/mobile/setting",
       icon: Settings,
+      iconElement: showAvatar && avatarUrl ? <ProfileAvatarIcon avatarUrl={avatarUrl} /> : undefined,
+      indicator: <SyncIndicator indicator={syncIndicator} />,
     },
   ]
 
+  const routeActiveIndex = items.findIndex(item => pathname === item.url)
+  const quickRecordIndex = items.findIndex(item => item.isQuickRecord)
+  const activeIndex =
+    quickRecordOpen && quickRecordIndex >= 0 ? quickRecordIndex : Math.max(routeActiveIndex, 0)
+
   // 处理导航点击事件
-  async function menuHandler(item: typeof items[0]) {
+  async function menuHandler(item: FootbarItem) {
     if (item.isQuickRecord) {
       // 快捷记录按钮：打开浮动弹窗
-      setQuickRecordOpen(!quickRecordOpen)
+      setQuickRecordOpen(open => !open)
       return
     }
     
-    if (pathname === '/core/article' && item.url === '/core/article') {
-      toggleFileSidebar()
-    } else {
-      router.push(item.url)
-    }
+    setQuickRecordOpen(false)
+    router.push(item.url)
     const store = await Store.load('store.json')
     store.set('currentPage', item.url)
+  }
+
+  const handleMobileOrganize = () => {
+    setQuickRecordOpen(false)
+    window.requestAnimationFrame(() => {
+      organizeRef.current?.openOrganize()
+    })
   }
 
   useEffect(() => {
@@ -263,69 +301,41 @@ export function AppFootbar() {
     }
   }, [accessToken, giteeAccessToken, gitlabAccessToken, giteaAccessToken, primaryBackupMethod])
 
+  useEffect(() => subscribeAutoDataSyncState(setAutoDataSyncState), [])
+
   return (
-    <div className="w-full border-t bg-background h-14 relative">
-      <div className="flex h-full items-center justify-around">
-        {items.map((item, index) => {
-          // 快捷记录按钮 - 使用 Popover
-          if (item.isQuickRecord) {
-            return (
-              <Popover key={index} open={quickRecordOpen} onOpenChange={setQuickRecordOpen}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    className="w-1/5 flex items-center justify-center"
-                    aria-label={item.title}
-                    title={item.title}
-                  >
-                    <span
-                      className={cn(
-                        "inline-flex size-11 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform active:scale-95",
-                        quickRecordOpen && "ring-2 ring-primary/30"
-                      )}
-                    >
-                      <Plus className="size-6" />
-                    </span>
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent
-                  align="center"
-                  side="top"
-                  sideOffset={10}
-                  collisionPadding={12}
-                  className="w-[min(92vw,360px)] rounded-2xl p-3"
-                >
-                    <MobileRecordTools onClose={() => setQuickRecordOpen(false)} />
-                </PopoverContent>
-              </Popover>
-            )
-          }
-          
-          // 头像按钮（最后一项且有头像）
-          const isAvatarButton = index === items.length - 1 && showAvatar && avatarUrl
-          if (isAvatarButton) {
-            return (
-              <AvatarNavButton
-                key={index}
-                item={item}
-                isActive={pathname === item.url}
-                avatarUrl={avatarUrl}
-                onClick={() => menuHandler(item)}
-              />
-            )
-          }
-          
-          // 普通按钮
-          return (
-            <NormalNavButton
-              key={index}
-              item={item}
-              isActive={pathname === item.url}
-              onClick={() => menuHandler(item)}
-            />
-          )
-        })}
-      </div>
+    <div className="flex h-full w-full items-center justify-center px-2 min-[380px]:px-3">
+      <Popover open={quickRecordOpen} onOpenChange={setQuickRecordOpen}>
+        <PopoverAnchor asChild>
+          <InteractiveMenu
+            activeIndex={activeIndex}
+            aria-label={t('navigation.navigate')}
+            className="w-full"
+            items={items}
+            onActiveIndexChange={(index) => {
+              const item = items[index]
+              if (item) {
+                menuHandler(item)
+              }
+            }}
+          />
+        </PopoverAnchor>
+        <PopoverContent
+          align="center"
+          side="top"
+          sideOffset={10}
+          collisionPadding={12}
+          className="origin-bottom w-[min(92vw,360px)] rounded-[1.35rem] border-border/60 bg-background/70 p-2 text-foreground shadow-[0_18px_48px_rgb(0_0_0/0.18)] backdrop-blur-xl will-change-[transform,opacity] supports-[backdrop-filter]:bg-background/60 data-[state=open]:duration-[220ms] data-[state=closed]:duration-150 data-[state=open]:ease-out data-[state=closed]:ease-in data-[state=closed]:slide-out-to-bottom-2 dark:shadow-[0_22px_54px_rgb(0_0_0/0.36)]"
+          onOpenAutoFocus={event => event.preventDefault()}
+          onCloseAutoFocus={event => event.preventDefault()}
+        >
+          <MobileRecordTools
+            onClose={() => setQuickRecordOpen(false)}
+            onOrganize={handleMobileOrganize}
+          />
+        </PopoverContent>
+      </Popover>
+      <OrganizeNotes ref={organizeRef} />
     </div>
   )
 }

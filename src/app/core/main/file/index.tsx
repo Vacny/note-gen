@@ -8,6 +8,7 @@ import useClipboardStore from "@/stores/clipboard"
 import { isMobileDevice } from "@/lib/check"
 import { platform } from "@tauri-apps/plugin-os"
 import { isEditableKeyboardTarget } from "@/lib/is-editable-keyboard-target"
+import { flattenFileTree, getFileSelectionEntries, toClipboardItems } from "./file-selection"
 
 type Platform = 'macos' | 'windows' | 'linux' | 'unknown'
 
@@ -16,8 +17,8 @@ type Platform = 'macos' | 'windows' | 'linux' | 'unknown'
  * 只有当文件管理器区域获得焦点时才响应快捷键
  */
 function useFileManagerShortcuts() {
-  const { activeFilePath, fileTree } = useArticleStore()
-  const { setClipboardItem } = useClipboardStore()
+  const { activeFilePath, fileTree, selectedFilePaths } = useArticleStore()
+  const { setClipboardItem, setClipboardItems } = useClipboardStore()
   const [currentPlatform, setCurrentPlatform] = useState<Platform>('unknown')
   const [isFocused, setIsFocused] = useState(false)
   const sidebarRef = useRef<HTMLDivElement>(null)
@@ -53,25 +54,15 @@ function useFileManagerShortcuts() {
 
     // 递归查找文件树中匹配的项
     function findInTree(tree: typeof fileTree, targetPath: string): ReturnType<typeof getActiveItem> {
-      for (const item of tree) {
-        const itemPath = item.parent ? `${item.parent.name}/${item.name}` : item.name
-
-        if (itemPath === targetPath || (item.parent && targetPath === `${item.parent.name}/${item.name}`)) {
-          return {
-            path: activeFilePath,
-            isDirectory: item.isDirectory,
-            isLocale: item.isLocale,
-            name: item.name,
-            sha: item.sha
-          }
-        }
-
-        if (item.children) {
-          const found = findInTree(item.children, targetPath)
-          if (found) return found
-        }
+      const entry = flattenFileTree(tree).find(item => item.path === targetPath)
+      if (!entry) return null
+      return {
+        path: entry.path,
+        isDirectory: entry.isDirectory,
+        isLocale: entry.isLocale,
+        name: entry.name,
+        sha: entry.sha
       }
-      return null
     }
 
     return findInTree(fileTree, activeFilePath)
@@ -94,8 +85,10 @@ function useFileManagerShortcuts() {
       return
     }
 
+    const selectedEntries = getFileSelectionEntries(fileTree, selectedFilePaths)
+    const allSelectedEntriesAreLocal = selectedEntries.every(entry => entry.isLocale)
     const activeItem = getActiveItem()
-    if (!activeItem || !activeItem.isLocale) {
+    if (selectedEntries.length === 0 && (!activeItem || !activeItem.isLocale)) {
       return
     }
 
@@ -105,13 +98,19 @@ function useFileManagerShortcuts() {
     if (modPressed && e.key === 'c') {
       e.preventDefault()
       e.stopPropagation()
-      setClipboardItem({
-        path: activeItem.path,
-        name: activeItem.name,
-        isDirectory: activeItem.isDirectory,
-        sha: activeItem.sha,
-        isLocale: activeItem.isLocale
-      }, 'copy')
+      if (selectedEntries.length > 0) {
+        if (allSelectedEntriesAreLocal) {
+          setClipboardItems(toClipboardItems(selectedEntries), 'copy')
+        }
+      } else if (activeItem) {
+        setClipboardItem({
+          path: activeItem.path,
+          name: activeItem.name,
+          isDirectory: activeItem.isDirectory,
+          sha: activeItem.sha,
+          isLocale: activeItem.isLocale
+        }, 'copy')
+      }
       return
     }
 
@@ -119,13 +118,19 @@ function useFileManagerShortcuts() {
     if (modPressed && e.key === 'x') {
       e.preventDefault()
       e.stopPropagation()
-      setClipboardItem({
-        path: activeItem.path,
-        name: activeItem.name,
-        isDirectory: activeItem.isDirectory,
-        sha: activeItem.sha,
-        isLocale: activeItem.isLocale
-      }, 'cut')
+      if (selectedEntries.length > 0) {
+        if (allSelectedEntriesAreLocal) {
+          setClipboardItems(toClipboardItems(selectedEntries), 'cut')
+        }
+      } else if (activeItem) {
+        setClipboardItem({
+          path: activeItem.path,
+          name: activeItem.name,
+          isDirectory: activeItem.isDirectory,
+          sha: activeItem.sha,
+          isLocale: activeItem.isLocale
+        }, 'cut')
+      }
       return
     }
 
@@ -134,8 +139,11 @@ function useFileManagerShortcuts() {
       e.preventDefault()
       e.stopPropagation()
       // 触发粘贴操作（通过事件或直接调用）
-      const event = new CustomEvent('filemanager-paste', { detail: { targetPath: activeItem.path } })
-      window.dispatchEvent(event)
+      const pasteTargetPath = selectedEntries.length === 1 ? selectedEntries[0].path : activeItem?.path
+      if (pasteTargetPath) {
+        const event = new CustomEvent('filemanager-paste', { detail: { targetPath: pasteTargetPath } })
+        window.dispatchEvent(event)
+      }
       return
     }
 
@@ -147,8 +155,12 @@ function useFileManagerShortcuts() {
     if (isDeleteKey) {
       e.preventDefault()
       e.stopPropagation()
-      const event = new CustomEvent('filemanager-delete', { detail: { item: activeItem } })
-      window.dispatchEvent(event)
+      if (selectedEntries.length > 0) {
+        window.dispatchEvent(new CustomEvent('filemanager-delete-selection'))
+      } else if (activeItem) {
+        const event = new CustomEvent('filemanager-delete', { detail: { item: activeItem } })
+        window.dispatchEvent(event)
+      }
       return
     }
 
@@ -160,11 +172,14 @@ function useFileManagerShortcuts() {
     if (isRenameKey) {
       e.preventDefault()
       e.stopPropagation()
-      const event = new CustomEvent('filemanager-rename', { detail: { path: activeItem.path } })
-      window.dispatchEvent(event)
+      const renamePath = selectedEntries.length === 1 ? selectedEntries[0].path : activeItem?.path
+      if (renamePath && selectedEntries.length <= 1) {
+        const event = new CustomEvent('filemanager-rename', { detail: { path: renamePath } })
+        window.dispatchEvent(event)
+      }
       return
     }
-  }, [isFocused, getActiveItem, isModKey, currentPlatform, setClipboardItem])
+  }, [isFocused, getActiveItem, isModKey, currentPlatform, fileTree, selectedFilePaths, setClipboardItem, setClipboardItems])
 
   // 注册全局快捷键
   useEffect(() => {

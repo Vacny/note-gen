@@ -32,7 +32,7 @@ export function FooterBar({
 
   if (isMobile) {
     return (
-      <div className="h-7 flex items-center justify-between gap-3 px-3 border-t border-border bg-background text-xs text-muted-foreground">
+      <div className="mobile-editor-footer h-7 flex items-center justify-between gap-3 px-3 border-t border-border bg-background text-xs text-muted-foreground">
         <div className="min-w-0 flex-1 flex items-center gap-2 overflow-hidden">
           <FileText className="size-3.5 shrink-0" />
           <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">

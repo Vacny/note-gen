@@ -1,73 +1,85 @@
-# NoteGen
-
-![](https://img.shields.io/badge/free-pricing?logo=free&color=%20%23155EEF&label=pricing&labelColor=%20%23528bff)
-[![GitHub Repo stars](https://img.shields.io/github/stars/codexu/note-gen)](https://github.com/codexu/note-gen)
-[![](https://gitcode.com/codexu/note-gen/star/badge.svg)](https://gitcode.com/codexu/note-gen)
-![](https://github.com/codexu/note-gen/actions/workflows/release.yml/badge.svg?branch=release)
-[![Netlify Status](https://api.netlify.com/api/v1/badges/8f7518c3-b627-4277-bc2f-e477960f5dc4/deploy-status)](https://app.netlify.com/projects/note-gen-docs/deploys)
-![](https://img.shields.io/github/downloads/codexu/note-gen/total)
-![](https://img.shields.io/github/issues-closed/codexu/note-gen)
-
-<div>
-  <a href="https://trendshift.io/repositories/12784" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12784" alt="codexu%2Fnote-gen | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-  <a href="https://hellogithub.com/repository/0163cb946dca44cc8905dbe34c2c987b" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=0163cb946dca44cc8905dbe34c2c987b&claim_uid=YJ39kIMBz1TGAvc" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" /></a>
-  <a href="https://www.producthunt.com/products/notegen-2?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-notegen&#0045;2" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=956348&theme=light&t=1749194675492" alt="NoteGen - A&#0032;cross&#0045;platform&#0032;Markdown&#0032;note&#0045;taking&#0032;application | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
+<div align="center">
+  <h1>NoteGen</h1>
+  <p><strong>Capture first, organize later.</strong></p>
+  <p>
+    <a href="https://notegen.top/en/">Documentation</a>
+    ·
+    <a href="https://notegen.top/en/download">Download</a>
+    ·
+    <a href="https://github.com/codexu/note-gen/discussions">Discussions</a>
+  </p>
+  <p>
+    <a href="https://github.com/codexu/note-gen/actions/workflows/release.yml"><img alt="Release workflow" src="https://img.shields.io/github/actions/workflow/status/codexu/note-gen/release.yml?branch=release&label=release&style=flat-square&logo=githubactions&logoColor=white"></a>
+    <a href="https://github.com/codexu/note-gen/blob/dev/LICENSE"><img alt="License" src="https://img.shields.io/github/license/codexu/note-gen?style=flat-square&color=0f766e"></a>
+    <img alt="Pricing: free" src="https://img.shields.io/badge/pricing-free-155eef?style=flat-square">
+  </p>
+  <p>
+    <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-ffc131?style=flat-square&logo=tauri&logoColor=111111">
+    <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js-15-000000?style=flat-square&logo=nextdotjs&logoColor=white">
+    <img alt="React 19" src="https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=111111">
+    <img alt="Tailwind CSS 4" src="https://img.shields.io/badge/Tailwind_CSS-4-06b6d4?style=flat-square&logo=tailwindcss&logoColor=white">
+  </p>
+  <p>
+    <a href="https://trendshift.io/repositories/12784" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12784" alt="codexu%2Fnote-gen | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+    <a href="https://hellogithub.com/repository/0163cb946dca44cc8905dbe34c2c987b" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=0163cb946dca44cc8905dbe34c2c987b&claim_uid=YJ39kIMBz1TGAvc" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" /></a>
+    <a href="https://www.producthunt.com/products/notegen-2?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-notegen&#0045;2" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=956348&theme=light&t=1749194675492" alt="NoteGen - A&#0032;cross&#0045;platform&#0032;Markdown&#0032;note&#0045;taking&#0032;application | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
+  </p>
 </div>
 
-## Sponsor
+## Get Started
 
-<table>
-  <tr>
-    <td width="60%" valign="top">
-      感谢 <a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_JL_git_note-gen" target="_blank">优云智算</a> 赞助了本项目！优云智算是 UCloud 旗下 AI 云平台，提供稳定、全面的国内外模型 API，仅一个 key 即可调用。主打包月、按量的高性价比 Coding Plan 套餐，基于官方 2~5 折优惠。支持接入 Claude Code、Codex 及 API 调用。支持企业高并发、7*24 技术支持、自助开票。通过此链接注册的用户，可得免费 5 元平台体验金！
-    </td>
-    <td width="40%" align="center">
-      <a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_JL_git_note-gen" target="_blank">
-        <img src="https://files.seeusercontent.com/2026/03/30/hh6D/e9ee714402f19640e6bba5ef32c2ae8f.jpg" alt="YouYun Sponsor" width="320" />
-      </a>
-    </td>
-  </tr>
-</table>
+> Capture first, organize later.
 
-## Guide
+NoteGen is an open-source, cross-platform note app that helps you capture rough information first and turn it into structured writing later.
 
-🖥️ Official Document: [English](https://notegen.top/en/) | [简体中文](https://notegen.top/cn/)
-
-💬 Join [WeChat/QQ Group](https://github.com/codexu/note-gen/discussions/110), [Discord](https://discord.gg/SXyVZGpbpk), [Telegram](https://t.me/notegen)
-
-NoteGen is a cross-platform `Markdown` note-taking application dedicated to using AI to bridge recording and writing, organizing fragmented knowledge into a readable note.
+It works like a capture inbox, Markdown editor, and AI assistant in one app. Save scattered thoughts, voice recordings, screenshots, images, links, files, and todos in one place. When you are ready, let AI organize those raw records into clear notes, summaries, reports, articles, or reusable knowledge.
 
 ![](https://s2.loli.net/2025/12/22/jlpEP2c6ogwHhIA.png)
 
-## Features
+## What Can NoteGen Do?
 
-- 🚀 Lightweight (25MB), free, no ads.
-- 🌐 Cross-platform support.
-- 🆓 Free AI and sync solutions.
-- 📦 Out-of-the-box RAG support.
-- 🔌 MCP support for AI tool integration.
-- 🤖 Intelligent agents for automated note processing.
-- ✍️ Quick note-taking for fragmented information.
-- 📝 Native Markdown storage format.
+NoteGen is built around a simple idea: do not force yourself to write a perfect note at the moment an idea appears.
+
+- 🧩 Capture anything quickly: text, voice, screenshots, images, links, files, and todos.
+- 🧠 Turn messy records into organized notes: select records, choose a template, and generate structured Markdown.
+- ✍️ Keep writing after AI helps: edit the result in a Markdown editor with tables, diagrams, math, outline, search, and export tools.
+- 💬 Ask questions about your own material: chat with notes, records, and knowledge base content instead of starting from a blank prompt.
+- 🖼️ Make images useful: save screenshots and images, run OCR or AI recognition, add descriptions, and reuse them in notes.
+- 🔄 Work across devices: keep notes local as Markdown files and sync them through GitHub, Gitee, GitLab, Gitea, S3, or WebDAV.
+
+## Use NoteGen For
+
+- Meeting notes and class notes: capture fragments during the session, then turn them into a readable summary.
+- Reading and research: collect links, screenshots, documents, and quotes, then ask AI to organize the material.
+- Weekly reports and work logs: generate reports from recent records by tag, time range, or template.
+- Personal knowledge management: keep long-term notes as Markdown files and chat with your own knowledge base.
+
+## Typical Workflow
+
+1. **Record first**: save a thought, meeting snippet, screenshot, webpage, document, or task without deciding where it belongs.
+2. **Organize later**: filter records by tag, time, or type, then ask AI to turn selected records into a note, weekly report, draft, or summary.
+3. **Write with control**: polish the generated Markdown, keep useful references and images, and export or sync when needed.
+4. **Reuse your knowledge**: search, chat, translate, rewrite, or let the Agent help continue working with your notes.
+
+## Powerful When You Need It
+
+NoteGen keeps the everyday experience focused on recording and writing, while still offering advanced tools for heavier workflows:
+
+- Local-first Markdown storage and workspace-based file management.
+- AI chat, inline completion, translation, rewriting, summaries, prompts, memories, and Agent mode.
+- Knowledge base search with vector indexing and hybrid retrieval.
+- Configurable AI providers and models for chat, embeddings, OCR/VLM, audio, and more.
+- MCP support for connecting external AI tools.
+- Cross-platform desktop and mobile apps built with Tauri.
 
 ## Download
 
 | ![Windows](https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white&style=for-the-badge) | ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white&style=for-the-badge) | ![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge) | ![Android](https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white&style=for-the-badge) | ![iOS](https://img.shields.io/badge/iOS-000000?logo=apple&logoColor=white&style=for-the-badge) |
 | --- | --- | --- | --- | --- |
 | ✅ beta | ✅ beta | ✅ beta | 🛠️ alpha | 🛠️ alpha |
-| [Download](https://notegen.top/en/docs/download#desktop-beta) | [Download](https://notegen.top/en/docs/download#desktop-beta) | [Download](https://notegen.top/en/docs/download#desktop-beta) | [Download](https://notegen.top/en/docs/download#android) | [TestFlight](https://testflight.apple.com/join/8KjFRTCq) |
+| [Download](https://notegen.top/en/download) | [Download](https://notegen.top/en/download) | [Download](https://notegen.top/en/download) | [Download](https://notegen.top/en/download) | [TestFlight](https://testflight.apple.com/join/8KjFRTCq) |
 
-> [UpgradeLink offers application upgrade and download services](http://upgrade.toolsetlink.com/upgrade/example/tauri-example.html)
-
-## From Recording to Writing
-
-Traditional note-taking apps typically don't offer note-taking functionality, but NoteGen makes it easier for you to record scattered knowledge points and avoid disrupting your train of thought while taking notes.
-
-NoteGen is divided into three parts: Recording, Notes, and AI Dialogue. They have the following features: 
-
-- You don't need to consider the order and logic of recording, AI will help you organize the notes into well-organized and coherent ones.
-- AI Dialogue is a feature that allows you to interact with AI in real-time, helping you to better understand and remember the content you are recording.
-- The note-taking feature can help you optimize the details of your notes independently.
+Desktop and Android packages are distributed through the official download page, with GitHub Releases kept as a fallback mirror.
 
 ## Contribute
 
@@ -91,14 +103,6 @@ Special thanks to our technology partners who make NoteGen better:
 <a href="https://cloud.siliconflow.cn/i/O2ciJeZw" target="_blank">
   <img width="240" src="https://s2.loli.net/2025/09/10/KWPOA5XhIGmYTV9.png" />
 </a>
-
-**[UpgradeLink](http://upgrade.toolsetlink.com/upgrade/example/tauri-example.html)** - Providing reliable installation and upgrade services, ensuring seamless software updates for users.
-
-<a href="http://upgrade.toolsetlink.com/upgrade/example/tauri-example.html" target="_blank">
-  <img width="240" src="https://s2.loli.net/2025/09/10/Ks4EayU9HguXDMF.png" />
-</a>
-
----
 
 We also thank other partners for their service support
 

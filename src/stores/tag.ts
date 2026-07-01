@@ -6,10 +6,15 @@ import { uploadFile as uploadGiteaFile, getFiles as giteaGetFiles, getFileConten
 import { s3Upload, s3Delete, s3HeadObject, s3Download } from '@/lib/sync/s3'
 import { webdavUpload, webdavDelete, webdavHeadObject, webdavDownload } from '@/lib/sync/webdav'
 import { getSyncRepoName } from '@/lib/sync/repo-utils'
-import { getRemoteFileContent } from '@/lib/sync/remote-file'
+import { getRemoteFileContent, hasEmptyRemoteFileContent, isMissingRemoteFileError } from '@/lib/sync/remote-file'
 import { Store } from '@tauri-apps/plugin-store'
 import { create } from 'zustand'
 import { S3Config, WebDAVConfig } from '@/types/sync'
+import { setAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-queue'
+
+interface RecordDataDownloadOptions {
+  allowMissingRemote?: boolean
+}
 
 interface TagState {
   currentTagId: number
@@ -30,7 +35,7 @@ interface TagState {
   lastSyncTime: string
   setLastSyncTime: (lastSyncTime: string) => void
   uploadTags: () => Promise<boolean>
-  downloadTags: () => Promise<Tag[]>
+  downloadTags: (options?: RecordDataDownloadOptions) => Promise<Tag[]>
 }
 
 const useTagStore = create<TagState>((set, get) => ({
@@ -53,9 +58,7 @@ const useTagStore = create<TagState>((set, get) => ({
     const tags = get().tags
     const getcurrentTagId = get().currentTagId
     const currentTag = tags.find((tag) => tag.id === getcurrentTagId)
-    if (currentTag) {
-      set({ currentTag })
-    }
+    set({ currentTag })
   },
 
   // 所有 tag
@@ -126,8 +129,8 @@ const useTagStore = create<TagState>((set, get) => ({
               filename: '.gitkeep',
               sha: '',
             })
-          } catch (e) {
-            console.log('[tag store] GitLab create .gitkeep error:', e)
+          } catch {
+            // Ignore .gitkeep creation failures; the main upload path reports errors below.
           }
           // 重新获取文件列表
           files = await gitlabGetFiles({ path, repo: gitlabRepo })
@@ -190,12 +193,13 @@ const useTagStore = create<TagState>((set, get) => ({
     set({ syncState: false })
     return result
   },
-  downloadTags: async () => {
+  downloadTags: async (options: RecordDataDownloadOptions = {}) => {
     const path = '.data'
     const filename = 'tags.json'
     const store = await Store.load('store.json');
     const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github';
-    let result = []
+    let result: Tag[] = []
+    let hasRemoteData = false
     let files;
     switch (primaryBackupMethod) {
       case 'github':
@@ -222,6 +226,7 @@ const useTagStore = create<TagState>((set, get) => ({
           if (s3Result) {
             // S3 返回的 content 是字符串，直接解析
             result = JSON.parse(s3Result.content)
+            hasRemoteData = true
           }
         }
         break;
@@ -233,6 +238,7 @@ const useTagStore = create<TagState>((set, get) => ({
           const webdavResult = await webdavDownload(webdavConfig, webdavKey)
           if (webdavResult) {
             result = JSON.parse(webdavResult.content)
+            hasRemoteData = true
           }
         }
         break;
@@ -240,12 +246,33 @@ const useTagStore = create<TagState>((set, get) => ({
     }
     // S3 已经直接解析到 result 了，这里处理 Git 平台
     if (files) {
-      const configJson = decodeBase64ToString(getRemoteFileContent(files, `${path}/${filename}`))
-      result = JSON.parse(configJson)
+      try {
+        if (!options.allowMissingRemote || !hasEmptyRemoteFileContent(files)) {
+          const configJson = decodeBase64ToString(getRemoteFileContent(files, `${path}/${filename}`))
+          result = JSON.parse(configJson)
+          hasRemoteData = true
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown error'
+        if (!options.allowMissingRemote || !isMissingRemoteFileError(message)) {
+          throw error
+        }
+      }
     }
-    if (result.length > 0) {
-      await deleteAllTags()
-      await insertTags(result)
+    if (hasRemoteData) {
+      setAutoDataSyncApplyingRemote(true)
+      try {
+        await deleteAllTags()
+        await insertTags(result)
+        await get().fetchTags()
+        const tags = get().tags
+        if (tags.length > 0 && !tags.some(tag => tag.id === get().currentTagId)) {
+          await get().setCurrentTagId(tags[0].id)
+        }
+        get().getCurrentTag()
+      } finally {
+        setAutoDataSyncApplyingRemote(false)
+      }
     }
     set({ syncState: false })
     return result

@@ -19,11 +19,21 @@ import { BaseDirectory, DirEntry, exists, mkdir, readDir, readTextFile, writeTex
 import { Store } from '@tauri-apps/plugin-store'
 import { cloneDeep, uniq } from 'lodash-es'
 import { create } from 'zustand'
-import { getFilePathOptions, getWorkspacePath, toWorkspaceRelativePath } from '@/lib/workspace'
+import { getFilePathOptions, getWorkspacePath, isAbsoluteFsPath, toWorkspaceRelativePath } from '@/lib/workspace'
 import emitter from '@/lib/emitter'
+import type { Events } from '@/lib/emitter'
 import { isSkillsFolder } from '@/lib/skills/utils'
 import { buildVectorIndexedMap, getVectorDocumentKey } from '@/lib/vector-document-key'
 import { buildRemotePathsToLoad } from './article-remote-sync'
+import { debugSyncPath } from '@/lib/sync/remote-file'
+import type { Mark } from '@/db/marks'
+
+type SyncPushCompletedEvent = Events['sync-push-completed']
+type SyncPushCompletedListener = (event: SyncPushCompletedEvent) => void
+
+type ArticleSyncListenerGlobal = typeof globalThis & {
+  __noteGenArticleSyncPushCompletedListener?: SyncPushCompletedListener
+}
 
 // 缓存 Store 实例，避免每次都重新加载
 let storeInstance: Store | null = null
@@ -59,6 +69,32 @@ export interface EditorViewState {
   selectionFrom: number
   selectionTo: number
   scrollTop: number
+}
+
+export type EditorTabKind = 'file' | 'record'
+
+export interface OpenTabInfo {
+  id: string
+  path: string
+  name: string
+  isFolder: boolean
+  kind?: EditorTabKind
+  markId?: number
+  markType?: Mark['type']
+}
+
+const RECORD_TAB_PATH_PREFIX = 'record://mark/'
+
+function isRecordOpenTabPath(path: string): boolean {
+  return path.startsWith(RECORD_TAB_PATH_PREFIX)
+}
+
+function isRecordOpenTab(tab?: OpenTabInfo | null): boolean {
+  return !!tab && (tab.kind === 'record' || isRecordOpenTabPath(tab.path))
+}
+
+function getActiveFilePathForTab(tab?: OpenTabInfo | null): string {
+  return tab && !isRecordOpenTab(tab) ? tab.path : ''
 }
 
 // 查找文件夹节点
@@ -193,17 +229,20 @@ interface NoteState {
 
   activeFilePath: string
   setActiveFilePath: (name: string) => void
+  selectedFilePaths: string[]
+  setSelectedFilePaths: (paths: string[]) => void
+  clearSelectedFilePaths: () => void
 
   // 当前正在读取的文件路径，用于避免竞态条件
   readFilePath: string
   setReadFilePath: (path: string) => void
 
   // Tabs for multi-file editing
-  openTabs: Array<{ id: string; path: string; name: string; isFolder: boolean }>
-  setOpenTabs: (tabs: Array<{ id: string; path: string; name: string; isFolder: boolean }>) => void
+  openTabs: OpenTabInfo[]
+  setOpenTabs: (tabs: OpenTabInfo[]) => void
   activeTabId: string
   setActiveTabId: (id: string) => void
-  addTab: (tab: { id: string; path: string; name: string; isFolder: boolean }) => void
+  addTab: (tab: OpenTabInfo) => void
   removeTab: (id: string) => void
   editorViewStates: Record<string, EditorViewState>
   setEditorViewState: (path: string, state: EditorViewState) => void
@@ -339,13 +378,27 @@ const useArticleStore = create<NoteState>((set, get) => ({
 
   // 初始化事件监听器
   initEventListeners: () => {
+    const globalState = globalThis as ArticleSyncListenerGlobal
+    if (globalState.__noteGenArticleSyncPushCompletedListener) {
+      emitter.off('sync-push-completed', globalState.__noteGenArticleSyncPushCompletedListener)
+    }
+
     // 监听同步推送完成事件，更新文件树的 sha 状态
-    emitter.on('sync-push-completed', ((event: { path: string; success: boolean; sha?: string }) => {
+    const syncPushCompletedListener: SyncPushCompletedListener = (event) => {
       const { path, success, sha } = event
+      debugSyncPath('article.syncPushCompleted', {
+        path,
+        success,
+        sha,
+        hasSha: Boolean(sha),
+      })
       if (success && sha) {
         get().updateFileSha(path, sha)
       }
-    }) as any)
+    }
+
+    emitter.on('sync-push-completed', syncPushCompletedListener)
+    globalState.__noteGenArticleSyncPushCompletedListener = syncPushCompletedListener
   },
   setSortType: async (sortType: SortType) => {
     set({ sortType })
@@ -445,19 +498,33 @@ const useArticleStore = create<NoteState>((set, get) => ({
 
   activeFilePath: '',
   setActiveFilePath: async (path: string) => {
+    const nextPath = isRecordOpenTabPath(path) ? '' : path
     // 切换文件时，先清空 currentArticle，避免内容覆盖
-    set({ currentArticle: '', activeFilePath: path })
+    set({ currentArticle: '', activeFilePath: nextPath, selectedFilePaths: [] })
     const store = await getStore();
-    await store.set('activeFilePath', path)
+    await store.set('activeFilePath', nextPath)
     // 触发事件，让推送队列重置计时器
-    emitter.emit('article-opened', { path })
+    emitter.emit('article-opened', { path: nextPath })
 
     // 触发读取文件内容（包括远程拉取）
     // 需要确保是文件而不是文件夹
-    const fileName = path.split('/').pop() || ''
+    const fileName = nextPath.split('/').pop() || ''
     if (fileName && fileName.includes('.')) {
-      get().readArticle(path)
+      get().readArticle(nextPath)
     }
+  },
+  selectedFilePaths: [],
+  setSelectedFilePaths: (paths: string[]) => {
+    const nextPaths = Array.from(new Set(paths))
+    set((state) => {
+      const isSameSelection = state.selectedFilePaths.length === nextPaths.length
+        && state.selectedFilePaths.every((path, index) => path === nextPaths[index])
+
+      return isSameSelection ? state : { selectedFilePaths: nextPaths }
+    })
+  },
+  clearSelectedFilePaths: () => {
+    set((state) => state.selectedFilePaths.length === 0 ? state : { selectedFilePaths: [] })
   },
 
   // Tabs initialization - load from store
@@ -481,7 +548,9 @@ const useArticleStore = create<NoteState>((set, get) => ({
   addTab: async (tab) => {
     const currentTabs = get().openTabs
     // Check if tab already exists
-    if (currentTabs.find(t => t.path === tab.path)) {
+    const existingTab = currentTabs.find(t => t.path === tab.path)
+    if (existingTab) {
+      await get().setActiveTabId(existingTab.id)
       return
     }
     const newTabs = [...currentTabs, tab].slice(-10) // Limit to 10 tabs
@@ -559,7 +628,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
         // 选择最后一个 tab
         const targetTab = newTabs[newTabs.length - 1]
         newActiveTabId = targetTab.id
-        newActiveFilePath = targetTab.path
+        newActiveFilePath = getActiveFilePathForTab(targetTab)
       } else if (deletedTab && currentActiveTabId === deletedTab.id) {
         // 没有其他 tab 了
         newActiveTabId = ''
@@ -595,7 +664,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
         // 选择最后一个 tab
         const targetTab = newTabs[newTabs.length - 1]
         newActiveTabId = targetTab.id
-        newActiveFilePath = targetTab.path
+        newActiveFilePath = getActiveFilePathForTab(targetTab)
       } else if (deletedTab && currentActiveTabId === deletedTab.id) {
         // 没有其他 tab 了
         newActiveTabId = ''
@@ -654,7 +723,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
   // Initialize open tabs from store
   initOpenTabs: async () => {
     const store = await getStore();
-    const tabs = await store.get<Array<{ id: string; path: string; name: string; isFolder: boolean }>>('openTabs')
+    const tabs = await store.get<OpenTabInfo[]>('openTabs')
     const activeTabId = await store.get<string>('activeTabId')
     set({ openTabs: tabs || [], activeTabId: activeTabId || '' })
   },
@@ -722,29 +791,45 @@ const useArticleStore = create<NoteState>((set, get) => ({
     return true
   },
   syncOpenTabsForPathChange: async (oldPath: string, newPath: string) => {
+    const mapMovedPath = (path: string) => {
+      if (path === oldPath) {
+        return newPath
+      }
+
+      if (path.startsWith(`${oldPath}/`)) {
+        return `${newPath}${path.slice(oldPath.length)}`
+      }
+
+      return path
+    }
+
     const currentTabs = get().openTabs
     const currentActiveTabId = get().activeTabId
     const newTabs = currentTabs.map(tab => {
-      if (tab.path !== oldPath) {
+      if (isRecordOpenTab(tab)) {
+        return tab
+      }
+
+      const nextPath = mapMovedPath(tab.path)
+      if (nextPath === tab.path) {
         return tab
       }
 
       return {
         ...tab,
-        path: newPath,
-        name: newPath.split('/').pop() || newPath,
+        path: nextPath,
+        name: nextPath.split('/').pop() || nextPath,
       }
     })
 
-    const nextActiveTabId = currentTabs.some(tab => tab.path === oldPath)
+    const nextActiveTabId = currentTabs.some(tab => mapMovedPath(tab.path) !== tab.path)
       ? currentActiveTabId
       : get().activeTabId
 
-    const nextEditorViewStates = { ...get().editorViewStates }
-    if (nextEditorViewStates[oldPath]) {
-      nextEditorViewStates[newPath] = nextEditorViewStates[oldPath]
-      delete nextEditorViewStates[oldPath]
-    }
+    const nextEditorViewStates = Object.entries(get().editorViewStates).reduce<Record<string, EditorViewState>>((states, [path, viewState]) => {
+      states[mapMovedPath(path)] = viewState
+      return states
+    }, {})
 
     set({ openTabs: newTabs, activeTabId: nextActiveTabId, editorViewStates: nextEditorViewStates })
     const store = await getStore()
@@ -1661,7 +1746,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
       collapsibleListInitialized: true
     })
 
-    if (activeFilePath) {
+    if (activeFilePath && !isRecordOpenTabPath(activeFilePath)) {
       set({ activeFilePath })
 
       // 检查是否是文件夹（所有支持的文件扩展名都是文件，不是文件夹）
@@ -1760,7 +1845,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
 
     // 处理文件名兼容性问题
     let actualPath = path
-    if (hasInvalidFileNameChars(path)) {
+    if (!isAbsoluteFsPath(path) && hasInvalidFileNameChars(path)) {
       actualPath = sanitizeFilePath(path)
       // 更新活动文件路径为清理后的路径
       await get().setActiveFilePath(actualPath)
@@ -1785,9 +1870,8 @@ const useArticleStore = create<NoteState>((set, get) => ({
     }
 
     try {
-      const workspace = await getWorkspacePath()
       const pathOptions = await getFilePathOptions(actualPath)
-      if (workspace.isCustom) {
+      if (!pathOptions.baseDir) {
         localContent = await readTextFile(pathOptions.path)
       } else {
         localContent = await readTextFile(pathOptions.path, { baseDir: pathOptions.baseDir })
@@ -1847,7 +1931,9 @@ const useArticleStore = create<NoteState>((set, get) => ({
       // 本地内容加载完成，解除加载状态
       get().setLoading(false)
       // 检查文件的向量索引状态
-      get().checkFileVectorIndexed(actualPath)
+      if (!isAbsoluteFsPath(actualPath)) {
+        get().checkFileVectorIndexed(actualPath)
+      }
     } catch (error) {
       // 本地文件不存在，检查是否是远程文件
 
@@ -1902,11 +1988,10 @@ const useArticleStore = create<NoteState>((set, get) => ({
       } else if (isFileNotFound) {
         // 本地文件，创建空白文件
         await ensureDirectoryExists(actualPath)
-        const workspace = await getWorkspacePath()
         const pathOptions = await getFilePathOptions(actualPath)
 
         try {
-          if (workspace.isCustom) {
+          if (!pathOptions.baseDir) {
             await writeTextFile(pathOptions.path, '')
           } else {
             await writeTextFile(pathOptions.path, '', { baseDir: pathOptions.baseDir })
@@ -1925,7 +2010,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
     // 异步检查远程更新（使用新的 SyncManager）
     // 只有当当前读取的文件路径仍然是 actualPath 时才执行同步
     // 同时检查 activeFilePath 是否仍然匹配，防止竞态条件
-    if (autoSync && await hasNetworkConnection()) {
+    if (autoSync && !isAbsoluteFsPath(actualPath) && await hasNetworkConnection()) {
       try {
         // 在执行同步前检查路径是否仍然匹配
         const currentReadPath = get().readFilePath
@@ -1993,6 +2078,13 @@ const useArticleStore = create<NoteState>((set, get) => ({
         const itemPath = computedParentPath(item)
         if (itemPath === path && item.isFile) {
           item.sha = sha
+          debugSyncPath('article.updateFileSha.match', {
+            path,
+            itemPath,
+            name: item.name,
+            depth,
+            sha,
+          })
           return true
         }
         if (item.children && updateShaInTree(item.children, depth + 1)) {
@@ -2006,7 +2098,10 @@ const useArticleStore = create<NoteState>((set, get) => ({
       const sortedTree = get().sortFileTree(cacheTree)
       set({ fileTree: sortedTree })
     } else {
-      // 未找到匹配的文件
+      debugSyncPath('article.updateFileSha.miss', {
+        path,
+        sha,
+      })
     }
   },
 
@@ -2020,9 +2115,8 @@ const useArticleStore = create<NoteState>((set, get) => ({
         // 清除标志
         get().setJustPulledFile(false)
         // 只保存本地文件，不触发同步推送
-        const workspace = await getWorkspacePath()
         const pathOptions = await getFilePathOptions(path)
-        if (workspace.isCustom) {
+        if (!pathOptions.baseDir) {
           await writeTextFile(pathOptions.path, content)
         } else {
           await writeTextFile(pathOptions.path, content, { baseDir: pathOptions.baseDir })
@@ -2058,12 +2152,10 @@ const useArticleStore = create<NoteState>((set, get) => ({
         // 执行实际保存操作
         const savePath = path
         const saveContent = debouncedContent
-        const workspace = await getWorkspacePath()
-
         // 检查文件是否存在
         let isLocale = false
         const pathOptions = await getFilePathOptions(savePath)
-        if (workspace.isCustom) {
+        if (!pathOptions.baseDir) {
           isLocale = await exists(pathOptions.path)
         } else {
           isLocale = await exists(pathOptions.path, { baseDir: pathOptions.baseDir })
@@ -2077,13 +2169,13 @@ const useArticleStore = create<NoteState>((set, get) => ({
             dir += `${dirPath[index]}/`
             const dirOptions = await getFilePathOptions(dir)
             let dirExists = false
-            if (workspace.isCustom) {
+            if (!dirOptions.baseDir) {
               dirExists = await exists(dirOptions.path)
             } else {
               dirExists = await exists(dirOptions.path, { baseDir: dirOptions.baseDir })
             }
             if (!dirExists) {
-              if (workspace.isCustom) {
+              if (!dirOptions.baseDir) {
                 await mkdir(dirOptions.path)
               } else {
                 await mkdir(dirOptions.path, { baseDir: dirOptions.baseDir })
@@ -2093,7 +2185,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
         }
 
         // 保存文件内容
-        if (workspace.isCustom) {
+        if (!pathOptions.baseDir) {
           await writeTextFile(pathOptions.path, saveContent)
         } else {
           await writeTextFile(pathOptions.path, saveContent, { baseDir: pathOptions.baseDir })
@@ -2120,7 +2212,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
                 const parentOptions = await getFilePathOptions(parentPath)
                 let parentExists = false
                 try {
-                  if (workspace.isCustom) {
+                  if (!parentOptions.baseDir) {
                     parentExists = await exists(parentOptions.path)
                   } else {
                     parentExists = await exists(parentOptions.path, { baseDir: parentOptions.baseDir })
@@ -2144,7 +2236,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
         }
 
         // 触发防抖向量计算
-        if (savePath.endsWith('.md')) {
+        if (!isAbsoluteFsPath(savePath) && savePath.endsWith('.md')) {
           get().scheduleVectorCalculation(savePath, saveContent)
         }
 
@@ -2166,7 +2258,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
 
         // 通知文件已保存，触发同步推送（除非设置了 skipSyncOnSave）
         const shouldSkipSync = get().skipSyncOnSave
-        if (!shouldSkipSync) {
+        if (!shouldSkipSync && !isAbsoluteFsPath(savePath)) {
           emitter.emit('article-saved', { path: savePath, content: saveContent })
         }
       }, 500)

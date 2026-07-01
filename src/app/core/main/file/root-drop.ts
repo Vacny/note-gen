@@ -1,4 +1,5 @@
 import type { BaseDirectory, WriteFileOptions } from '@tauri-apps/plugin-fs'
+import { debugSyncPath } from '@/lib/sync/remote-file'
 
 type FilePathOptions = {
   path: string
@@ -23,11 +24,15 @@ type RootDropPayload =
     }
 
 export function sanitizeDroppedFileName(fileName: string) {
-  return fileName.replace(/\s+/g, '_')
+  return fileName
 }
 
 export async function writeDroppedFileToRoot(deps: RootDropDeps, payload: RootDropPayload) {
   const sanitizedFileName = sanitizeDroppedFileName(deps.fileName)
+  debugSyncPath('rootDrop.writeFile', {
+    originalFileName: deps.fileName,
+    writtenFileName: sanitizedFileName,
+  })
   const pathOptions = await deps.getFilePathOptions(sanitizedFileName)
 
   if (payload.kind === 'text') {

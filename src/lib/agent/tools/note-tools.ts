@@ -216,6 +216,56 @@ export const readMarkdownFileTool: Tool = {
   },
 }
 
+export const openMarkdownFileTool: Tool = {
+  name: 'open_markdown_file',
+  description: 'Open a specified Markdown file in the editor and load its content.',
+  category: 'note',
+  requiresConfirmation: false,
+  parameters: [
+    {
+      name: 'filePath',
+      type: 'string',
+      description: 'Path of the Markdown file to open',
+      required: true,
+    },
+  ],
+  execute: async (params): Promise<ToolResult> => {
+    try {
+      const normalizedFilePath = await ensureSafeWorkspaceRelativePath(params.filePath)
+      const { path, baseDir } = await getFilePathOptions(normalizedFilePath)
+      const content = baseDir
+        ? await readTextFile(path, { baseDir })
+        : await readTextFile(path)
+
+      const articleStore = useArticleStore.getState()
+      emitter.emit('editor-file-content-updated', {
+        path: normalizedFilePath,
+        content,
+      })
+      await articleStore.setActiveFilePath(normalizedFilePath)
+      articleStore.setCurrentArticle(content)
+      emitter.emit('external-content-update', content)
+
+      return {
+        success: true,
+        data: { filePath: normalizedFilePath, content },
+        message: `成功打开文件: ${normalizedFilePath}`,
+      }
+    } catch (error) {
+      console.error('[open_markdown_file] 打开失败', {
+        filePath: params.filePath,
+        error: String(error),
+        errorName: error instanceof Error ? error.name : 'unknown',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      })
+      return {
+        success: false,
+        error: `打开文件失败: ${error}`,
+      }
+    }
+  },
+}
+
 export const createFileTool: Tool = {
   name: 'create_file',
   description: 'Create a new file in the file system. Returns filePath (relative) and fullPath (absolute for script execution).',
@@ -295,7 +345,7 @@ export const createFileTool: Tool = {
       if (fileAlreadyExists) {
         return {
           success: false,
-          error: `文件已存在: ${filePath}。create_file 只能创建新文件，请改用 update_markdown_file 或编辑器工具`,
+          error: `文件已存在: ${filePath}。create_file 只能创建新文件，已取消本次创建；如需覆盖或更新，请让用户明确提出更新请求。`,
         }
       }
 
@@ -331,6 +381,7 @@ export const createFileTool: Tool = {
       const fullPath = `${workspacePath}/${filePath}`
 
       const articleStore = useArticleStore.getState()
+      const createdContent = params.content
       const inserted = articleStore.insertLocalEntry(filePath, false)
       await articleStore.ensurePathExpanded(filePath)
       if (!inserted) {
@@ -339,7 +390,13 @@ export const createFileTool: Tool = {
 
       // 如果是 Markdown 文件，选中并读取
       if (filePath.endsWith('.md')) {
+        emitter.emit('editor-file-content-updated', {
+          path: filePath,
+          content: createdContent,
+        })
         await articleStore.setActiveFilePath(filePath)
+        articleStore.setCurrentArticle(createdContent)
+        emitter.emit('external-content-update', createdContent)
       }
 
       return {
@@ -425,12 +482,17 @@ export const updateMarkdownFileTool: Tool = {
         await writeTextFile(path, params.content)
       }
 
-      // 如果更新的是当前打开的文件，通过 saveCurrentArticle 刷新编辑器内容
-      // 注意：不要使用 setCurrentArticle，因为它会触发 clearStack 清空撤销历史
+      const updatedContent = typeof params.content === 'string' ? params.content : String(params.content ?? '')
       const articleStore = useArticleStore.getState()
+      emitter.emit('editor-file-content-updated', {
+        path: normalizedFilePath,
+        content: updatedContent,
+      })
+
       if (articleStore.activeFilePath === normalizedFilePath) {
-        // 使用 emitter 通知编辑器内容已从外部更新
-        emitter.emit('external-content-update', params.content)
+        // Keep the store and editor in sync without routing through the debounced save path.
+        articleStore.setCurrentArticle(updatedContent)
+        emitter.emit('external-content-update', updatedContent)
       }
 
       const updatedStat = baseDir
@@ -1048,6 +1110,19 @@ export const renameFileTool: Tool = {
 
       // 获取原文件的完整路径信息
       const { path: oldPath, baseDir } = await getFilePathOptions(normalizedFilePath)
+      let currentFileContent = ''
+      if (isCurrentFile) {
+        currentFileContent = articleStore.currentArticle
+        try {
+          if (!currentFileContent) {
+            currentFileContent = baseDir
+              ? await readTextFile(oldPath, { baseDir })
+              : await readTextFile(oldPath)
+          }
+        } catch {
+          currentFileContent = articleStore.currentArticle
+        }
+      }
 
       // 构建新路径（保持原文件夹，只改文件名）
       const pathParts = normalizedFilePath.split('/')
@@ -1091,10 +1166,20 @@ export const renameFileTool: Tool = {
       }
 
       await articleStore.syncOpenTabsForPathChange(normalizedFilePath, newRelativePath)
+      const pathChangedEvent: { oldPath: string; newPath: string; content?: string } = {
+        oldPath: normalizedFilePath,
+        newPath: newRelativePath,
+      }
+      if (isCurrentFile) {
+        pathChangedEvent.content = currentFileContent
+      }
+      emitter.emit('editor-file-path-changed', pathChangedEvent)
 
       // 如果重命名的是当前打开的文件，更新 activeFilePath 并重新读取内容
       if (isCurrentFile) {
         await articleStore.setActiveFilePath(newRelativePath)
+        articleStore.setCurrentArticle(currentFileContent)
+        emitter.emit('external-content-update', currentFileContent)
       }
 
       return {
@@ -1175,6 +1260,19 @@ export const moveFileTool: Tool = {
       // 获取原文件和新文件的完整路径信息
       const { path: oldPath, baseDir: oldBaseDir } = await getFilePathOptions(normalizedFilePath)
       const { path: newPath, baseDir: newBaseDir } = await getFilePathOptions(newRelativePath)
+      let currentFileContent = ''
+      if (isCurrentFile) {
+        currentFileContent = articleStore.currentArticle
+        try {
+          if (!currentFileContent) {
+            currentFileContent = oldBaseDir
+              ? await readTextFile(oldPath, { baseDir: oldBaseDir })
+              : await readTextFile(oldPath)
+          }
+        } catch {
+          currentFileContent = articleStore.currentArticle
+        }
+      }
 
       // 检查目标位置是否已存在同名文件
       const targetExists = newBaseDir
@@ -1210,10 +1308,20 @@ export const moveFileTool: Tool = {
       }
 
       await articleStore.syncOpenTabsForPathChange(normalizedFilePath, newRelativePath)
+      const pathChangedEvent: { oldPath: string; newPath: string; content?: string } = {
+        oldPath: normalizedFilePath,
+        newPath: newRelativePath,
+      }
+      if (isCurrentFile) {
+        pathChangedEvent.content = currentFileContent
+      }
+      emitter.emit('editor-file-path-changed', pathChangedEvent)
 
       // 如果移动的是当前打开的文件，更新 activeFilePath 并重新读取内容
       if (isCurrentFile) {
         await articleStore.setActiveFilePath(newRelativePath)
+        articleStore.setCurrentArticle(currentFileContent)
+        emitter.emit('external-content-update', currentFileContent)
       }
 
       return {
@@ -1773,6 +1881,7 @@ export const renameFilesBatchTool: Tool = {
 export const noteTools: Tool[] = [
   listMarkdownFilesTool,
   readMarkdownFileTool,
+  openMarkdownFileTool,
   createFileTool,
   updateMarkdownFileTool,
   deleteMarkdownFileTool,

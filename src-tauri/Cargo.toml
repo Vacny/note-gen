@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+tauri-utils = "2"
 
 [dependencies]
 tauri = { version = "2", features = [ "macos-private-api", "protocol-asset", "image-png", "devtools", "tray-icon" ] }
@@ -57,9 +58,20 @@ tauri-plugin-process = "=2.0.0"
 jieba-rs = { version = "0.7", features = ["textrank"] }
 machine-uid = "0.5"
 regex = "1"
+font-kit = "0.14"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows = { version = "0.58", features = [
+  "Foundation",
+  "Foundation_Collections",
+  "Globalization",
+  "Graphics_Imaging",
+  "Media_Ocr",
+  "Storage",
+  "Storage_Streams",
+  "Win32_Foundation",
+  "Win32_System_Threading"
+] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }

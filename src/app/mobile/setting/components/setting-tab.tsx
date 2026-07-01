@@ -34,21 +34,21 @@ export function SettingTab() {
   }
 
   return (
-    <ul className="flex flex-col w-full">
+    <ul className="flex w-full flex-col p-1">
       {
         config.map((item, index) => {
           // 如果是分隔符字符串，渲染分隔线
           if (typeof item === 'string') {
             return (
               <li key={`separator-${index}`}>
-                <div className="h-0.5 bg-muted my-2" />
+                <div className="mx-3 my-1 h-px bg-border/60" />
               </li>
             )
           }
           
           return (
             <li
-              className="flex items-center gap-2 p-4 w-full justify-between active:bg-accent"
+              className="flex w-full items-center justify-between gap-2 rounded-2xl px-3 py-3 text-[hsl(var(--component-inactive-color))] transition-[background-color,color] duration-200 active:bg-[hsl(var(--component-active-bg))] active:text-foreground"
               key={item.anchor}
               onClick={() => handleNavigation(item.anchor)}
             >

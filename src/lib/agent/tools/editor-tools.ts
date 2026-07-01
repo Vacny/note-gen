@@ -284,6 +284,14 @@ export const insertAtCursorTool: Tool = {
   execute: async (params): Promise<ToolResult> => {
     return new Promise((resolve) => {
       let settled = false
+      const articleStore = useArticleStore.getState()
+      const activeFilePath = articleStore.activeFilePath
+      const savedViewState = activeFilePath
+        ? articleStore.getEditorViewState(activeFilePath)
+        : null
+      const cursorPosition = savedViewState
+        ? Math.max(savedViewState.selectionFrom, savedViewState.selectionTo)
+        : undefined
 
       const finalize = (result: ToolResult) => {
         if (settled) {
@@ -299,6 +307,7 @@ export const insertAtCursorTool: Tool = {
 
       emitter.emit('editor-insert', {
         content: params.content,
+        position: cursorPosition,
         resolve: (result) => {
           clearTimeout(timeoutId)
           finalize({

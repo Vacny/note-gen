@@ -113,7 +113,7 @@ export function buildShellCommand(
 
   // 检查是否所有参数都是绝对路径
   // 如果是绝对路径，需要 cd 到脚本所在目录，但用 NODE_PATH 指向模块目录
-  const allAbsolutePaths = args.every(arg => arg.startsWith('/'))
+  const allAbsolutePaths = args.length > 0 && args.every(arg => arg.startsWith('/'))
 
   if (allAbsolutePaths) {
     // 获取第一个绝对路径的目录作为工作目录

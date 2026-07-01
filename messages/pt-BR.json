@@ -3,45 +3,18 @@
     "title": "Gerador de Notas",
     "description": "Seu assistente de anotações com IA"
   },
-  "common": {
-    "save": "Salvar",
-    "cancel": "Cancelar",
-    "delete": "Excluir",
-    "edit": "Editar",
-    "create": "Criar",
-    "theme": "Tema",
-    "light": "Claro",
-    "dark": "Escuro",
-    "system": "Sistema",
-    "pin": "Fixar",
-    "unpin": "Desafixar",
-    "settings": "Configurações",
-    "back": "Voltar",
-    "sync": "Sincronizar",
-    "language": "Idioma",
-    "confirm": "Confirmar",
-    "selectPrompt": "Selecionar Prompt",
-    "prompt": "Instrução",
-    "success": "Sucesso",
-    "error": "Falha",
-    "defaultFileName": "Sem Título",
-    "restartToApply": ", por favor reinicie o aplicativo para que a configuração entre em vigor",
-    "close": "Fechar",
+  "tray": {
+    "quickRecord": "Registro rápido",
+    "moreRecord": "Mais registros",
     "open": "Abrir",
-    "add": "Adicionar",
-    "remove": "Remover",
-    "search": "Pesquisar",
-    "filter": "Filtrar",
-    "sort": "Ordenar",
-    "export": "Exportar",
-    "import": "Importar",
-    "refresh": "Atualizar",
-    "loading": "Carregando",
-    "warning": "Aviso",
-    "info": "Informação",
-    "unsaved": "Não salvo",
-    "saving": "Salvando",
-    "configureSync": "Configurar Sincronização"
+    "showMain": "Mostrar janela principal",
+    "newNote": "Nova nota",
+    "newFolder": "Nova pasta",
+    "settings": "Configurações",
+    "window": "Janela",
+    "pinToggle": "Fixar/Desafixar",
+    "hideWindow": "Ocultar na bandeja",
+    "quit": "Sair do NoteGen"
   },
   "settings": {
     "defaultModels": {
@@ -83,6 +56,24 @@
           "title": "Tamanho do Texto dos Registros",
           "desc": "Ajuste o tamanho do texto dos itens de registro na lista de registros"
         },
+        "fontFamily": {
+          "title": "Fonte do aplicativo",
+          "desc": "No desktop, use fontes instaladas no sistema; no celular, use famílias genéricas compatíveis com a plataforma.",
+          "placeholder": "Selecionar fonte",
+          "loading": "Carregando fontes do sistema...",
+          "noSystemFonts": "Esta plataforma não expõe a lista completa de fontes do sistema",
+          "groups": {
+            "default": "Padrão",
+            "generic": "Fontes genéricas",
+            "system": "Fontes do sistema"
+          },
+          "options": {
+            "system": "Padrão do sistema",
+            "sansSerif": "Sem serifa",
+            "serif": "Serifada",
+            "monospace": "Monoespaçada"
+          }
+        },
         "customCss": {
           "title": "CSS Personalizado",
           "desc": "Adicione estilos CSS personalizados para substituir os estilos padrão do aplicativo",
@@ -120,13 +111,9 @@
           "import": {
             "title": "Importar configuração",
             "button": "Importar",
-            "placeholder": "Cole aqui a configuração para importar",
-            "error": "Falha ao importar: formato inválido",
-            "success": "Importado com sucesso"
+            "placeholder": "Cole aqui a configuração para importar"
           },
           "presets": {
-            "title": "Predefinições",
-            "desc": "Escolha uma paleta de cores pronta",
             "apply": "Aplicar",
             "reset": {
               "name": "Restaurar padrão"
@@ -457,48 +444,84 @@
     },
     "about": {
       "title": "Sobre",
-      "desc": "Um assistente de anotações focado em registro e escrita.",
+      "desc": "Registre primeiro, organize depois.",
+      "resourcesTitle": "Recursos e suporte",
+      "resourcesDesc": "Abra documentos, notas de versão ou canais da comunidade para feedback.",
+      "licenseText": "Código aberto · GitHub · GPL-3.0",
       "version": "NoteGen v{version}",
       "checkReleases": "Verificar Histórico de Lançamentos",
       "language": "Idioma",
       "checkUpdate": "Verificar Atualizações",
       "checkError": "Falha ao verificar atualizações",
+      "releaseLoadError": "Falha ao carregar o histórico de atualizações",
       "updateAvailable": "Atualizar para nova versão",
+      "updateIgnored": "Esta versão está ignorada",
       "updateDownloading": "Atualizando {downloaded} / {contentLength}",
       "updateInstalled": "Reiniciar aplicativo",
       "noUpdate": "A versão atual é a mais recente",
+      "lastCheckedAt": "Última verificação: {time}",
+      "lastCheckedNever": "Atualizações ainda não foram verificadas",
+      "releasePublishedAt": "Publicado em {date}",
+      "releaseHistoryTitle": "Histórico de atualizações",
+      "releaseHistoryDesc": "De v{currentVersion} até v{latestVersion}, {count} versões no total.",
+      "releaseHistoryEmpty": "Nenhum histórico de atualização foi encontrado entre a versão atual e a mais recente.",
+      "releasePrerelease": "Pré-lançamento",
+      "releaseNoNotes": "Nenhuma nota de versão foi fornecida para esta versão.",
+      "retryReleaseNotes": "Recarregar",
       "ignoreVersion": "Ignorar esta versão",
       "ignoreVersionSuccess": "Esta atualização de versão foi ignorada",
+      "ignoredVersionTitle": "v{version} ignorada",
+      "ignoredVersionDesc": "Esta versão não avisará novamente. Você pode restaurar o aviso e continuar a instalação.",
+      "restoreIgnoredVersion": "Restaurar aviso",
+      "restoreIgnoredVersionSuccess": "O aviso de atualização desta versão foi restaurado",
+      "sections": {
+        "appInfo": {
+          "title": "Informações do app",
+          "desc": "Veja a versão atual, o status de atualização e o resumo do app."
+        },
+        "updates": {
+          "title": "Atualizações de versão",
+          "desc": "Abra as notas da versão mais recente e o histórico de atualizações."
+        },
+        "docs": {
+          "title": "Documentos e configuração",
+          "desc": "Aprenda sobre sincronização, backup e armazenamento de dados."
+        },
+        "community": {
+          "title": "Feedback e comunidade",
+          "desc": "Reporte problemas, veja o código-fonte ou participe de discussões públicas."
+        }
+      },
       "items": {
         "home": {
           "title": "Início",
           "buttonName": "Abrir",
-          "desc": "Visite o site para saber mais sobre o NoteGen."
+          "desc": "Abra o site oficial."
         },
         "guide": {
-          "title": "Guia",
+          "title": "Guia de sincronização",
           "buttonName": "Abrir",
-          "desc": "Veja o guia de configuração, aprenda como configurar modelos, sincronização e outras informações."
+          "desc": "Configure sync com Git, S3 e WebDAV."
         },
         "github": {
           "title": "GitHub",
           "buttonName": "Ver",
-          "desc": "Se o NoteGen te ajuda, por favor, dê uma estrela para incentivar!"
+          "desc": "Veja o código e contribua."
         },
         "releases": {
           "title": "Log de Atualizações",
           "buttonName": "Ver",
-          "desc": "Veja o log de atualizações, saiba mais sobre as novidades do NoteGen."
+          "desc": "Veja as atualizações."
         },
         "issues": {
           "title": "Feedback de Problemas",
           "buttonName": "Comentários",
-          "desc": "Se você encontrar um bug no NoteGen, por favor, reporte aqui."
+          "desc": "Reporte bugs e problemas."
         },
         "discussions": {
           "title": "Discussões",
           "buttonName": "Discutir",
-          "desc": "Se você quiser discutir com o autor ou outros usuários, pode se juntar ao grupo de discussão."
+          "desc": "Participe das discussões."
         }
       }
     },
@@ -508,7 +531,6 @@
       "stats": {
         "total": "Total de Memórias",
         "preferences": "Preferências",
-        "knowledge": "Conhecimento",
         "memories": "记忆"
       },
       "form": {
@@ -517,7 +539,6 @@
         "contentPlaceholder": "ex: Prefiro respostas em chinês, sou um especialista em React...",
         "categoryLabel": "Tipo",
         "preferenceDesc": "Preferência (idioma, formato, estilo, etc.)",
-        "knowledgeDesc": "Conhecimento (fatos, experiência, especialização, etc.)",
         "save": "Salvar Memória",
         "saving": "Salvando...",
         "categoryDescription": "记忆分为两种类型：",
@@ -532,13 +553,11 @@
       "empty": "Nenhuma memória ainda, adicione sua primeira memória!",
       "emptyHint": "Você pode adicionar memórias manualmente ou usar frases como \"por favor, lembre-se\" ou \"lembre-se disso\" nas conversas para que a IA crie memórias automaticamente.",
       "preference": "Preferência",
-      "knowledge": "Conhecimento",
       "replaced": "Substituído",
       "accessCount": "Acessado {count} vezes",
       "tabs": {
         "all": "Todas",
         "preference": "Preferências",
-        "knowledge": "Conhecimento",
         "memory": "记忆"
       },
       "success": "Sucesso",
@@ -562,7 +581,6 @@
       "tooltip": "Usar modelo principal",
       "noModel": "Não usar",
       "placeholder": "Por favor, selecione ou procure por modelos",
-      "main": "Modelo principal",
       "options": {
         "primaryModel": {
           "title": "Modelo principal",
@@ -583,10 +601,6 @@
         "commit": {
           "title": "Gerar Mensagem de Commit Automaticamente",
           "desc": "Usado para gerar automaticamente mensagens de commit Git, gerando inteligentemente mensagens de commit descritivas com base nas alterações do conteúdo do arquivo."
-        },
-        "translate": {
-          "title": "Tradução",
-          "desc": "Usado para cenários de tradução de conteúdo."
         },
         "embedding": {
           "title": "Modelo de Embedding",
@@ -636,23 +650,16 @@
       }
     },
     "readAloud": {
-      "title": "Ler em Voz Alta",
-      "desc": "Configure o comportamento da leitura em voz alta. As vozes do sistema são preferidas por padrão, e a voz de modelo funciona como aprimoramento.",
+      "title": "Leitura em voz alta",
+      "desc": "Aqui você pode configurar opções de leitura em voz alta para reproduzir o conteúdo do chat em áudio.",
       "options": {
-        "mode": {
-          "title": "Modo",
-          "desc": "O modo automático prefere as vozes do sistema e só tenta um modelo quando a fala local não está disponível.",
-          "auto": "Automático (Recomendado)",
-          "local": "Somente local",
-          "model": "Somente modelo"
-        },
         "audioModel": {
-          "title": "Modelo de Leitura",
-          "desc": "Opcional. Configure um modelo para aprimorar o modo automático ou usar o modo somente modelo."
+          "title": "Modelo de áudio",
+          "desc": "Escolha o modelo de IA para texto-para-fala (TTS). Suporta diferentes vozes e parâmetros."
         },
         "speed": {
           "title": "Velocidade",
-          "desc": "Ajuste a velocidade da leitura entre 0.5x e 2x, com 1x como padrão."
+          "desc": "Ajuste a velocidade da voz (de 0,25× a 4×). O padrão é 1×."
         }
       }
     },
@@ -672,7 +679,17 @@
       "optimizing": "Otimizando...",
       "optimizeSuccess": "Prompt otimizado com sucesso",
       "optimizeFailed": "Falha ao otimizar o prompt, por favor, tente novamente mais tarde",
-      "noContentToOptimize": "Por favor, insira o conteúdo do prompt primeiro"
+      "noContentToOptimize": "Por favor, insira o conteúdo do prompt primeiro",
+      "systemPrompt": {
+        "title": "Prompt do sistema",
+        "desc": "Opção avançada: edite a seção de regras estáticas do prompt de sistema do Agent. Mudanças frequentes não são recomendadas.",
+        "label": "Conteúdo do prompt do sistema",
+        "placeholder": "Insira a identidade do Agent, restrições de chamada de ferramentas e Core Rules.",
+        "help": "Esta configuração avançada afeta os limites de comportamento do Agent. Listas de ferramentas, arquivo atual, seleção, Skills e contexto MCP continuam sendo anexados dinamicamente pelo sistema.",
+        "reset": "Restaurar padrão",
+        "saveSuccess": "Prompt do sistema salvo",
+        "resetSuccess": "Prompt do sistema restaurado para o padrão"
+      }
     },
     "sync": {
       "title": "Sincronização",
@@ -682,6 +699,8 @@
       "settings": "Configurações de Sincronização",
       "platformDesc": "Configure o Token e informações do repositório para habilitar a sincronização",
       "moreSettings": "Mais Configurações",
+      "noteSettings": "Configurações de notas",
+      "recordConfigSettings": "Registros e configurações",
       "repoStatus": "Status do Repositório",
       "syncRepo": "Repositório de Sincronização",
       "syncRepoDesc": "Sincronizar arquivos markdown na escrita",
@@ -707,7 +726,7 @@
       "imageRepoSetting": "Ativar Hospedagem de Imagens",
       "imageRepoSettingDesc": "Você já configurou um repositório de imagens, pode escolher usar o repositório de imagens ou usar o armazenamento local.",
       "jsdelivrSetting": "jsDelivr",
-      "autoSyncDesc": "Quando habilitado, o editor sincronizará automaticamente com o GitHub 10 segundos após a interrupção da entrada",
+      "autoSyncDesc": "Depois que as edições da nota pararem, sincroniza notas automaticamente com o provedor atual usando o atraso selecionado",
       "giteeAutoSyncDesc": "Quando habilitado, o editor sincronizará automaticamente com o Gitee 10 segundos após a interrupção da entrada",
       "customSyncRepo": "Nome Personalizado do Repositório de Sincronização",
       "customSyncRepoDesc": "Deixe em branco para usar o nome do repositório padrão",
@@ -784,7 +803,46 @@
         "saveConfig": "Salvar Configuração",
         "saving": "Salvando"
       },
-      "autoSync": "Sincronização Automática",
+      "autoSync": "Sincronizar notas automaticamente",
+      "autoDataSync": "Sincronizar registros e configurações automaticamente",
+      "autoDataSyncDesc": "Envia automaticamente alterações de registros e configurações para o provedor atual, em ordem. Nada é enviado até que um provedor seja configurado",
+      "autoDataSyncStatusOff": "Sincronização automática desativada",
+      "autoDataSyncStatusWaitingProvider": "Aguardando um provedor de sincronização",
+      "autoDataSyncStatusQueued": "Na fila de sincronização",
+      "autoDataSyncStatusManualSyncing": "Sincronização manual em andamento",
+      "autoDataSyncStatusSyncing": "Sincronização automática em andamento",
+      "autoDataSyncStatusFailed": "Falha na sincronização",
+      "autoDataSyncStatusConflict": "Conflito de sincronização",
+      "autoDataSyncStatusIdle": "Sincronizado",
+      "autoDataSyncStatusTitle": "Sincronização de registros e configurações",
+      "autoDataSyncStatusProvider": "Provedor",
+      "autoDataSyncStatusPending": "Pendentes",
+      "autoDataSyncStatusLastSuccess": "Último sucesso",
+      "autoDataSyncStatusError": "Erro",
+      "autoDataSyncRetry": "Tentar novamente",
+      "autoDataSyncOpenSettings": "Abrir configurações",
+      "autoDataSyncNever": "Nunca",
+      "autoDataSyncConflictTitle": "Resolver conflito de sincronização",
+      "autoDataSyncConflictDesc": "O conteúdo remoto foi atualizado por outro dispositivo enquanto este dispositivo ainda tem alterações locais. Escolha qual lado manter.",
+      "autoDataSyncConflictMerge": "Mesclar os dois lados",
+      "autoDataSyncConflictMergeDesc": "A mesclagem mantém os registros adicionados em ambos os lados. Para o mesmo registro, vence o timestamp mais recente; as configurações são mescladas usando as regras de privacidade atuais.",
+      "autoDataSyncConflictPullRemote": "Baixar remoto sobre local",
+      "autoDataSyncConflictUploadLocal": "Enviar local sobre remoto",
+      "autoDataSyncConflictLater": "Resolver depois",
+      "autoDataSyncConflictPullConfirm": "Baixar os dados remotos substituirá registros e configurações locais ainda não sincronizados. Continuar?",
+      "autoDataSyncConflictUploadConfirm": "Enviar os dados locais substituirá os registros e configurações remotos mais recentes. Alterações de outros dispositivos podem ser perdidas. Continuar?",
+      "autoDataSyncConflictResolved": "Conflito de sincronização resolvido",
+      "autoDataSyncConflictResolveFailed": "Falha ao resolver conflito de sincronização",
+      "autoDataSyncInitialSuccess": "Inicialização da sincronização automática concluída",
+      "autoDataSyncInitialFailed": "Falha ao inicializar a sincronização automática",
+      "autoDataSyncInitialTitle": "Escolha a direção da primeira sincronização automática",
+      "autoDataSyncInitialDesc": "Ao trocar de dispositivo ou ativar pela primeira vez, envie os dados locais ou puxe os registros e configurações remotos mais recentes para evitar sobrescrever o conteúdo errado.",
+      "autoDataSyncInitialUploadLocal": "Enviar dados locais",
+      "autoDataSyncInitialPullRemote": "Puxar remoto mais recente",
+      "autoDataSyncInitialLater": "Resolver depois",
+      "autoDataSyncPrivacyTitle": "Não sincronizar configurações sensíveis",
+      "autoDataSyncPrivacyDesc": "Quando ativado, access tokens, senhas, segredos, seleção do provedor de sincronização, configurações de hospedagem de imagens, configurações MCP, caminhos de workspace e outras configurações privadas ou específicas do dispositivo são excluídas.",
+      "autoDataSyncPrivacyDisableConfirm": "Ao desativar, access tokens, senhas, segredos e outras configurações sensíveis ou específicas do dispositivo podem ser enviadas ao provedor de sincronização remoto e sincronizadas com outros dispositivos. Deseja desativar?",
       "autoSyncOptions": {
         "placeholder": "Selecione o tempo de sincronização automática",
         "disabled": "Desabilitado",
@@ -871,9 +929,7 @@
         },
         "createNewRepo": "Criar Novo Repositório",
         "recheckRepo": "Verificar Novamente",
-        "recheckingRepo": "Verificando...",
-        "createRepo": "Criar Repositório",
-        "creatingRepo": "Criando..."
+        "recheckingRepo": "Verificando..."
       },
       "s3": {
         "title": "Armazenamento de Objetos S3",
@@ -915,22 +971,25 @@
     },
     "imageMethod": {
       "title": "Reconhecimento de Imagem",
-      "desc": "Aqui, você pode configurar definições relacionadas ao reconhecimento de imagem, suportando OCR e VLM de duas maneiras.",
-      "setPrimary": "Definir como padrão",
-      "isPrimary": "{type} foi definido como padrão",
-      "ocr": {
-        "title": "OCR",
-        "languagePacks": "Pacote de Idioma",
-        "checkModels": "Aqui você pode pesquisar todos os modelos",
-        "modelInstruction": "Separados por vírgula, por exemplo: eng,chi_sim"
-      },
-      "vlm": {
-        "title": "Modelo de Linguagem Visual",
-        "desc": "Use o modelo de linguagem visual para reconhecer o conteúdo da imagem."
-      },
+      "desc": "As imagens são reconhecidas por OCR do sistema por padrão. Se um VLM estiver configurado, ele será tentado primeiro e voltará para OCR em caso de falha.",
       "enable": {
         "title": "Ativar reconhecimento de imagens",
         "desc": "Quando ativado, ao registrar uma captura de tela ou inserir uma imagem, o reconhecimento será feito automaticamente. Quando desativado, a etapa de reconhecimento de imagem será ignorada."
+      },
+      "ocr": {
+        "title": "OCR do Sistema",
+        "desc": "Usa por padrão a capacidade de OCR fornecida pelo sistema atual.",
+        "noProviders": "Nenhum mecanismo OCR integrado para esta plataforma",
+        "unknownVersion": "Versão desconhecida",
+        "ready": "Disponível",
+        "unavailable": "Indisponível",
+        "provider": "Mecanismo atual"
+      },
+      "vlm": {
+        "title": "Aprimoramento VLM (Opcional)",
+        "desc": "Depois de selecionar um modelo de linguagem visual, as imagens são reconhecidas primeiro pelo VLM. Se o modelo estiver indisponível, falhar ou não retornar conteúdo, o aplicativo ainda volta para o OCR do sistema.",
+        "noModel": "Nenhum modelo por padrão",
+        "clearModel": "Limpar modelo VLM"
       }
     },
     "backupSync": {
@@ -1210,10 +1269,6 @@
           "type": "Modelo de Conclusão",
           "desc": "Conclusão inline de IA para editor Markdown, semelhante ao GitHub Copilot, gera rapidamente conteúdo de continuação"
         },
-        "commit": {
-          "title": "Mensagem de Commit",
-          "desc": "Usado para gerar automaticamente mensagens de commit Git, gerando inteligentemente mensagens de commit descritivas com base nas alterações do conteúdo do arquivo."
-        },
         "poweredBy": "Fornecido por SiliconFlow"
       },
       "connectionFailed": "Falha na conexão",
@@ -1226,12 +1281,6 @@
       "newModel": "Novo modelo",
       "checkConnection": "Testar conexão",
       "model": "Modelo"
-    },
-    "ocr": {
-      "title": "OCR",
-      "languagePacks": "Pacotes de Idioma",
-      "checkModels": "Verifique todos os modelos aqui",
-      "modelInstruction": "Separe com vírgulas, ex: eng,chi_sim"
     },
     "file": {
       "title": "Configurações de Arquivo",
@@ -1278,10 +1327,235 @@
       "resetDefaults": "Redefinir",
       "clear": "Limpar",
       "noShortcut": "Nenhum Atalho",
+      "recording": "Pressione um novo atalho",
+      "conflictEditor": "Conflita com o atalho do editor \"{name}\"",
+      "conflictGlobal": "Conflita com o atalho global \"{name}\"",
+      "globalShortcuts": {
+        "title": "Atalhos globais",
+        "desc": "Esses atalhos são registrados pelo sistema e podem funcionar quando o NoteGen não está em foco."
+      },
+      "editorShortcuts": {
+        "title": "Atalhos do editor",
+        "desc": "Esses atalhos funcionam apenas quando o editor Markdown está em foco.",
+        "suggested": "Sugestão: {shortcut}",
+        "groups": {
+          "basic": "Edição básica",
+          "format": "Formatação",
+          "ai": "IA",
+          "table": "Tabela",
+          "insert": "Inserir"
+        },
+        "commands": {
+          "undo": {
+            "title": "Desfazer",
+            "desc": "Desfaz a edição anterior."
+          },
+          "redo": {
+            "title": "Refazer",
+            "desc": "Refaz a edição desfeita."
+          },
+          "setParagraph": {
+            "title": "Parágrafo",
+            "desc": "Define o bloco atual como parágrafo."
+          },
+          "toggleHeading1": {
+            "title": "Título 1",
+            "desc": "Alterna o título de nível 1."
+          },
+          "toggleHeading2": {
+            "title": "Título 2",
+            "desc": "Alterna o título de nível 2."
+          },
+          "toggleHeading3": {
+            "title": "Título 3",
+            "desc": "Alterna o título de nível 3."
+          },
+          "toggleHeading4": {
+            "title": "Título 4",
+            "desc": "Alterna o título de nível 4."
+          },
+          "toggleHeading5": {
+            "title": "Título 5",
+            "desc": "Alterna o título de nível 5."
+          },
+          "toggleHeading6": {
+            "title": "Título 6",
+            "desc": "Alterna o título de nível 6."
+          },
+          "openSearch": {
+            "title": "Localizar / Substituir",
+            "desc": "Abre a busca do editor."
+          },
+          "openSlashCommand": {
+            "title": "Menu Slash",
+            "desc": "Abre o menu de comandos na posição do cursor."
+          },
+          "toggleOutline": {
+            "title": "Sumário",
+            "desc": "Mostra ou oculta o sumário do documento."
+          },
+          "toggleBold": {
+            "title": "Negrito",
+            "desc": "Alterna negrito no texto selecionado ou na próxima digitação."
+          },
+          "toggleItalic": {
+            "title": "Itálico",
+            "desc": "Alterna itálico."
+          },
+          "toggleStrike": {
+            "title": "Tachado",
+            "desc": "Alterna tachado."
+          },
+          "toggleUnderline": {
+            "title": "Sublinhado",
+            "desc": "Alterna sublinhado."
+          },
+          "toggleInlineCode": {
+            "title": "Código inline",
+            "desc": "Alterna código inline."
+          },
+          "toggleHighlight": {
+            "title": "Destaque",
+            "desc": "Alterna destaque."
+          },
+          "openLinkInput": {
+            "title": "Link",
+            "desc": "Abre o campo de link."
+          },
+          "toggleBlockquote": {
+            "title": "Citação",
+            "desc": "Alterna bloco de citação."
+          },
+          "toggleBulletList": {
+            "title": "Lista com marcadores",
+            "desc": "Alterna lista com marcadores."
+          },
+          "toggleOrderedList": {
+            "title": "Lista numerada",
+            "desc": "Alterna lista numerada."
+          },
+          "toggleTaskList": {
+            "title": "Lista de tarefas",
+            "desc": "Alterna lista de tarefas."
+          },
+          "toggleCodeBlock": {
+            "title": "Bloco de código",
+            "desc": "Alterna bloco de código."
+          },
+          "quoteToChat": {
+            "title": "Citar no chat",
+            "desc": "Envia o conteúdo selecionado para a área de citação do chat com IA."
+          },
+          "openAiMenu": {
+            "title": "Menu de ações de IA",
+            "desc": "Abre ações de IA para o texto selecionado."
+          },
+          "aiContinue": {
+            "title": "Continuar com IA",
+            "desc": "Continua escrevendo a partir do conteúdo antes do cursor."
+          },
+          "aiPolish": {
+            "title": "Polir com IA",
+            "desc": "Polir o texto selecionado."
+          },
+          "aiConcise": {
+            "title": "Resumir com IA",
+            "desc": "Deixa o texto selecionado mais conciso."
+          },
+          "aiExpand": {
+            "title": "Expandir com IA",
+            "desc": "Expande o texto selecionado."
+          },
+          "aiTranslate": {
+            "title": "Traduzir com IA",
+            "desc": "Abre ações de tradução para o texto selecionado."
+          },
+          "acceptAiSuggestion": {
+            "title": "Aceitar sugestão de IA",
+            "desc": "Aceita a sugestão atual quando o painel de IA está aberto."
+          },
+          "rejectAiSuggestion": {
+            "title": "Rejeitar sugestão de IA",
+            "desc": "Restaura o texto original quando o painel de IA está aberto."
+          },
+          "abortAiGeneration": {
+            "title": "Interromper geração de IA",
+            "desc": "Interrompe a geração de IA atual."
+          },
+          "insertTable": {
+            "title": "Inserir tabela",
+            "desc": "Insere uma tabela padrão com 3 colunas."
+          },
+          "addColumnBefore": {
+            "title": "Inserir coluna à esquerda",
+            "desc": "Insere uma coluna antes da célula atual."
+          },
+          "addColumnAfter": {
+            "title": "Inserir coluna à direita",
+            "desc": "Insere uma coluna depois da célula atual."
+          },
+          "addRowBefore": {
+            "title": "Inserir linha acima",
+            "desc": "Insere uma linha acima da célula atual."
+          },
+          "addRowAfter": {
+            "title": "Inserir linha abaixo",
+            "desc": "Insere uma linha abaixo da célula atual."
+          },
+          "deleteColumn": {
+            "title": "Excluir coluna",
+            "desc": "Exclui a coluna atual da tabela."
+          },
+          "deleteRow": {
+            "title": "Excluir linha",
+            "desc": "Exclui a linha atual da tabela."
+          },
+          "deleteTable": {
+            "title": "Excluir tabela",
+            "desc": "Exclui a tabela atual."
+          },
+          "alignLeft": {
+            "title": "Alinhar à esquerda",
+            "desc": "Alinha texto ou célula da tabela à esquerda."
+          },
+          "alignCenter": {
+            "title": "Centralizar",
+            "desc": "Centraliza texto ou célula da tabela."
+          },
+          "alignRight": {
+            "title": "Alinhar à direita",
+            "desc": "Alinha texto ou célula da tabela à direita."
+          },
+          "insertImage": {
+            "title": "Inserir imagem",
+            "desc": "Escolhe e insere uma imagem local."
+          },
+          "insertInlineMath": {
+            "title": "Inserir fórmula inline",
+            "desc": "Abre a entrada LaTeX inline."
+          },
+          "insertBlockMath": {
+            "title": "Inserir fórmula em bloco",
+            "desc": "Abre a entrada LaTeX em bloco."
+          },
+          "insertMermaid": {
+            "title": "Inserir diagrama Mermaid",
+            "desc": "Insere um fluxograma Mermaid padrão."
+          },
+          "insertHorizontalRule": {
+            "title": "Inserir divisor",
+            "desc": "Insere uma linha horizontal no cursor."
+          }
+        }
+      },
       "shortcuts": {
         "openWindow": {
           "title": "Abrir/Ocultar Janela",
           "desc": "Abrir/Ocultar a janela principal."
+        },
+        "screenshotRecord": {
+          "title": "Registro por captura",
+          "desc": "Abrir registro por captura e salvar uma janela ou tela recortada."
         },
         "quickRecordText": {
           "title": "Gravação Rápida de Texto",
@@ -1343,31 +1617,14 @@
       "deleteSkillDesc": "Tem certeza de que deseja excluir esta Skill? Esta ação não pode ser desfeita.",
       "skillDeleted": "Skill excluída com sucesso"
     },
-    "readAloud": {
-      "title": "Leitura em voz alta",
-      "desc": "Aqui você pode configurar opções de leitura em voz alta para reproduzir o conteúdo do chat em áudio.",
-      "noModel": "Não usar modelo",
-      "alert": {
-        "title": "Você está usando a leitura do sistema",
-        "description": "Nenhum modelo de áudio foi configurado. Usando a leitura do próprio sistema."
-      },
-      "options": {
-        "audioModel": {
-          "title": "Modelo de áudio",
-          "desc": "Escolha o modelo de IA para texto-para-fala (TTS). Suporta diferentes vozes e parâmetros."
-        },
-        "speed": {
-          "title": "Velocidade",
-          "desc": "Ajuste a velocidade da voz (de 0,25× a 4×). O padrão é 1×."
-        }
-      }
-    }
+    "title": "Configurações"
   },
   "record": {
     "trash": {
       "title": "Esvaziar Lixeira",
       "confirm": "Tem certeza de que deseja esvaziar a lixeira?",
       "records": "{count} registros podem ser restaurados",
+      "syncWarning": "Esta operação será sincronizada com outros dispositivos.",
       "empty": "Esvaziar",
       "close": "Fechar Lixeira"
     },
@@ -1381,6 +1638,72 @@
       "record": "Gravar",
       "detected": "Detectado",
       "save": "Salvar"
+    },
+    "capture": {
+      "saveTarget": "Salvar em",
+      "saveTargetPlaceholder": "Selecionar etiqueta",
+      "saved": "Registro salvo",
+      "savedWithType": "{type} salvo. Você pode continuar editando ou organizar.",
+      "viewRecord": "Ver",
+      "processingInBackground": "Processando em segundo plano. Ele aparecerá na lista de registros quando terminar.",
+      "elapsedSeconds": "{seconds}s",
+      "importAudio": "Importar áudio",
+      "smartClipboard": "Área de transferência",
+      "clipboardEmpty": "Área de transferência vazia",
+      "clipboardEmptyDescription": "Copie um texto ou link e tente novamente.",
+      "linkFetchFailed": "Falha ao buscar conteúdo da página",
+      "fileUnsupportedSaved": "Arquivo salvo",
+      "fileUnsupportedDescription": "A extração de texto não é compatível com este tipo de arquivo, então ele foi salvo como anexo.",
+      "fileUnsupportedContent": "A extração de texto não é compatível com este tipo de arquivo. O caminho original foi salvo.",
+      "fileReadFailed": "Falha ao ler o texto do arquivo. O caminho original foi salvo.",
+      "imageUploadFallback": "Imagem salva localmente",
+      "imageUploadFallbackDescription": "Falha no upload para o host de imagens, então a imagem local foi mantida.",
+      "screenshotRecordTitle": "Registro por captura",
+      "screenshotCapturing": "Capturando janelas disponíveis...",
+      "screenshotCaptureFailed": "Não foi possível capturar a tela",
+      "screenshotPermissionHint": "Verifique a permissão de gravação de tela do sistema e tente novamente.",
+      "screenshotEmpty": "Nenhuma janela capturável encontrada",
+      "screenshotSourceCount": "{count} janelas disponíveis",
+      "screenshotNoSource": "Nenhuma janela disponível",
+      "screenshotRefresh": "Atualizar",
+      "retry": "Tentar novamente",
+      "screenshotSave": "Salvar captura",
+      "screenshotSaveAndRecognize": "Salvar e reconhecer",
+      "screenshotSaveOnly": "Salvar apenas a captura",
+      "screenshotSaveFailed": "Falha ao salvar registro de captura",
+      "screenshotRecognitionPending": "Captura salva. Reconhecimento de imagem em andamento...",
+      "screenshotRecognitionComplete": "Reconhecimento de imagem concluído",
+      "screenshotRecognitionFailed": "Falha no reconhecimento de imagem",
+      "screenshotRecognitionAuto": "Automático",
+      "screenshotRecognitionOff": "Reconhecimento desativado",
+      "screenshotRecognitionMethod": "Reconhecimento",
+      "screenshotNoText": "Nenhum texto foi reconhecido nesta captura",
+      "screenshotSavedOnly": "Imagem salva sem reconhecimento",
+      "screenshotRecognizing": "Reconhecendo...",
+      "screenshotRecognizeAgain": "Reconhecer novamente",
+      "screenshotAiDescription": "Descrição da IA",
+      "screenshotOcrContent": "Conteúdo OCR",
+      "screenshotCopyImageLink": "Copiar link da imagem",
+      "screenshotShowInFolder": "Mostrar na pasta",
+      "screenshotKeyboardHint": "Enter salva, Esc cancela, setas alternam a fonte.",
+      "screenshotModeWindow": "Janela",
+      "screenshotModeRegion": "Região",
+      "screenshotModeDisplay": "Tela"
+    },
+    "syncStatus": {
+      "checking_remote": "Verificando atualizações remotas",
+      "queued": "Na fila de sincronização",
+      "uploading": "Enviando conteúdo de sincronização",
+      "uploadingRecords": "Enviando registros",
+      "uploadingSettings": "Enviando configurações",
+      "downloading": "Baixando conteúdo remoto",
+      "failed": "Sincronização falhou",
+      "conflict": "Conflito de sincronização detectado",
+      "waiting_provider": "Aguardando provedor de sincronização",
+      "synced": "Sincronizado",
+      "queuedDesc": "{count} tarefas de sincronização pendentes",
+      "retry": "Tentar novamente",
+      "settings": "Configurações"
     },
     "mark": {
       "empty": "Nenhum registro ainda",
@@ -1407,7 +1730,9 @@
       "content": "Conteúdo",
       "progress": {
         "cacheImage": "Armazenando imagem em cache",
+        "vlm": "Reconhecimento VLM",
         "ocr": "Reconhecimento OCR",
+        "description": "Gerando descrição",
         "aiAnalysis": "Análise de conteúdo por IA",
         "uploadImage": "Enviando para host de imagem",
         "jsdelivrCache": "Notificando cache jsdelivr",
@@ -1415,9 +1740,7 @@
         "cacheScreenshot": "Armazenando captura de tela em cache",
         "textAnalysis": "Análise de texto",
         "save": "Salvando",
-        "saveImage": "Salvando imagem",
-        "newToken": "Criar token de acesso",
-        "newTokenDesc": "O novo token deve ser configurado com permissão de 'repo', a configuração criará automaticamente um repositório de arquivos (privado) e um repositório de imagens."
+        "saveImage": "Salvando imagem"
       },
       "text": {
         "title": "Gravar Texto",
@@ -1548,27 +1871,10 @@
             "subtitle": "Use o modo Chat ou Agent para interagir com IA",
             "currentModel": "Modelo Atual",
             "currentPrompt": "Prompt Atual",
-            "currentMode": "Modo de Conversa",
             "noModel": "Nenhum modelo definido",
             "noPrompt": "Nenhum prompt definido",
-            "configureModel": "Configurar Modelo",
             "modeHint": "Toque no botão à esquerda do campo de entrada",
-            "modeHintSuffix": "para alternar o modo de conversa",
-            "recentConversations": "Conversas Recentes",
-            "deleteConversation": "Excluir conversa",
-            "conversationHistory": "Histórico",
-            "viewMore": "Ver mais",
-            "messages": "mensagens",
-            "searchPlaceholder": "Pesquisar conversas...",
-            "noMatchingConversations": "Nenhuma conversa correspondente encontrada",
-            "noConversationHistory": "Sem histórico de conversa",
-            "quickPrompts": {
-              "title": "Início Rápido",
-              "writeNote": "Ajude-me a escrever uma nota",
-              "summarize": "Ajude-me a resumir este conteúdo",
-              "brainstorm": "Ajude-me a brainstormar ideias",
-              "explain": "Ajude-me a explicar este conceito"
-            }
+            "modeHintSuffix": "para alternar o modo de conversa"
           },
           "content": {
             "organize": "Organize seus registros em um artigo:"
@@ -1582,14 +1888,7 @@
             "rootDirectory": "Diretório raiz",
             "deleteTag": "Excluir tag atual, registros e notas (pode ser restaurado da lixeira)",
             "warning": "Após a conversão, você será redirecionado para a página de escrita.",
-            "convert_button": "Converter",
-            "organizeAs": "Organize seus registros em um artigo:",
-            "templateContent": "Conteúdo do template",
-            "recordRange": "Intervalo de registros",
-            "filterThinkingContent": "Remover conteúdo de 'pensamento' dos registros",
-            "startOrganize": "Começar a organizar",
-            "manageTemplate": "Gerenciar template",
-            "cancel": "Cancelar"
+            "convert_button": "Converter"
           },
           "mark": {
             "recorded": "Gravado",
@@ -1645,14 +1944,6 @@
         "viewFolder": "Ver na Pasta",
         "viewFile": "Ver Arquivo Original",
         "deleteForever": "Excluir Permanentemente",
-        "sortByName": "Ordenar por Nome",
-        "sortByCreated": "Ordenar por Data de Criação",
-        "sortByModified": "Ordenar por Data de Modificação",
-        "sortAsc": "Ordem Crescente",
-        "sortDesc": "Ordem Decrescente",
-        "sort": "Ordenar",
-        "processingVectors": "Processando Dados Vetoriais",
-        "calculateVectors": "Calcular Vetores de Documento",
         "multiSelect": "Seleção Múltipla",
         "multiSelectMode": "Modo de Seleção Múltipla",
         "exitMultiSelect": "Sair da Seleção Múltipla",
@@ -1700,24 +1991,8 @@
         "currentPrompt": "Prompt Atual",
         "noModel": "Nenhum modelo definido",
         "noPrompt": "Nenhum prompt definido",
-        "modeHint": "Clique no botão",
-        "modeHintSuffix": "à esquerda da caixa de entrada para alternar o modo de conversa",
         "currentMode": "Modo de conversa",
         "configureModel": "Configurar modelo",
-        "features": [
-          {
-            "chat": "Converse com o assistente de IA"
-          },
-          {
-            "linked": "Vinculado aos seus registros ou notas"
-          },
-          {
-            "clipboard": "Reconhece texto e imagens da área de transferência"
-          },
-          {
-            "organize": "Organiza seus registros em notas"
-          }
-        ],
         "recentConversations": "Conversas Recentes",
         "deleteConversation": "Excluir Conversa",
         "conversationHistory": "Histórico",
@@ -1760,6 +2035,59 @@
         "filterThinkingContent": "Remover conteúdo de 'pensamento' dos registros",
         "startOrganize": "Começar a organizar",
         "manageTemplate": "Gerenciar template",
+        "quickOrganize": "Organização rápida",
+        "quickOrganizeHelp": "Use o template atual e as configurações padrão, pule a seleção de registros e as configurações de geração, e comece a organizar.",
+        "templateManager": "Gerenciador de templates",
+        "moreTemplates": "Mais",
+        "searchTemplates": "Pesquisar templates",
+        "showMore": "Expandir",
+        "showLess": "Recolher",
+        "recordCount": "{count} registros",
+        "recordPreview": "Prévia dos registros",
+        "previewEmpty": "Nenhum registro para pré-visualizar no intervalo selecionado",
+        "previewMore": "Mostrar os {count} mais recentes",
+        "selectTemplate": "Selecionar template",
+        "stepTemplate": "Template de organização",
+        "templateStepDescription": "Define como a IA estrutura a nota, o que ela prioriza e qual intervalo de registros será usado.",
+        "stepRecords": "Selecionar registros",
+        "recordsStepDescription": "Escolha os registros desta geração, alterne o escopo por tag e remova o que não for necessário.",
+        "stepSettings": "Configurações",
+        "settingsStepDescription": "Defina título, local de salvamento, uso dos materiais e requisitos extras desta geração.",
+        "nextStep": "Próximo",
+        "previousStep": "Anterior",
+        "generationSettings": "Configurações de geração",
+        "generationSettingsHelp": "Confirme idioma, título, local de salvamento e conteúdo incluído.",
+        "outputLanguage": "Idioma de saída",
+        "outputLanguageAuto": "Seguir idioma do app",
+        "outputLanguageZh": "简体中文",
+        "outputLanguageZhTW": "繁體中文",
+        "outputLanguageEn": "English",
+        "outputLanguageJa": "日本語",
+        "outputLanguagePtBR": "Português",
+        "outputLanguageCustom": "Personalizado",
+        "outputLanguageCustomPlaceholder": "Ex.: usar francês, ou usar chinês natural e conversacional",
+        "outputLanguageHelp": "Escolha um idioma comum ou selecione Personalizado para preencher manualmente o requisito de idioma.",
+        "articleTitle": "Título do artigo",
+        "articleTitlePlaceholder": "Deixe em branco para a IA gerar um título",
+        "saveFolder": "Local de salvamento",
+        "saveFolderRoot": "Diretório raiz",
+        "currentSaveFolder": "Local atual",
+        "noFolderAvailable": "Nenhuma pasta disponível",
+        "includeImages": "Incluir imagens",
+        "includeReferences": "Manter links de referência",
+        "additionalRequirement": "Requisitos adicionais",
+        "additionalRequirementPlaceholder": "Adicione requisitos específicos para esta organização",
+        "selectedRecordCount": "{selected}/{total} selecionados",
+        "selectAllRecords": "Selecionar tudo",
+        "clearRecordSelection": "Limpar",
+        "useRecord": "Usar este registro",
+        "recordSelectionHelp": "Desmarque os registros que você não quer que a IA use. Imagens e gravações podem ser pré-visualizadas aqui.",
+        "noRecordsSelected": "Selecione pelo menos um registro",
+        "noRecords": "Nenhum registro disponível para organizar",
+        "noRecordsInRange": "Nenhum registro no intervalo selecionado",
+        "noTemplateAvailable": "Nenhum template disponível",
+        "copyTemplate": "Copiar template",
+        "copySuffix": "Cópia",
         "cancel": "Cancelar",
         "stop": "Parar"
       },
@@ -1830,6 +2158,20 @@
           "agentDescription": "Assistente inteligente, pode executar ações"
         },
         "attachImage": "Anexar imagens",
+        "imageAttachment": {
+          "selectSuccess": "{count, plural, one {# imagem anexada} other {# imagens anexadas}}",
+          "pasteSuccess": "{count, plural, one {# imagem colada} other {# imagens coladas}}",
+          "dropSuccess": "{count, plural, one {# imagem solta} other {# imagens soltas}}",
+          "maxCount": "Você pode anexar até {count} imagens",
+          "oversized": "{name} é maior que {size} e foi ignorado",
+          "oversizedMultiple": "{count} imagens são maiores que {size} e foram ignoradas",
+          "unsupported": "{name} não é um formato de imagem compatível",
+          "unsupportedMultiple": "{count} arquivos não são formatos de imagem compatíveis",
+          "saveFailed": "Falha ao salvar a imagem. Tente novamente",
+          "saveFailedMultiple": "Falha ao salvar {count} imagens. Tente novamente",
+          "selectFailed": "Falha ao selecionar imagens. Tente novamente",
+          "dropHint": "Solte as imagens para anexar"
+        },
         "agent": {
           "running": "Agente em Execução",
           "thinking": "Pensando",
@@ -1948,10 +2290,6 @@
       "article": "Artigo",
       "matches": "{count} correspondências",
       "scanType": "digitalização"
-    },
-    "mode": {
-      "fuzzy": "Aproximada",
-      "exact": "Exata"
     }
   },
   "image": {
@@ -1969,6 +2307,13 @@
     "quickRecord": "Registro Rápido",
     "write": "Escrever",
     "me": "Meu",
+    "mobileDock": {
+      "chat": "Conversa",
+      "record": "Registro",
+      "quickRecord": "Rápido",
+      "write": "Escrever",
+      "me": "Meu"
+    },
     "search": "Pesquisar",
     "githubImageHosting": "Hospedagem de Imagens Github",
     "login": "Entrar",
@@ -1985,7 +2330,8 @@
     "showRightSidebar": "Mostrar Barra Lateral Direita",
     "searchPlaceholder": "Pesquisar notas ou registros...",
     "showCenterPanel": "Mostrar editor",
-    "hideCenterPanel": "Ocultar editor"
+    "hideCenterPanel": "Ocultar editor",
+    "navigate": "Navegar"
   },
   "activity": {
     "title": "Calendário de Atividade",
@@ -2048,8 +2394,7 @@
   "article": {
     "sync": {
       "syncingRemote": "Buscando arquivo remoto...",
-      "syncComplete": "Sincronização Concluída",
-      "pullingRemote": "Obtendo conteúdo mais recente do servidor remoto..."
+      "syncComplete": "Sincronização Concluída"
     },
     "syncConfirm": {
       "title": "Atualização de Arquivo Remoto Detectada",
@@ -2212,6 +2557,8 @@
         "confirmDelete": "Tem certeza de que deseja excluir a pasta \"{name}\"? Isso excluirá a pasta e todo o seu conteúdo.",
         "deleteSuccess": "Excluído com sucesso",
         "deleteFailed": "Falha ao excluir",
+        "moveFailed": "Falha ao mover",
+        "invalidMoveTarget": "Não é possível mover para si mesmo ou uma subpasta",
         "newFile": "Novo Arquivo",
         "newFolder": "Nova Pasta",
         "syncFolder": "Sincronizar Pasta",
@@ -2281,43 +2628,6 @@
         "pasteFailed": "Falha na operação de colar",
         "empty": "A área de transferência está vazia",
         "confirmOverwrite": "O arquivo já existe, deseja sobrescrevê-lo?",
-        "mark": {
-          "title": "Registros",
-          "tooltip": "Usar Registros",
-          "description": "Converta registros em conteúdo para inserir no artigo.",
-          "noRecords": "Nenhum registro",
-          "ocrNoContent": "OCR não reconheceu nenhum conteúdo"
-        },
-        "question": {
-          "tooltip": "Perguntas e Respostas",
-          "selectContent": "Por favor, selecione o conteúdo primeiro",
-          "promptTemplate": "Texto de referência: \n{content}\nCom base na pergunta: \n{question}\n, forneça diretamente o conteúdo da resposta."
-        },
-        "continue": {
-          "tooltip": "Continuar",
-          "promptTemplate": "Com base no texto anterior: \n{content}\n continue escrevendo e retorne um conteúdo que não exceda 100 palavras.\nVocê pode referenciar o seguinte texto: \n{endContent}\n, mas evite duplicar seu conteúdo."
-        },
-        "polish": {
-          "tooltip": "Polir",
-          "selectContent": "Por favor, selecione o conteúdo primeiro",
-          "promptTemplate": "Polir este texto: \n{content}\n, mantenha o idioma inalterado, corrija erros de digitação e gramaticais, retorne diretamente o resultado polido."
-        },
-        "eraser": {
-          "tooltip": "Simplificar",
-          "selectContent": "Por favor, selecione o conteúdo primeiro",
-          "promptTemplate": "Simplificar este texto: \n{content}\n, este texto está muito verboso, reduza a contagem de palavras pela metade, mantenha o idioma inalterado, retorne diretamente o resultado otimizado."
-        },
-        "expansion": {
-          "tooltip": "Expandir",
-          "selectContent": "Por favor, selecione o conteúdo primeiro",
-          "promptTemplate": "Expandir este texto: \n{content}\n, este texto está muito curto, aumente a contagem de palavras pela metade, mantenha o idioma inalterado, retorne diretamente o resultado expandido."
-        },
-        "translation": {
-          "tooltip": "Traduzir",
-          "description": "Traduzir o texto selecionado",
-          "selectContent": "Por favor, selecione o conteúdo primeiro",
-          "promptTemplate": "Traduzir este texto: \n{content}\n, para {language}, retorne diretamente o resultado traduzido."
-        },
         "notSupported": "Esta ação não é suportada"
       },
       "deleteConfirm": "Confirmar exclusão deste arquivo?"
@@ -2345,9 +2655,6 @@
         }
       },
       "toolbar": {
-        "organize": {
-          "tooltip": "Organizar Notas"
-        },
         "mark": {
           "title": "Registros",
           "tooltip": "Registros",
@@ -2424,8 +2731,6 @@
         "ignoreUpdate": "Ignorar Esta Atualização"
       },
       "sync": {
-        "sync": "Sincronizar",
-        "synced": "Sincronizado",
         "syncing": "Sincronizando",
         "syncFailed": "Falha na Sincronização",
         "checkNetworkOrToken": "Por favor, verifique a conexão de rede ou o token",
@@ -2501,9 +2806,7 @@
         "tools": {
           "title": "Ferramentas",
           "clearContext": "Limpar Contexto",
-          "clearContextDesc": "Limpar contexto da conversa, manter histórico",
           "clearChat": "Limpar Chat",
-          "clearChatDesc": "Excluir todos os registros de chat",
           "clear": "Limpar",
           "newChat": "开始新对话",
           "start": "开始"
@@ -2556,6 +2859,8 @@
     "retrySuccess": "Transcrição atualizada",
     "retryError": "Falha ao transcrever novamente",
     "noContentDetected": "Nenhum conteúdo detectado",
+    "pendingTranscription": "Áudio original salvo. Pronto para tentar transcrever novamente.",
+    "pendingModelConfiguration": "Áudio original salvo. Configure o reconhecimento de fala para transcrever.",
     "doubleClickToSelectFile": "Clique duas vezes para selecionar o arquivo de áudio",
     "mode": {
       "builtin": "Reconhecimento do Navegador",
@@ -2563,120 +2868,6 @@
       "model": "Reconhecimento por Modelo de IA",
       "modelDesc": "Requer modelo STT, mais preciso"
     }
-  },
-  "editor": {
-    "placeholder": "Digite / para abrir o menu, ou comece a escrever...",
-    "outline": {
-      "title": "Esboço",
-      "open": "Abrir Esboço",
-      "close": "Fechar Esboço"
-    },
-    "copySuccess": "Cópia Bem-sucedida",
-    "copySuccessDescription": "Copiado para a área de transferência",
-    "search": {
-      "placeholder": "Localizar no documento",
-      "replacePlaceholder": "Substituir por",
-      "caseSensitive": "Diferenciar maiúsculas e minúsculas",
-      "replace": "Substituir",
-      "replaceAll": "Substituir tudo",
-      "findPrev": "Anterior",
-      "findNext": "Próximo"
-    },
-    "floatbar": {
-      "readAloud": {
-        "start": "Ler em Voz Alta",
-        "stop": "Parar Leitura",
-        "loading": "Carregando..."
-      }
-    },
-    "toolbar": {
-      "mark": {
-        "title": "Registros",
-        "tooltip": "Registros",
-        "description": "Converta registros em conteúdo para inserir no artigo.",
-        "noRecords": "Nenhum registro",
-        "ocrNoContent": "OCR não reconheceu nenhum conteúdo"
-      },
-      "question": {
-        "tooltip": "Perguntas e Respostas",
-        "selectContent": "Por favor, selecione o conteúdo primeiro",
-        "promptTemplate": "Texto de referência: \n{content}\nCom base na pergunta: \n{question}\n, forneça diretamente o conteúdo da resposta."
-      },
-      "continue": {
-        "tooltip": "Continuar",
-        "promptTemplate": "Com base no texto anterior: \n{content}\n continue escrevendo e retorne um conteúdo que não exceda 100 palavras.\nVocê pode referenciar o seguinte texto: \n{endContent}\n, mas evite duplicar seu conteúdo."
-      },
-      "polish": {
-        "tooltip": "Polir",
-        "selectContent": "Por favor, selecione o conteúdo primeiro",
-        "promptTemplate": "Polir este texto: \n{content}\n, mantenha o idioma inalterado, corrija erros de digitação e gramaticais, retorne diretamente o resultado polido."
-      },
-      "eraser": {
-        "tooltip": "Simplificar",
-        "selectContent": "Por favor, selecione o conteúdo primeiro",
-        "promptTemplate": "Simplificar este texto: \n{content}\n, este texto está muito verboso, reduza a contagem de palavras pela metade, mantenha o idioma inalterado, retorne diretamente o resultado otimizado."
-      },
-      "expansion": {
-        "tooltip": "Expandir",
-        "selectContent": "Por favor, selecione o conteúdo primeiro",
-        "promptTemplate": "Expandir este texto: \n{content}\n, este texto está muito curto, aumente a contagem de palavras pela metade, mantenha o idioma inalterado, retorne diretamente o resultado expandido."
-      },
-      "translation": {
-        "tooltip": "Traduzir",
-        "description": "Traduzir o texto selecionado",
-        "selectContent": "Por favor, selecione o conteúdo primeiro",
-        "promptTemplate": "Traduzir este texto: \n{content}\n, para {language}, retorne diretamente o resultado traduzido.",
-        "fail": "Falha na tradução",
-        "failNoSelection": "Por favor, selecione o texto para traduzir",
-        "translating": "Traduzindo...",
-        "translatingTo": "Traduzindo para {language}...",
-        "success": "Tradução concluída",
-        "successTo": "Traduzido para {language}",
-        "customLanguageEmpty": "Por favor, digite o idioma de destino",
-        "customLanguageExample": "ex.: Inglês, Japonês, Francês, etc."
-      },
-      "quoteDisplay": {
-        "fromFile": "Citado de {fileName}",
-        "line": "Citado de {fileName} linha {line}",
-        "lines": "Citado de {fileName} linhas {start}-{end}"
-      }
-    },
-    "upload": {
-      "error": "Falha no upload",
-      "needToken": "O upload de imagens precisa configurar o accessToken",
-      "uploading": "Enviando imagem"
-    }
-  },
-  "footer": {
-    "wordCount": "Palavras",
-    "sync": {
-      "push": "Push",
-      "pushed": "Enviado",
-      "syncing": "Enviando",
-      "syncFailed": "Falha no Push",
-      "checkNetworkOrToken": "Por favor, verifique a conexão de rede ou o token",
-      "quickSync": "Sincronização Rápida"
-    },
-    "history": {
-      "loadingHistory": "Carregando histórico",
-      "historyRecords": "Registros do Histórico",
-      "noHistory": "Nenhum Histórico",
-      "loading": "Carregando",
-      "recordsCount": "registros",
-      "filterQuickSync": "Filtrar Sincronizações Rápidas",
-      "committedAt": "enviado em",
-      "pull": "Pull",
-      "quickSync": "Sincronização Rápida"
-    },
-    "vectorCalc": {
-      "tooltip": "Cálculo Vetorial: Cálculo automático 30s após a edição, ou clique para calcular agora",
-      "calculating": "Calculando",
-      "pending": "Pendente {progress}%",
-      "synced": "Sincronizado"
-    }
-  },
-  "quickRecord": {
-    "description": "Clique para selecionar uma ferramenta de registro e criar registros rapidamente"
   },
   "editor": {
     "bubbleMenu": {
@@ -2718,6 +2909,7 @@
     "aiSuggestion": {
       "accept": "Aceitar",
       "reject": "Rejeitar",
+      "undo": "Desfazer",
       "generating": "Gerando...",
       "abort": "Abortar"
     },
@@ -2733,9 +2925,17 @@
       "sizeOriginal": "Tamanho Original",
       "editAlt": "Editar texto alternativo",
       "editSrc": "Editar URL",
+      "editSize": "Definir tamanho",
+      "resetSize": "Redefinir tamanho",
+      "widthPlaceholder": "L",
+      "heightPlaceholder": "A",
       "altPlaceholder": "Digite o texto alternativo...",
       "srcPlaceholder": "Digite a URL da imagem...",
-      "delete": "Excluir imagem"
+      "delete": "Excluir imagem",
+      "reset": "Redefinir",
+      "confirm": "Confirmar",
+      "cancel": "Cancelar",
+      "failed": "Falha ao processar imagem"
     },
     "mermaid": {
       "rendering": "Renderizando...",
@@ -2780,12 +2980,24 @@
       "items": {
         "continue": "Continuar",
         "continueDesc": "IA continua escrevendo o conteúdo",
+        "generateSection": "Gerar Seção",
+        "generateSectionDesc": "Gerar uma nova seção a partir da nota atual",
+        "summarize": "Resumir",
+        "summarizeDesc": "Resumir a nota atual",
+        "customInstruction": "Instrução Personalizada",
+        "customInstructionDesc": "Digite sua própria instrução para a IA",
         "heading1": "Título 1",
         "heading1Desc": "Título grande",
         "heading2": "Título 2",
         "heading2Desc": "Título médio",
         "heading3": "Título 3",
         "heading3Desc": "Título pequeno",
+        "heading4": "Título 4",
+        "heading4Desc": "Título de nível 4",
+        "heading5": "Título 5",
+        "heading5Desc": "Título de nível 5",
+        "heading6": "Título 6",
+        "heading6Desc": "Título de nível 6",
         "bulletList": "Lista com Marcadores",
         "bulletListDesc": "Criar uma lista com marcadores simples",
         "orderedList": "Lista Ordenada",
@@ -2794,6 +3006,8 @@
         "taskListDesc": "Criar uma lista de tarefas com caixas de seleção",
         "image": "Imagem",
         "imageDesc": "Inserir imagem local ou hospedada",
+        "file": "Arquivo",
+        "fileDesc": "Escolher um arquivo local e inserir um link",
         "table": "Tabela",
         "tableDesc": "Inserir uma tabela",
         "blockquote": "Citação",
@@ -2828,8 +3042,19 @@
         "saveSuccess": "Salvo com sucesso",
         "savePath": "Salvo em: {path}",
         "failed": "Falha ao inserir imagem"
+      },
+      "fileInsert": {
+        "failed": "Falha ao inserir link de arquivo"
+      },
+      "customPrompt": {
+        "ariaLabel": "Instrução personalizada de IA",
+        "placeholder": "Digite a instrução de IA",
+        "submit": "Executar"
       }
     }
+  },
+  "quickRecord": {
+    "description": "Clique para selecionar uma ferramenta de registro e criar registros rapidamente"
   },
   "tabContext": {
     "close": "Fechar",

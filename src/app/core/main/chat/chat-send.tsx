@@ -13,10 +13,12 @@ import { LinkedResource, isLinkedFolder } from "@/lib/files"
 import { readTextFile } from "@tauri-apps/plugin-fs"
 import { getFilePathOptions, getWorkspacePath } from "@/lib/workspace"
 import { AgentHandler } from "@/lib/agent/agent-handler"
+import { agentDebugLog, previewText } from "@/lib/agent/debug-log"
 import { getToolByName } from "@/lib/agent/tools"
 import { getSessionApprovalScope, matchesSessionApproval } from "@/lib/agent/session-approval"
 import { ImageAttachment } from "./image-attachments"
 import type { RagSource } from "@/lib/rag"
+import { cn } from "@/lib/utils"
 
 interface QuoteData {
   quote: string
@@ -35,9 +37,10 @@ interface ChatSendProps {
   linkedResource?: LinkedResource | null;
   attachedImages?: ImageAttachment[];
   quoteData?: QuoteData | null;
+  dockStyle?: boolean;
 }
 
-export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ inputValue, onSent, linkedResource, attachedImages = [], quoteData = null }, ref) => {
+export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ inputValue, onSent, linkedResource, attachedImages = [], quoteData = null, dockStyle = false }, ref) => {
   const { primaryModel } = useSettingStore()
   const { currentTagId } = useTagStore()
   const {
@@ -182,10 +185,24 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
       autoApproveRuntimeSkillId,
       sessionApprovalScope
     )) {
+      agentDebugLog('approval_auto_approved', {
+        toolName,
+        params,
+        activeConversationId,
+        sessionApprovalScope,
+      })
       return Promise.resolve(true)
     }
 
     return new Promise((resolve) => {
+      agentDebugLog('approval_pending_set', {
+        toolName,
+        params,
+        context,
+        canApproveForSession,
+        sessionApprovalScope,
+      })
+
       // 将确认请求保存到 store，在对话中显示
       setAgentState({
         pendingConfirmation: {
@@ -206,8 +223,21 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
         // 如果 pendingConfirmation 被清除，说明用户已操作
         if (!currentState.agentState.pendingConfirmation) {
           clearInterval(checkInterval)
-          // 如果 Agent 仍在运行，说明用户确认了
-          resolve(currentState.agentState.isRunning)
+          const latestRecord = [...currentState.agentState.confirmationHistory]
+            .reverse()
+            .find((record) =>
+              record.toolName === toolName &&
+              JSON.stringify(record.params) === JSON.stringify(params)
+            )
+
+          agentDebugLog('approval_pending_resolved', {
+            toolName,
+            params,
+            latestRecord,
+            resolved: latestRecord?.status === 'confirmed',
+          })
+
+          resolve(latestRecord?.status === 'confirmed')
         }
       }, 100)
     })
@@ -230,9 +260,13 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
       activeChatId: placeholderMessage.id,
     })
 
+    const useArticleStore = (await import('@/stores/article')).default
+    const articleStore = useArticleStore.getState()
+
     // 每次都创建新的 AgentHandler，使用当前的 placeholderMessage
     const agentHandler = new AgentHandler({
       activeChatId: placeholderMessage.id,
+      activeFilePath: articleStore.activeFilePath,
       requestConfirmation,
       currentQuote: quoteData
         ? {
@@ -254,12 +288,17 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
       },
       formatAutoFinalAnswer: (key, values) => t(key as any, values),
       onComplete: async (result, steps, stopped) => {
-        // 获取 Agent 执行历史，保存完整的 ReAct 步骤
+        // 获取 Agent 执行历史，保存结构化运行轨迹
         const { agentState } = useChatStore.getState()
         // 使用 agentState.completedSteps 而不是 steps 参数，因为 completedSteps 包含 duration 信息
         const agentHistory = {
-          steps: agentState.completedSteps || [], // 保存完整的 ReAct 步骤（包含 thought, action, observation, duration）
+          steps: agentState.completedSteps || [],
           toolCalls: agentState.toolCalls,
+          traceEvents: agentState.traceEvents || [],
+          changes: agentState.changes || [],
+          runId: agentState.runId,
+          status: agentState.status,
+          loadedSkills: agentState.loadedSkills || [],
           iterations: agentState.currentIteration,
         }
 
@@ -361,12 +400,16 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
       let ragSourceDetails: RagSource[] = []
 
       // 1. 如果有当前打开的笔记，自动传入其内容
-      const useArticleStore = (await import('@/stores/article')).default
-      const articleStore = useArticleStore.getState()
-
       if (articleStore.activeFilePath && articleStore.currentArticle) {
         context = `## 当前打开的笔记\n文件路径: ${articleStore.activeFilePath}\n\n内容:\n${articleStore.currentArticle}\n\n`
       }
+
+      agentDebugLog('chat_context_active_note', {
+        activeFilePath: articleStore.activeFilePath || null,
+        currentArticleLength: articleStore.currentArticle?.length || 0,
+        injected: Boolean(articleStore.activeFilePath && articleStore.currentArticle),
+        preview: previewText(articleStore.currentArticle || ''),
+      })
 
       // 2. 如果启用 RAG，获取知识库相关上下文
       if (isRagEnabled) {
@@ -412,6 +455,13 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
 
               context += `## 知识库检索结果\n\n${searchScope}未找到与用户问题相关的笔记内容。\n\n请根据情况处理：\n- 如果用户询问的是具体笔记内容，请告知用户${searchScope}可能没有相关资料\n- 如果问题可以基于一般知识回答，请使用你的知识回答\n- 如果需要更多信息，可以请用户提供更具体的关键词或问题\n`
             }
+
+            agentDebugLog('chat_context_rag_result', {
+              enabled: true,
+              keywordCount: keywords.length,
+              sources: ragSources,
+              contextLength: ragResult.context.length,
+            })
           }
         } catch (error) {
           console.error('Failed to get RAG context in Agent mode:', error)
@@ -430,7 +480,13 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
       }
 
       // 3. 如果有关联文件（非文件夹），始终注入完整内容作为 Agent 上下文
-      if (linkedResource && !isLinkedFolder(linkedResource)) {
+      const linkedResourceIsActiveFile = linkedResource && !isLinkedFolder(linkedResource) && (
+        linkedResource.relativePath === articleStore.activeFilePath ||
+        linkedResource.path === articleStore.activeFilePath ||
+        linkedResource.name === articleStore.activeFilePath.split('/').pop()
+      )
+
+      if (linkedResource && !isLinkedFolder(linkedResource) && !linkedResourceIsActiveFile) {
         try {
           const workspace = await getWorkspacePath()
           let linkedFileContent = ''
@@ -448,9 +504,22 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
           if (linkedFileContent) {
             context += `\n## 关联文件完整内容\n\nThe full content of the linked file "${linkedResource.name}" (${linkedResource.relativePath}) is already included below. Do not call tools to read or check this same file again unless the user explicitly asks to refresh it.\n\n---\n${linkedFileContent}\n---\n`
           }
+
+          agentDebugLog('chat_context_linked_file', {
+            name: linkedResource.name,
+            relativePath: linkedResource.relativePath,
+            contentLength: linkedFileContent.length,
+            hasPreview: Boolean(linkedResourcePreview),
+          })
         } catch (error) {
           console.error('Failed to read linked file in Agent mode:', error)
         }
+      } else if (linkedResourceIsActiveFile) {
+        agentDebugLog('chat_context_linked_file_skipped', {
+          reason: 'linked file is already the active editor file',
+          name: linkedResource.name,
+          relativePath: linkedResource.relativePath,
+        })
       }
 
       // 4. 如果有引用内容，添加引用上下文（在构建消息之前）
@@ -480,21 +549,21 @@ ${hasValidRange ? `**仅在用户明确要求修改/改写/补充/插入时才�
 
 如果用户是在提问、解释、总结、分析、翻译、润色建议、代码说明，应该直接基于这段引用内容回答，**不要调用任何编辑工具**。
 
-**🚨 当且仅当用户明确要求修改时，必须精确替换用户选中的范围**: 当前引用内容来自编辑器选区，必须优先使用 replace_editor_content 的 position-based 模式，只替换这段选中的内容：
+**🚨 当且仅当用户明确要求修改时，必须精确替换用户选中的范围**: 当前引用内容来自编辑器选区，必须优先使用 editor_replace_range，只替换这段选中的内容：
 - from: ${from}
 - to: ${to}
-- 使用 content 或 replaceContent 传入新内容
+- 使用 content 传入新内容
 - 只允许替换这个选区，禁止扩大到整篇文档或整段之外
 
 **如果用户说“在这段前面/后面/上面/下面插入、补充、添加”**:
-- 仍然使用 replace_editor_content
+- 仍然使用 editor_replace_range
 - 基于当前引用范围整体替换
 - 前插: 新内容 + 原引用内容
 - 后插: 原引用内容 + 新内容
-- 不要使用 insert_at_cursor，因为聊天输入会让编辑器失焦，当前光标位置不可靠
+- 不要使用 editor_insert_at_cursor，因为聊天输入会让编辑器失焦，当前光标位置不可靠
 
 **如果用户明确要求“前面和后面都增加内容”**:
-- 仍然使用 replace_editor_content
+- 仍然使用 editor_replace_range
 - 必须先分别生成前插内容和后插内容
 - 请在传给工具的 content 中使用这个精确格式：
   <<BEFORE>>
@@ -512,12 +581,11 @@ ${hasValidRange ? `**仅在用户明确要求修改/改写/补充/插入时才�
 - 禁止在解释/分析类请求中调用编辑工具
 - 禁止改动选区之外的内容
 - 禁止获取整个文档后再重写整篇
-- 禁止把 startLine/endLine 擅自改成 1/1` : hasValidLineNumbers ? `**🚨 必须使用行号修改**: 当用户引用内容并要求修改时，你必须使用 replace_editor_content 工具的 line-based 模式，传入精确的行号：
-` : hasValidLineNumbers ? `**仅在用户明确要求修改/改写/补充/插入时才允许编辑**。
+- 禁止把 startLine/endLine 擅自改成 1/1` : hasValidLineNumbers ? `**仅在用户明确要求修改/改写/补充/插入时才允许编辑**。
 
 如果用户是在提问、解释、总结、分析、翻译、润色建议、代码说明，应该直接基于这段引用内容回答，**不要调用任何编辑工具**。
 
-**🚨 当且仅当用户明确要求修改时，必须使用行号修改**: 当用户引用内容并要求修改时，你必须使用 replace_editor_content 工具的 line-based 模式，传入精确的行号：
+**🚨 当且仅当用户明确要求修改时，必须使用行号修改**: 当用户引用内容并要求修改时，你必须使用 editor_replace_lines，传入精确的行号：
 - 单行修改: startLine: ${startLine}, endLine: ${endLine}
 - 多行范围: startLine: ${startLine}, endLine: ${endLine}
 - 必须使用 replaceContent 参数传入新内容
@@ -526,11 +594,24 @@ ${hasValidRange ? `**仅在用户明确要求修改/改写/补充/插入时才�
 - 禁止在解释/分析类请求中调用编辑工具
 - 禁止使用 from/to 位置参数
 - 禁止使用 searchContent 文本搜索模式
-- 禁止获取整个文档内容后再操作` : `**注意**: 此引用内容没有有效的行号信息。如果需要修改，请先使用 get_editor_selection 工具获取当前选中的行号信息。`}
+- 禁止获取整个文档内容后再操作` : `**注意**: 此引用内容没有有效的行号信息。如果需要修改，请先使用 editor_get_selection 工具获取当前选中的行号信息。`}
 
 请基于这段引用内容回答用户的问题。
 
 `
+
+        agentDebugLog('chat_context_quote', {
+          fileName,
+          startLine,
+          endLine,
+          from,
+          to,
+          quoteLength: quoteData.quote.length,
+          contentLength: fullContent.length,
+          quotePreview: previewText(quoteData.quote),
+          fullContentPreview: previewText(fullContent),
+          hasValidRange,
+        })
       }
 
       // 5. 构建消息数组，包含对话历史（使用压缩摘要替代已压缩的消息）
@@ -553,6 +634,18 @@ ${hasValidRange ? `**仅在用户明确要求修改/改写/补充/插入时才�
           maxUserMessages: shouldCarryUserHistoryForAgent(inputValue) ? 3 : 0,
         }
       )
+
+      agentDebugLog('chat_messages_built', {
+        userInput: inputValue,
+        contextLength: context.length,
+        messageCount: messages.length,
+        messages: messages.map((message, index) => ({
+          index,
+          role: message.role,
+          contentLength: message.content.length,
+          preview: previewText(message.content),
+        })),
+      })
 
       await agentHandler.execute(inputValue, messages, imageUrls)
     } catch (error) {
@@ -603,12 +696,16 @@ ${hasValidRange ? `**仅在用户明确要求修改/改写/补充/插入时才�
   return (
     <>
       <TooltipButton 
-        variant={loading ? "destructive" : "default"}
+        variant={dockStyle ? "ghost" : loading ? "destructive" : "default"}
         size="sm"
         icon={loading ? <Square className="size-4" /> : <Send className="size-4" />} 
         disabled={!loading && (!primaryModel || !inputValue.trim())} 
         tooltipText={loading ? t('record.chat.input.stop') : t('record.chat.input.send')} 
         onClick={loading ? handleStop : handleSubmit} 
+        buttonClassName={dockStyle ? cn(
+          "rounded-2xl border border-border/50 bg-[hsl(var(--component-active-bg))] text-foreground shadow-none hover:bg-[hsl(var(--component-active-bg))] hover:text-foreground",
+          loading && "border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/10"
+        ) : undefined}
       />
     </>
   )

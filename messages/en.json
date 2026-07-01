@@ -3,48 +3,18 @@
     "title": "Note Generator",
     "description": "Your AI-powered note taking assistant"
   },
-  "common": {
-    "save": "Save",
-    "cancel": "Cancel",
-    "delete": "Delete",
-    "edit": "Edit",
-    "create": "Create",
-    "theme": "Theme",
-    "light": "Light",
-    "dark": "Dark",
-    "system": "System",
-    "pin": "Pin",
-    "unpin": "Unpin",
-    "settings": "Settings",
-    "back": "Back",
-    "sync": "Sync",
-    "language": "Language",
-    "confirm": "Confirm",
-    "selectPrompt": "Select Prompt",
-    "prompt": "Prompt",
-    "success": "Success",
-    "error": "Failed",
-    "defaultFileName": "Untitled",
-    "restartToApply": ", please restart the application for the configuration to take effect",
-    "unsaved": "Unsaved",
-    "saving": "Saving...",
-    "close": "Close",
+  "tray": {
+    "quickRecord": "Quick Record",
+    "moreRecord": "More Records",
     "open": "Open",
-    "add": "Add",
-    "remove": "Remove",
-    "search": "Search",
-    "filter": "Filter",
-    "sort": "Sort",
-    "export": "Export",
-    "import": "Import",
-    "refresh": "Refresh",
-    "loading": "Loading...",
-    "all": "All",
-    "today": "Today",
-    "yesterday": "Yesterday",
-    "warning": "Warning",
-    "info": "Info",
-    "configureSync": "Configure Sync"
+    "showMain": "Show Main Window",
+    "newNote": "New Note",
+    "newFolder": "New Folder",
+    "settings": "Settings",
+    "window": "Window",
+    "pinToggle": "Pin/Unpin",
+    "hideWindow": "Hide to Tray",
+    "quit": "Quit NoteGen"
   },
   "settings": {
     "defaultModels": {
@@ -85,6 +55,24 @@
         "recordTextSize": {
           "title": "Record Text Size",
           "desc": "Adjust the text size of record items in the record list"
+        },
+        "fontFamily": {
+          "title": "App Font",
+          "desc": "Desktop can use installed system fonts; mobile uses platform-supported generic font families.",
+          "placeholder": "Select font",
+          "loading": "Loading system fonts...",
+          "noSystemFonts": "This platform cannot expose the full system font list",
+          "groups": {
+            "default": "Default",
+            "generic": "Generic Fonts",
+            "system": "System Fonts"
+          },
+          "options": {
+            "system": "System Default",
+            "sansSerif": "Sans Serif",
+            "serif": "Serif",
+            "monospace": "Monospace"
+          }
         },
         "customCss": {
           "title": "Custom CSS",
@@ -510,48 +498,84 @@
     },
     "about": {
       "title": "About",
-      "desc": "A note-taking assistant focused on record and writing.",
+      "desc": "Capture first, organize later.",
+      "resourcesTitle": "Resources and support",
+      "resourcesDesc": "Open docs, release notes, or community channels for feedback.",
+      "licenseText": "Open source · GitHub · GPL-3.0",
       "version": "NoteGen v{version}",
       "checkReleases": "Check Release History",
       "language": "Language",
       "checkUpdate": "Check for Updates",
       "checkError": "Failed to check for updates",
+      "releaseLoadError": "Failed to load update history",
       "updateAvailable": "Update to new version",
+      "updateIgnored": "This version is ignored",
       "updateDownloading": "Updating {downloaded} / {contentLength}",
       "updateInstalled": "Restart app",
       "noUpdate": "Current version is the latest",
+      "lastCheckedAt": "Last checked: {time}",
+      "lastCheckedNever": "Updates have not been checked yet",
+      "releasePublishedAt": "Published on {date}",
+      "releaseHistoryTitle": "Update history",
+      "releaseHistoryDesc": "From v{currentVersion} to v{latestVersion}, {count} versions in total.",
+      "releaseHistoryEmpty": "No update history was found between the current version and the latest version.",
+      "releasePrerelease": "Pre-release",
+      "releaseNoNotes": "No release notes were provided for this version.",
+      "retryReleaseNotes": "Reload",
       "ignoreVersion": "Ignore this version",
       "ignoreVersionSuccess": "This version update has been ignored",
+      "ignoredVersionTitle": "Ignored v{version}",
+      "ignoredVersionDesc": "This version will not prompt again. You can restore the prompt and continue installing it.",
+      "restoreIgnoredVersion": "Restore prompt",
+      "restoreIgnoredVersionSuccess": "This version update prompt has been restored",
+      "sections": {
+        "appInfo": {
+          "title": "App information",
+          "desc": "Review the current version, update status, and app summary."
+        },
+        "updates": {
+          "title": "Version updates",
+          "desc": "Open the latest release notes and update history."
+        },
+        "docs": {
+          "title": "Docs and configuration",
+          "desc": "Learn about sync, backup, and data storage from the website and docs."
+        },
+        "community": {
+          "title": "Feedback and community",
+          "desc": "Report issues, view source code, or join public discussions."
+        }
+      },
       "items": {
         "home": {
           "title": "Home",
           "buttonName": "Open",
-          "desc": "Visit the website to learn more about NoteGen."
+          "desc": "Open the official website."
         },
         "guide": {
-          "title": "Guide",
+          "title": "Sync configuration guide",
           "buttonName": "Open",
-          "desc": "View configuration guide, learn how to configure models, sync, etc. information."
+          "desc": "Set up Git, S3, and WebDAV sync."
         },
         "github": {
           "title": "GitHub",
           "buttonName": "View",
-          "desc": "If NoteGen helps you, please give a star to encourage!"
+          "desc": "View source and contribute."
         },
         "releases": {
           "title": "Update Log",
           "buttonName": "View",
-          "desc": "View update log, learn more about NoteGen's updates."
+          "desc": "View version updates."
         },
         "issues": {
           "title": "Issue Feedback",
           "buttonName": "Feedback",
-          "desc": "If you find a bug in NoteGen, please feedback here."
+          "desc": "Report issues and bugs."
         },
         "discussions": {
           "title": "Discussions",
           "buttonName": "Discuss",
-          "desc": "If you want to discuss with the author or other users, you can join the group discussion."
+          "desc": "Join community discussions."
         }
       }
     },
@@ -611,7 +635,6 @@
       "tooltip": "Use main model",
       "noModel": "Do not use",
       "placeholder": "Please select or search for models",
-      "main": "Main model",
       "options": {
         "primaryModel": {
           "title": "Main model",
@@ -717,7 +740,17 @@
       "optimizing": "Optimizing...",
       "optimizeSuccess": "Prompt optimized successfully",
       "optimizeFailed": "Failed to optimize prompt, please try again later",
-      "noContentToOptimize": "Please enter prompt content first"
+      "noContentToOptimize": "Please enter prompt content first",
+      "systemPrompt": {
+        "title": "System Prompt",
+        "desc": "Advanced option: edit the static rules section of the Agent system prompt. Frequent changes are not recommended.",
+        "label": "System prompt content",
+        "placeholder": "Enter the Agent identity, tool-call constraints, and Core Rules.",
+        "help": "This advanced setting affects the Agent behavior boundary. Tool lists, current file, selection, Skills, and MCP context are still appended dynamically by the system.",
+        "reset": "Reset to default",
+        "saveSuccess": "System prompt saved",
+        "resetSuccess": "System prompt reset to default"
+      }
     },
     "sync": {
       "title": "Sync",
@@ -727,6 +760,8 @@
       "settings": "Sync Settings",
       "platformDesc": "Configure Token and repository information to enable sync",
       "moreSettings": "More Settings",
+      "noteSettings": "Note settings",
+      "recordConfigSettings": "Records and settings",
       "repoStatus": "Repository Status",
       "syncRepo": "Sync Repository",
       "syncRepoDesc": "Sync markdown files in writing",
@@ -752,7 +787,7 @@
       "imageRepoSetting": "Enable Image Hosting",
       "imageRepoSettingDesc": "You have already configured an image repository, you can choose to use the image repository or use local storage.",
       "jsdelivrSetting": "jsDelivr",
-      "autoSyncDesc": "When enabled, the editor will automatically sync to GitHub 10 seconds after input stops",
+      "autoSyncDesc": "After note edits stop, automatically sync notes to the current provider using the selected delay",
       "giteeAutoSyncDesc": "When enabled, the editor will automatically sync to Gitee 10 seconds after input stops",
       "customSyncRepo": "Custom Sync Repository Name",
       "customSyncRepoDesc": "Leave empty to use default repository name",
@@ -829,7 +864,46 @@
         "saveConfig": "Save Config",
         "saving": "Saving"
       },
-      "autoSync": "Auto Sync",
+      "autoSync": "Auto sync notes",
+      "autoDataSync": "Auto sync records and settings",
+      "autoDataSyncDesc": "Automatically uploads record and setting changes to the current sync provider in order. Nothing is uploaded until a provider is configured",
+      "autoDataSyncStatusOff": "Auto sync is off",
+      "autoDataSyncStatusWaitingProvider": "Waiting for a sync provider",
+      "autoDataSyncStatusQueued": "Queued for sync",
+      "autoDataSyncStatusManualSyncing": "Manual sync in progress",
+      "autoDataSyncStatusSyncing": "Auto sync in progress",
+      "autoDataSyncStatusFailed": "Sync failed",
+      "autoDataSyncStatusConflict": "Sync conflict",
+      "autoDataSyncStatusIdle": "Synced",
+      "autoDataSyncStatusTitle": "Records and settings sync",
+      "autoDataSyncStatusProvider": "Provider",
+      "autoDataSyncStatusPending": "Pending",
+      "autoDataSyncStatusLastSuccess": "Last success",
+      "autoDataSyncStatusError": "Error",
+      "autoDataSyncRetry": "Retry",
+      "autoDataSyncOpenSettings": "Open settings",
+      "autoDataSyncNever": "Never",
+      "autoDataSyncConflictTitle": "Resolve sync conflict",
+      "autoDataSyncConflictDesc": "Remote content was updated by another device while this device still has local changes. Choose which side to keep.",
+      "autoDataSyncConflictMerge": "Merge both sides",
+      "autoDataSyncConflictMergeDesc": "Merge keeps records newly added on either side. For the same record, the newer timestamp wins; settings are merged using the current privacy rules.",
+      "autoDataSyncConflictPullRemote": "Pull remote over local",
+      "autoDataSyncConflictUploadLocal": "Upload local over remote",
+      "autoDataSyncConflictLater": "Handle later",
+      "autoDataSyncConflictPullConfirm": "Pulling remote data will overwrite unsynced local records and settings. Continue?",
+      "autoDataSyncConflictUploadConfirm": "Uploading local data will overwrite the latest remote records and settings. Changes from other devices may be lost. Continue?",
+      "autoDataSyncConflictResolved": "Sync conflict resolved",
+      "autoDataSyncConflictResolveFailed": "Failed to resolve sync conflict",
+      "autoDataSyncInitialSuccess": "Auto sync initialization completed",
+      "autoDataSyncInitialFailed": "Auto sync initialization failed",
+      "autoDataSyncInitialTitle": "Choose the first auto sync direction",
+      "autoDataSyncInitialDesc": "When switching devices or enabling this for the first time, upload local data or pull the latest remote records and settings first to avoid overwriting the wrong content.",
+      "autoDataSyncInitialUploadLocal": "Upload local data",
+      "autoDataSyncInitialPullRemote": "Pull latest remote",
+      "autoDataSyncInitialLater": "Handle later",
+      "autoDataSyncPrivacyTitle": "Do not sync sensitive settings",
+      "autoDataSyncPrivacyDesc": "When enabled, access tokens, passwords, secrets, sync provider selection, image hosting settings, MCP settings, workspace paths, and other device-specific or private settings are excluded.",
+      "autoDataSyncPrivacyDisableConfirm": "After turning this off, access tokens, passwords, secrets, and other sensitive or device-specific settings may be uploaded to the remote sync provider and synced to other devices. Turn it off?",
       "autoSyncOptions": {
         "placeholder": "Select auto sync time",
         "disabled": "Disabled",
@@ -916,9 +990,7 @@
         },
         "createNewRepo": "Create New Repository",
         "recheckRepo": "Recheck",
-        "recheckingRepo": "Checking...",
-        "createRepo": "Create Repository",
-        "creatingRepo": "Creating..."
+        "recheckingRepo": "Checking..."
       },
       "s3": {
         "title": "S3 Object Storage",
@@ -960,22 +1032,25 @@
     },
     "imageMethod": {
       "title": "Image Recognition",
-      "desc": "Here, you can configure image recognition related settings, supporting OCR and VLM two ways.",
+      "desc": "Images are recognized with system OCR by default. If a VLM is configured, it is tried first and falls back to OCR on failure.",
       "enable": {
         "title": "Enable Image Recognition",
         "desc": "When enabled, images will be automatically recognized during screenshot and image recording. When disabled, image recognition will be skipped."
       },
-      "setPrimary": "Set as default",
-      "isPrimary": "{type} has been set as default",
       "ocr": {
-        "title": "OCR",
-        "languagePacks": "Language Pack",
-        "checkModels": "Here you can search all models",
-        "modelInstruction": "Comma separated, for example: eng,chi_sim"
+        "title": "System OCR",
+        "desc": "Uses the OCR capability provided by the current system by default.",
+        "noProviders": "No built-in OCR engine for this platform",
+        "unknownVersion": "Unknown version",
+        "ready": "Available",
+        "unavailable": "Unavailable",
+        "provider": "Current engine"
       },
       "vlm": {
-        "title": "Visual Language Model",
-        "desc": "Use visual language model to recognize image content."
+        "title": "VLM Enhancement (Optional)",
+        "desc": "After selecting a visual language model, images are recognized with VLM first. If the model is unavailable, fails, or returns no content, the app still falls back to system OCR.",
+        "noModel": "No model by default",
+        "clearModel": "Clear VLM model"
       }
     },
     "backupSync": {
@@ -1042,7 +1117,6 @@
     },
     "theme": {
       "title": "Theme Settings",
-      "desc": "Customize application theme colors",
       "appTheme": "App Color Scheme",
       "previewTheme": "Preview Content Theme",
       "codeTheme": "Code Block Highlight Theme",
@@ -1268,12 +1342,6 @@
       "checkConnection": "Test Connection",
       "model": "Model"
     },
-    "ocr": {
-      "title": "OCR",
-      "languagePacks": "Language Packs",
-      "checkModels": "Check all models here",
-      "modelInstruction": "Separate with commas, e.g.: eng,chi_sim"
-    },
     "file": {
       "title": "File Settings",
       "desc": "Here, you can manage workspace settings and other file-related options.",
@@ -1319,23 +1387,250 @@
       "resetDefaults": "Reset",
       "clear": "Clear",
       "noShortcut": "No Shortcut",
+      "recording": "Press a new shortcut",
+      "conflictEditor": "Conflicts with editor shortcut \"{name}\"",
+      "conflictGlobal": "Conflicts with global shortcut \"{name}\"",
+      "globalShortcuts": {
+        "title": "Global shortcuts",
+        "desc": "These shortcuts are registered by the system and can work when NoteGen is not focused."
+      },
+      "editorShortcuts": {
+        "title": "Editor shortcuts",
+        "desc": "These shortcuts only work while the Markdown editor is focused.",
+        "suggested": "Suggested: {shortcut}",
+        "groups": {
+          "basic": "Basic editing",
+          "format": "Formatting",
+          "ai": "AI",
+          "table": "Table",
+          "insert": "Insert"
+        },
+        "commands": {
+          "undo": {
+            "title": "Undo",
+            "desc": "Undo the previous edit."
+          },
+          "redo": {
+            "title": "Redo",
+            "desc": "Restore the last undone edit."
+          },
+          "setParagraph": {
+            "title": "Paragraph",
+            "desc": "Set the current block to a paragraph."
+          },
+          "toggleHeading1": {
+            "title": "Heading 1",
+            "desc": "Toggle heading level 1."
+          },
+          "toggleHeading2": {
+            "title": "Heading 2",
+            "desc": "Toggle heading level 2."
+          },
+          "toggleHeading3": {
+            "title": "Heading 3",
+            "desc": "Toggle heading level 3."
+          },
+          "toggleHeading4": {
+            "title": "Heading 4",
+            "desc": "Toggle heading level 4."
+          },
+          "toggleHeading5": {
+            "title": "Heading 5",
+            "desc": "Toggle heading level 5."
+          },
+          "toggleHeading6": {
+            "title": "Heading 6",
+            "desc": "Toggle heading level 6."
+          },
+          "openSearch": {
+            "title": "Find / Replace",
+            "desc": "Open editor search."
+          },
+          "openSlashCommand": {
+            "title": "Slash menu",
+            "desc": "Open the editor command menu at the cursor."
+          },
+          "toggleOutline": {
+            "title": "Outline",
+            "desc": "Show or hide the current document outline."
+          },
+          "toggleBold": {
+            "title": "Bold",
+            "desc": "Toggle bold for selected text or future input."
+          },
+          "toggleItalic": {
+            "title": "Italic",
+            "desc": "Toggle italic."
+          },
+          "toggleStrike": {
+            "title": "Strikethrough",
+            "desc": "Toggle strikethrough."
+          },
+          "toggleUnderline": {
+            "title": "Underline",
+            "desc": "Toggle underline."
+          },
+          "toggleInlineCode": {
+            "title": "Inline code",
+            "desc": "Toggle inline code."
+          },
+          "toggleHighlight": {
+            "title": "Highlight",
+            "desc": "Toggle highlight."
+          },
+          "openLinkInput": {
+            "title": "Link",
+            "desc": "Open the link input."
+          },
+          "toggleBlockquote": {
+            "title": "Blockquote",
+            "desc": "Toggle blockquote."
+          },
+          "toggleBulletList": {
+            "title": "Bullet list",
+            "desc": "Toggle bullet list."
+          },
+          "toggleOrderedList": {
+            "title": "Ordered list",
+            "desc": "Toggle ordered list."
+          },
+          "toggleTaskList": {
+            "title": "Task list",
+            "desc": "Toggle task list."
+          },
+          "toggleCodeBlock": {
+            "title": "Code block",
+            "desc": "Toggle code block."
+          },
+          "quoteToChat": {
+            "title": "Quote to chat",
+            "desc": "Send the selected content to the AI chat quote area."
+          },
+          "openAiMenu": {
+            "title": "AI actions menu",
+            "desc": "Open AI actions for the selected text."
+          },
+          "aiContinue": {
+            "title": "AI continue",
+            "desc": "Continue writing from the content before the cursor."
+          },
+          "aiPolish": {
+            "title": "AI polish",
+            "desc": "Polish the selected text."
+          },
+          "aiConcise": {
+            "title": "AI concise",
+            "desc": "Make the selected text more concise."
+          },
+          "aiExpand": {
+            "title": "AI expand",
+            "desc": "Expand the selected text."
+          },
+          "aiTranslate": {
+            "title": "AI translate",
+            "desc": "Open translation actions for the selected text."
+          },
+          "acceptAiSuggestion": {
+            "title": "Accept AI suggestion",
+            "desc": "Accept the current AI suggestion when the suggestion panel is open."
+          },
+          "rejectAiSuggestion": {
+            "title": "Reject AI suggestion",
+            "desc": "Restore the original text when the AI suggestion panel is open."
+          },
+          "abortAiGeneration": {
+            "title": "Abort AI generation",
+            "desc": "Stop the current AI generation task."
+          },
+          "insertTable": {
+            "title": "Insert table",
+            "desc": "Insert a default 3-column table."
+          },
+          "addColumnBefore": {
+            "title": "Insert column left",
+            "desc": "Insert a column before the current cell."
+          },
+          "addColumnAfter": {
+            "title": "Insert column right",
+            "desc": "Insert a column after the current cell."
+          },
+          "addRowBefore": {
+            "title": "Insert row above",
+            "desc": "Insert a row above the current cell."
+          },
+          "addRowAfter": {
+            "title": "Insert row below",
+            "desc": "Insert a row below the current cell."
+          },
+          "deleteColumn": {
+            "title": "Delete column",
+            "desc": "Delete the current table column."
+          },
+          "deleteRow": {
+            "title": "Delete row",
+            "desc": "Delete the current table row."
+          },
+          "deleteTable": {
+            "title": "Delete table",
+            "desc": "Delete the current table."
+          },
+          "alignLeft": {
+            "title": "Align left",
+            "desc": "Align text or the current table cell left."
+          },
+          "alignCenter": {
+            "title": "Align center",
+            "desc": "Center text or the current table cell."
+          },
+          "alignRight": {
+            "title": "Align right",
+            "desc": "Align text or the current table cell right."
+          },
+          "insertImage": {
+            "title": "Insert image",
+            "desc": "Choose and insert a local image."
+          },
+          "insertInlineMath": {
+            "title": "Insert inline math",
+            "desc": "Open the inline LaTeX input."
+          },
+          "insertBlockMath": {
+            "title": "Insert block math",
+            "desc": "Open the block LaTeX input."
+          },
+          "insertMermaid": {
+            "title": "Insert Mermaid diagram",
+            "desc": "Insert a default Mermaid flowchart."
+          },
+          "insertHorizontalRule": {
+            "title": "Insert divider",
+            "desc": "Insert a horizontal rule at the cursor."
+          }
+        }
+      },
       "shortcuts": {
         "openWindow": {
           "title": "Open/Hide Window",
           "desc": "Open/Hide the main window."
+        },
+        "screenshotRecord": {
+          "title": "Screenshot Record",
+          "desc": "Open screenshot recording and save a cropped window or display."
         },
         "quickRecordText": {
           "title": "Quick Record Text",
           "desc": "Quickly open the main window and switch to text recording."
         }
       }
-    }
+    },
+    "title": "Settings"
   },
   "record": {
     "trash": {
       "title": "Empty Trash",
       "confirm": "Are you sure to empty the trash?",
       "records": "{count} records can be restored",
+      "syncWarning": "This operation will sync to other devices.",
       "empty": "Empty",
       "restoreAll": "Restore All",
       "close": "Close Trash"
@@ -1350,6 +1645,72 @@
       "recorded": "Recorded",
       "record": "Record",
       "detected": "Detected"
+    },
+    "capture": {
+      "saveTarget": "Save to",
+      "saveTargetPlaceholder": "Select tag",
+      "saved": "Record saved",
+      "savedWithType": "{type} saved. You can continue editing or organize it.",
+      "viewRecord": "View",
+      "processingInBackground": "Processing in the background. It will appear in the record list when done.",
+      "elapsedSeconds": "{seconds}s",
+      "importAudio": "Import audio",
+      "smartClipboard": "Clipboard",
+      "clipboardEmpty": "Clipboard is empty",
+      "clipboardEmptyDescription": "Copy text or a link, then try again.",
+      "linkFetchFailed": "Failed to fetch webpage content",
+      "fileUnsupportedSaved": "File saved",
+      "fileUnsupportedDescription": "Text extraction is not supported for this file type, so it was saved as an attachment.",
+      "fileUnsupportedContent": "Text extraction is not supported for this file type. The original file path was saved.",
+      "fileReadFailed": "Failed to read file text. The original file path was saved.",
+      "imageUploadFallback": "Image saved locally",
+      "imageUploadFallbackDescription": "Image hosting upload failed, so the local image was kept.",
+      "screenshotRecordTitle": "Screenshot Record",
+      "screenshotCapturing": "Capturing available windows...",
+      "screenshotCaptureFailed": "Unable to capture the screen",
+      "screenshotPermissionHint": "Check the system screen recording permission, then retry.",
+      "screenshotEmpty": "No capturable windows found",
+      "screenshotSourceCount": "{count} windows available",
+      "screenshotNoSource": "No window available",
+      "screenshotRefresh": "Refresh",
+      "retry": "Retry",
+      "screenshotSave": "Save screenshot",
+      "screenshotSaveAndRecognize": "Save and recognize",
+      "screenshotSaveOnly": "Save screenshot only",
+      "screenshotSaveFailed": "Failed to save screenshot record",
+      "screenshotRecognitionPending": "Screenshot saved. Image recognition is running...",
+      "screenshotRecognitionComplete": "Image recognition complete",
+      "screenshotRecognitionFailed": "Image recognition failed",
+      "screenshotRecognitionAuto": "Auto",
+      "screenshotRecognitionOff": "Recognition off",
+      "screenshotRecognitionMethod": "Recognition",
+      "screenshotNoText": "No text was recognized from this screenshot",
+      "screenshotSavedOnly": "Image saved without recognition",
+      "screenshotRecognizing": "Recognizing...",
+      "screenshotRecognizeAgain": "Recognize again",
+      "screenshotAiDescription": "AI description",
+      "screenshotOcrContent": "OCR content",
+      "screenshotCopyImageLink": "Copy image link",
+      "screenshotShowInFolder": "Show in folder",
+      "screenshotKeyboardHint": "Enter to save, Esc to cancel, arrow keys to switch source.",
+      "screenshotModeWindow": "Window",
+      "screenshotModeRegion": "Region",
+      "screenshotModeDisplay": "Display"
+    },
+    "syncStatus": {
+      "checking_remote": "Checking remote updates",
+      "queued": "Queued for sync",
+      "uploading": "Sync upload in progress",
+      "uploadingRecords": "Uploading records",
+      "uploadingSettings": "Uploading settings",
+      "downloading": "Pulling remote content",
+      "failed": "Sync failed",
+      "conflict": "Sync conflict detected",
+      "waiting_provider": "Waiting for a sync provider",
+      "synced": "Synced",
+      "queuedDesc": "{count} sync tasks pending",
+      "retry": "Retry",
+      "settings": "Settings"
     },
     "mark": {
       "empty": "No records yet",
@@ -1376,7 +1737,9 @@
       "content": "Content",
       "progress": {
         "cacheImage": "Caching image",
+        "vlm": "VLM recognition",
         "ocr": "OCR recognition",
+        "description": "Generating description",
         "aiAnalysis": "AI content analysis",
         "uploadImage": "Uploading to image host",
         "jsdelivrCache": "Notifying jsdelivr cache",
@@ -1384,9 +1747,7 @@
         "cacheScreenshot": "Caching screenshot",
         "textAnalysis": "Text analysis",
         "save": "Saving",
-        "saveImage": "Saving image",
-        "newToken": "Create access token",
-        "newTokenDesc": "New token must be configured with repo permission, configuration will automatically create file repository (private) and image repository."
+        "saveImage": "Saving image"
       },
       "imageGallery": {
         "expand": "Expand",
@@ -1521,25 +1882,8 @@
             "subtitle": "Use Chat or Agent mode to interact with AI",
             "currentModel": "Current Model",
             "currentPrompt": "Current Prompt",
-            "currentMode": "Conversation Mode",
             "noModel": "No model set",
             "noPrompt": "No prompt set",
-            "configureModel": "Configure Model",
-            "recentConversations": "Recent Conversations",
-            "deleteConversation": "Delete conversation",
-            "conversationHistory": "History",
-            "viewMore": "View more",
-            "messages": "messages",
-            "searchPlaceholder": "Search conversations...",
-            "noMatchingConversations": "No matching conversations found",
-            "noConversationHistory": "No conversation history",
-            "quickPrompts": {
-              "title": "Quick Start",
-              "writeNote": "Help me write a note",
-              "summarize": "Help me summarize this content",
-              "brainstorm": "Help me brainstorm ideas",
-              "explain": "Help me explain this concept"
-            },
             "modeHint": "Click the",
             "modeHintSuffix": "button on the left side of the input box to switch conversation mode"
           },
@@ -1630,14 +1974,6 @@
         "viewFolder": "View Folder",
         "viewFile": "View Original File",
         "deleteForever": "Delete Forever",
-        "sortByName": "Sort by Name",
-        "sortByCreated": "Sort by Created",
-        "sortByModified": "Sort by Modified",
-        "sortAsc": "Sort Ascending",
-        "sortDesc": "Sort Descending",
-        "sort": "Sort",
-        "processingVectors": "Processing Vector Data",
-        "calculateVectors": "Calculate Document Vectors",
         "multiSelect": "Multi Select",
         "multiSelectMode": "Multi Select Mode",
         "exitMultiSelect": "Exit Multi Select",
@@ -1698,20 +2034,6 @@
         "message": "Condensed {count} historical messages"
       },
       "empty": {
-        "features": [
-          {
-            "chat": "Chat with AI bot"
-          },
-          {
-            "linked": "Linked with your records or notes"
-          },
-          {
-            "clipboard": "Recognize clipboard records or images"
-          },
-          {
-            "organize": "Organize your records into notes"
-          }
-        ],
         "title": "Start chatting with AI",
         "subtitle": "Interact with AI using Chat or Agent mode",
         "currentModel": "Current Model",
@@ -1767,6 +2089,59 @@
         "filterThinkingContent": "Remove thinking content from records",
         "startOrganize": "Start organizing",
         "manageTemplate": "Manage template",
+        "quickOrganize": "Quick organize",
+        "quickOrganizeHelp": "Use the current template and default settings, skip record selection and generation settings, and start organizing.",
+        "templateManager": "Template manager",
+        "moreTemplates": "More",
+        "searchTemplates": "Search templates",
+        "showMore": "Expand",
+        "showLess": "Collapse",
+        "recordCount": "{count} records",
+        "recordPreview": "Record preview",
+        "previewEmpty": "No records to preview in the selected range",
+        "previewMore": "Show latest {count}",
+        "selectTemplate": "Select template",
+        "stepTemplate": "Organize template",
+        "templateStepDescription": "Controls how AI structures the note, what it emphasizes, and which record range it uses.",
+        "stepRecords": "Select records",
+        "recordsStepDescription": "Choose the records to use, switch scope by tag, and remove anything not needed.",
+        "stepSettings": "Generation settings",
+        "settingsStepDescription": "Set the output title, save location, source handling, and extra requirements for this run.",
+        "nextStep": "Next",
+        "previousStep": "Previous",
+        "generationSettings": "Generation settings",
+        "generationSettingsHelp": "Confirm output language, title, save location, and included content.",
+        "outputLanguage": "Output language",
+        "outputLanguageAuto": "Follow app language",
+        "outputLanguageZh": "简体中文",
+        "outputLanguageZhTW": "繁體中文",
+        "outputLanguageEn": "English",
+        "outputLanguageJa": "日本語",
+        "outputLanguagePtBR": "Português",
+        "outputLanguageCustom": "Custom",
+        "outputLanguageCustomPlaceholder": "For example: use French, or use natural conversational Chinese",
+        "outputLanguageHelp": "Choose a common language, or select Custom to manually enter the output language requirement.",
+        "articleTitle": "Article title",
+        "articleTitlePlaceholder": "Leave blank to let AI generate a title",
+        "saveFolder": "Save location",
+        "saveFolderRoot": "Root directory",
+        "currentSaveFolder": "Current save location",
+        "noFolderAvailable": "No folders available",
+        "includeImages": "Include images",
+        "includeReferences": "Keep reference links",
+        "additionalRequirement": "Additional requirements",
+        "additionalRequirementPlaceholder": "Add any specific requirements for this organization",
+        "selectedRecordCount": "{selected}/{total} selected",
+        "selectAllRecords": "Select all",
+        "clearRecordSelection": "Clear",
+        "useRecord": "Use this record",
+        "recordSelectionHelp": "Uncheck records you do not want AI to use. Images and recordings can be previewed here.",
+        "noRecordsSelected": "Select at least one record",
+        "noRecords": "No records available to organize",
+        "noRecordsInRange": "No records in the selected range",
+        "noTemplateAvailable": "No available templates",
+        "copyTemplate": "Copy template",
+        "copySuffix": "Copy",
         "cancel": "Cancel",
         "stop": "Stop"
       },
@@ -1835,6 +2210,20 @@
           "agentDescription": "Smart assistant, can execute actions"
         },
         "attachImage": "Attach images",
+        "imageAttachment": {
+          "selectSuccess": "{count, plural, one {Attached # image} other {Attached # images}}",
+          "pasteSuccess": "{count, plural, one {Pasted # image} other {Pasted # images}}",
+          "dropSuccess": "{count, plural, one {Dropped # image} other {Dropped # images}}",
+          "maxCount": "You can attach up to {count} images",
+          "oversized": "{name} is larger than {size} and was skipped",
+          "oversizedMultiple": "{count} images are larger than {size} and were skipped",
+          "unsupported": "{name} is not a supported image format",
+          "unsupportedMultiple": "{count} files are not supported image formats",
+          "saveFailed": "Failed to save image. Please try again",
+          "saveFailedMultiple": "Failed to save {count} images. Please try again",
+          "selectFailed": "Failed to select images. Please try again",
+          "dropHint": "Drop images to attach"
+        },
         "imageSelector": {
           "title": "Select Images",
           "local": "Local Files",
@@ -1927,6 +2316,10 @@
           "searchPlaceholder": "Search files...",
           "noFiles": "No files found",
           "loading": "Loading..."
+        },
+        "clearChat": "Clear chat",
+        "clearContext": {
+          "tooltip": "Clear context"
         }
       },
       "header": {
@@ -1989,10 +2382,6 @@
     "results": "{count} search results",
     "noResults": "No search results",
     "tryDifferentKeywords": "Try using different keywords",
-    "mode": {
-      "fuzzy": "Fuzzy",
-      "exact": "Exact"
-    },
     "item": {
       "record": "Record",
       "article": "Article",
@@ -2015,6 +2404,13 @@
     "quickRecord": "Quick Record",
     "write": "Write",
     "me": "My",
+    "mobileDock": {
+      "chat": "Chat",
+      "record": "Record",
+      "quickRecord": "Quick",
+      "write": "Write",
+      "me": "Me"
+    },
     "search": "Search",
     "githubImageHosting": "Github Image Hosting",
     "login": "Login",
@@ -2031,7 +2427,8 @@
     "hideCenterPanel": "Hide Editor",
     "showRightSidebar": "Show Right Sidebar",
     "hideRightSidebar": "Hide Right Sidebar",
-    "searchPlaceholder": "Search notes or records..."
+    "searchPlaceholder": "Search notes or records...",
+    "navigate": "Navigate"
   },
   "activity": {
     "title": "Activity Calendar",
@@ -2094,8 +2491,7 @@
   "article": {
     "sync": {
       "syncingRemote": "Pulling remote file...",
-      "syncComplete": "Sync Complete",
-      "pullingRemote": "Fetching latest content from remote server..."
+      "syncComplete": "Sync Complete"
     },
     "syncConfirm": {
       "title": "Remote File Update Detected",
@@ -2258,6 +2654,8 @@
         "confirmDelete": "Are you sure you want to delete the folder \"{name}\"? This will delete the folder and all its contents.",
         "deleteSuccess": "Deleted successfully",
         "deleteFailed": "Delete failed",
+        "moveFailed": "Move failed",
+        "invalidMoveTarget": "Cannot move into itself or a subfolder",
         "newFile": "New File",
         "newFolder": "New Folder",
         "syncFolder": "Sync Folder",
@@ -2327,43 +2725,6 @@
         "pasteFailed": "Paste operation failed",
         "empty": "Clipboard is empty",
         "confirmOverwrite": "File already exists, do you want to overwrite it?",
-        "mark": {
-          "title": "Records",
-          "tooltip": "Use Records",
-          "description": "Convert records into content to insert into the article.",
-          "noRecords": "No records",
-          "ocrNoContent": "OCR did not recognize any content"
-        },
-        "question": {
-          "tooltip": "Q&A",
-          "selectContent": "Please select content first",
-          "promptTemplate": "Reference text: \n{content}\nBased on the question: \n{question}\n, directly provide the answer content."
-        },
-        "continue": {
-          "tooltip": "Continue",
-          "promptTemplate": "Based on the preceding text: \n{content}\n continue writing and return content not exceeding 100 words.\nYou can reference the following text: \n{endContent}\n, but avoid duplicating its content."
-        },
-        "polish": {
-          "tooltip": "Polish",
-          "selectContent": "Please select content first",
-          "promptTemplate": "Polish this text: \n{content}\n, keep the language unchanged, fix typos and grammatical errors, directly return the polished result."
-        },
-        "eraser": {
-          "tooltip": "Simplify",
-          "selectContent": "Please select content first",
-          "promptTemplate": "Simplify this text: \n{content}\n, this text is too verbose, reduce the word count by at least half, keep the language unchanged, directly return the optimized result."
-        },
-        "expansion": {
-          "tooltip": "Expand",
-          "selectContent": "Please select content first",
-          "promptTemplate": "Expand this text: \n{content}\n, this text is too short, increase the word count by at least half, keep the language unchanged, directly return the expanded result."
-        },
-        "translation": {
-          "tooltip": "Translate",
-          "description": "Translate the selected text",
-          "selectContent": "Please select content first",
-          "promptTemplate": "Translate this text: \n{content}\n, into {language}, directly return the translated result."
-        },
         "notSupported": "Operation not supported"
       },
       "mobile": {
@@ -2407,9 +2768,6 @@
         }
       },
       "toolbar": {
-        "organize": {
-          "tooltip": "Organize Notes"
-        },
         "mark": {
           "title": "Records",
           "tooltip": "Records",
@@ -2569,7 +2927,10 @@
         "tools": {
           "title": "Tools",
           "newChat": "New Chat",
-          "start": "Start"
+          "start": "Start",
+          "clear": "Clear",
+          "clearChat": "Clear Chat",
+          "clearContext": "Clear Context"
         },
         "attachments": {
           "title": "Attachments",
@@ -2619,40 +2980,14 @@
     "retrySuccess": "Transcription updated",
     "retryError": "Retry transcription failed",
     "noContentDetected": "No content detected",
+    "pendingTranscription": "Original audio saved. Ready to retry transcription.",
+    "pendingModelConfiguration": "Original audio saved. Configure speech recognition to transcribe it.",
     "doubleClickToSelectFile": "Double click to select audio file",
     "mode": {
       "builtin": "Browser Recognition",
       "builtinDesc": "Free, real-time recognition",
       "model": "AI Model Recognition",
       "modelDesc": "Requires STT model, more accurate"
-    }
-  },
-  "footer": {
-    "wordCount": "Words",
-    "sync": {
-      "sync": "Sync",
-      "synced": "Synced",
-      "syncing": "Syncing",
-      "syncFailed": "Sync Failed",
-      "checkNetworkOrToken": "Please check network connection or token",
-      "quickSync": "Quick Sync"
-    },
-    "history": {
-      "loadingHistory": "Loading history",
-      "historyRecords": "History Records",
-      "noHistory": "No History",
-      "loading": "Loading",
-      "recordsCount": "records",
-      "filterQuickSync": "Filter Quick Syncs",
-      "committedAt": "committed at",
-      "pull": "Pull",
-      "quickSync": "Quick Sync"
-    },
-    "vectorCalc": {
-      "tooltip": "Vector Calculation: Auto-calculate 30s after editing, or click to calculate now",
-      "calculating": "Calculating",
-      "pending": "Pending {progress}%",
-      "synced": "Synced"
     }
   },
   "quickRecord": {
@@ -2663,7 +2998,16 @@
     "outline": {
       "title": "Outline",
       "open": "Open Outline",
-      "close": "Close Outline"
+      "close": "Close Outline",
+      "empty": "No headings",
+      "noResults": "No matching headings",
+      "searchPlaceholder": "Search headings",
+      "clearSearch": "Clear search",
+      "expandHeading": "Expand {title}",
+      "collapseHeading": "Collapse {title}",
+      "untitledHeading": "Untitled H{level}",
+      "resizeHandle": "Drag to resize outline",
+      "editHeading": "Edit heading {title}"
     },
     "translation": {
       "fail": "Translation failed",
@@ -2719,6 +3063,7 @@
     "aiSuggestion": {
       "accept": "Accept",
       "reject": "Reject",
+      "undo": "Undo",
       "generating": "Generating...",
       "abort": "Abort"
     },
@@ -2734,11 +3079,17 @@
       "sizeOriginal": "Original Size",
       "editAlt": "Edit Alt Text",
       "editSrc": "Edit URL",
+      "editSize": "Set Size",
+      "resetSize": "Reset Size",
+      "widthPlaceholder": "W",
+      "heightPlaceholder": "H",
       "altPlaceholder": "Enter alt text...",
       "srcPlaceholder": "Enter image URL...",
       "delete": "Delete Image",
+      "reset": "Reset",
       "confirm": "Confirm",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "failed": "Image processing failed"
     },
     "mermaid": {
       "rendering": "Rendering...",
@@ -2783,12 +3134,24 @@
       "items": {
         "continue": "Continue",
         "continueDesc": "AI continue writing content",
+        "generateSection": "Generate Section",
+        "generateSectionDesc": "Generate a new section from the current note",
+        "summarize": "Summarize",
+        "summarizeDesc": "Summarize the current note",
+        "customInstruction": "Custom Instruction",
+        "customInstructionDesc": "Enter your own instruction for AI",
         "heading1": "Heading 1",
         "heading1Desc": "Large heading",
         "heading2": "Heading 2",
         "heading2Desc": "Medium heading",
         "heading3": "Heading 3",
         "heading3Desc": "Small heading",
+        "heading4": "Heading 4",
+        "heading4Desc": "Level 4 heading",
+        "heading5": "Heading 5",
+        "heading5Desc": "Level 5 heading",
+        "heading6": "Heading 6",
+        "heading6Desc": "Level 6 heading",
         "bulletList": "Bullet List",
         "bulletListDesc": "Create a simple bullet list",
         "orderedList": "Ordered List",
@@ -2797,6 +3160,8 @@
         "taskListDesc": "Create a checklist with checkboxes",
         "image": "Image",
         "imageDesc": "Insert local or hosted image",
+        "file": "File",
+        "fileDesc": "Choose a local file and insert a link",
         "table": "Table",
         "tableDesc": "Insert a table",
         "blockquote": "Quote",
@@ -2831,6 +3196,14 @@
         "saveSuccess": "Save successful",
         "savePath": "Saved to: {path}",
         "failed": "Failed to insert image"
+      },
+      "fileInsert": {
+        "failed": "Failed to insert file link"
+      },
+      "customPrompt": {
+        "ariaLabel": "Custom AI instruction",
+        "placeholder": "Enter AI instruction",
+        "submit": "Run"
       }
     }
   },

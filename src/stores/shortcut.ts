@@ -21,23 +21,42 @@ const defaultShortcuts: Shortcut[] = [
     value: "CommandOrControl+Shift+W"
   },
   {
+    key: 'screenshotRecord',
+    value: 'CommandOrControl+Shift+S'
+  },
+  {
     key: 'quickRecordText',
     value: 'CommandOrControl+Shift+T'
   }
 ]
 
-async function bindShortcut(shortcut: Shortcut) {
+function emitShortcutEvent(key: string) {
+  if (key === 'screenshotRecord') {
+    emitter.emit('toolbar-shortcut-scan')
+    return
+  }
+
+  emitter.emit(key)
+}
+
+async function bindShortcuts(shortcuts: Shortcut[]) {
   await unregisterAll()
-  try {
-    if (shortcut.value) {
-      await register(shortcut.value, (event) => {
+
+  const registeredValues = new Set<string>()
+
+  for (const shortcut of shortcuts) {
+    try {
+      if (shortcut.value && !registeredValues.has(shortcut.value)) {
+        await register(shortcut.value, (event) => {
         if (event.state === 'Pressed') {
-          emitter.emit(shortcut.key)
+            emitShortcutEvent(shortcut.key)
         }
       });
+        registeredValues.add(shortcut.value)
+      }
+    } catch (error) {
+      console.error(`Failed to register shortcut ${shortcut.value}:`, error);
     }
-  } catch (error) {
-    console.error(`Failed to register shortcut ${shortcut.value}:`, error);
   }
 }
 
@@ -57,15 +76,11 @@ const useShortcutStore = create<SettingState>((set, get) => ({
         }
       })
       set({ shortcuts: mergeShortcuts })
-      mergeShortcuts.forEach(async (shortcut) => {
-        await bindShortcut(shortcut)
-      })
+      await bindShortcuts(mergeShortcuts)
     } else {
       await store.set('shortcuts', defaultShortcuts)
       set({ shortcuts: defaultShortcuts })
-      defaultShortcuts.forEach(async (shortcut) => {
-        await bindShortcut(shortcut)
-      })
+      await bindShortcuts(defaultShortcuts)
     }
   },
 
@@ -79,9 +94,7 @@ const useShortcutStore = create<SettingState>((set, get) => ({
     })
     await store.set('shortcuts', newShortcuts)
     set({ shortcuts: newShortcuts })
-    newShortcuts.forEach(async (shortcut: Shortcut) => {
-      await bindShortcut(shortcut)
-    })
+    await bindShortcuts(newShortcuts)
   },
 
   resetDefault: async (key: string) => {
@@ -94,9 +107,7 @@ const useShortcutStore = create<SettingState>((set, get) => ({
     })
     await store.set('shortcuts', newShortcuts)
     set({ shortcuts: newShortcuts })
-    newShortcuts.forEach(async (shortcut: Shortcut) => {
-      await bindShortcut(shortcut)
-    })
+    await bindShortcuts(newShortcuts)
   },
 }))
 

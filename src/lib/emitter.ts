@@ -72,6 +72,7 @@ interface Events {
   'screenshot-shortcut-register': unknown;
   'text-shortcut-register': unknown;
   'window-pin-register': unknown;
+  'window-pin-changed': boolean;
   'link-shortcut-register': unknown;
   'refresh-marks': unknown;
   'quick-prompt-insert': string;
@@ -107,10 +108,12 @@ interface Events {
     generatedRange?: { from: number; to: number };
   };
   'abort-ai-streaming': void;
+  'accept-ai-suggestion': void;
+  'reject-ai-suggestion': void;
   // Agent 编辑器工具事件 - 内联定义避免重复
   'editor-get-selection': { resolve: (data: { text: string; from: number; to: number; html?: string; startLine?: number; endLine?: number }) => void };
   'editor-get-content': { resolve: (data: { markdown: string; text: string; wordCount: number; charCount: number; totalLines?: number; numberedLines?: string; version: number }) => void };
-  'editor-insert': { content: string; resolve: (result: { success: boolean; insertedLength: number; newCursorPosition?: number }) => void };
+  'editor-insert': { content: string; position?: number; resolve: (result: { success: boolean; insertedLength: number; newCursorPosition?: number }) => void };
   'editor-undo': void;
   'editor-redo': void;
   'mobile-editor-toggle-outline': void;

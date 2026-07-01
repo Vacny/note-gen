@@ -11,6 +11,11 @@ import { applyThemeColors, removeThemeColors } from '@/lib/theme-utils'
 import { getNormalizedImageHosting } from '@/lib/image-hosting-config'
 import { normalizeSpeechMode } from '@/lib/speech/preferences'
 import type { SpeechMode } from '@/lib/speech/types'
+import { applyNoteGenDefaultConfig, loadNoteGenDefaultConfig } from '@/lib/ai/notegen-default-models-runtime'
+import { enqueueAutoDataSync, isAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-queue'
+import { shouldExcludeFromSync } from '@/config/sync-exclusions'
+import { DEFAULT_SYSTEM_PROMPT } from '@/lib/ai/system-prompt'
+import { APP_FONT_SYSTEM_VALUE, applyAppFontFamily } from '@/lib/font-settings'
 
 export enum GenTemplateRange {
   All = 'all',
@@ -40,6 +45,9 @@ interface SettingState {
 
   language: string
   setLanguage: (language: string) => void
+
+  appFontFamily: string
+  setAppFontFamily: (fontFamily: string) => Promise<void>
 
   // setting - ai - 当前选择的模型 key
   currentAi: string
@@ -90,6 +98,9 @@ interface SettingState {
   inspirationModel: string
   setInspirationModel: (inspirationModel: string) => Promise<void>
 
+  systemPrompt: string
+  setSystemPrompt: (systemPrompt: string) => Promise<void>
+
   templateList: GenTemplate[]
   setTemplateList: (templateList: GenTemplate[]) => Promise<void>
 
@@ -101,9 +112,6 @@ interface SettingState {
 
   codeTheme: string
   setCodeTheme: (codeTheme: string) => void
-
-  tesseractList: string
-  setTesseractList: (tesseractList: string) => void
 
   // Github 相关设置
   githubUsername: string
@@ -120,6 +128,12 @@ interface SettingState {
 
   autoSync: string
   setAutoSync: (autoSync: string) => Promise<void>
+
+  autoDataSyncEnabled: boolean
+  setAutoDataSyncEnabled: (enabled: boolean) => Promise<void>
+
+  excludeSensitiveConfig: boolean
+  setExcludeSensitiveConfig: (enabled: boolean) => Promise<void>
 
   // 自动拉取相关设置
   autoPullOnOpen: boolean
@@ -209,8 +223,6 @@ interface SettingState {
   // 图片识别设置
   enableImageRecognition: boolean
   setEnableImageRecognition: (enable: boolean) => Promise<void>
-  primaryImageMethod: 'ocr' | 'vlm'
-  setPrimaryImageMethod: (method: 'ocr' | 'vlm') => Promise<void>
 
   // 界面缩放设置
   uiScale: number
@@ -270,6 +282,60 @@ export interface RecordToolbarItem {
   order: number
 }
 
+let settingAutoSyncReady = false
+let settingAutoSyncSubscriptionInitialized = false
+
+function getChangedSyncableSettingKeys(current: SettingState, previous: SettingState): string[] {
+  const currentRecord = current as unknown as Record<string, unknown>
+  const previousRecord = previous as unknown as Record<string, unknown>
+  const excludeSensitiveConfig = current.excludeSensitiveConfig !== false
+
+  return Object.keys(currentRecord).filter((key) => {
+    if (typeof currentRecord[key] === 'function') {
+      return false
+    }
+
+    if (shouldExcludeFromSync(key, { excludeSensitiveConfig })) {
+      return false
+    }
+
+    return currentRecord[key] !== previousRecord[key]
+  })
+}
+
+function initSettingAutoSyncSubscription() {
+  if (settingAutoSyncSubscriptionInitialized) {
+    return
+  }
+
+  settingAutoSyncSubscriptionInitialized = true
+
+  useSettingStore.subscribe((current, previous) => {
+    if (!settingAutoSyncReady || isAutoDataSyncApplyingRemote()) {
+      return
+    }
+
+    const changedKeys = getChangedSyncableSettingKeys(current, previous)
+    if (changedKeys.length === 0) {
+      return
+    }
+
+    void persistChangedSyncableSettings(current, changedKeys)
+  })
+}
+
+async function persistChangedSyncableSettings(state: SettingState, changedKeys: string[]) {
+  const store = await Store.load('store.json')
+  const stateRecord = state as unknown as Record<string, unknown>
+
+  for (const key of changedKeys) {
+    await store.set(key, stateRecord[key])
+  }
+
+  await store.save()
+  enqueueAutoDataSync('settings', `settings:${changedKeys.join(',')}`)
+}
+
 
 const useSettingStore = create<SettingState>((set, get) => ({
   initSettingData: async () => {
@@ -290,9 +356,9 @@ const useSettingStore = create<SettingState>((set, get) => ({
       config.models?.some(model => noteGenModelKeys.includes(model.id))
     )
     
-    let finalAiModelList = existingAiModelList
-    if (!hasNoteGenModels) {
-      finalAiModelList = [...existingAiModelList, ...noteGenDefaultModels]
+    const noteGenDefaultConfig = await loadNoteGenDefaultConfig(noteGenDefaultModels[0])
+    let finalAiModelList = applyNoteGenDefaultConfig(existingAiModelList, noteGenDefaultConfig)
+    if (JSON.stringify(finalAiModelList) !== JSON.stringify(existingAiModelList)) {
       await store.set('aiModelList', finalAiModelList)
       set({ aiModelList: finalAiModelList })
     }
@@ -328,23 +394,6 @@ const useSettingStore = create<SettingState>((set, get) => ({
       } else {
         await store.set('embeddingModel', 'note-gen-embedding')
         set({ embeddingModel: 'note-gen-embedding' })
-      }
-    }
-
-    // 检查是否设置了视觉语言模型，如果没有且存在note-gen-vlm，则设置为默认视觉语言模型
-    const currentImageMethodModel = await store.get('imageMethodModel') as string
-    const hasNoteGenVlm = finalAiModelList.some(config => 
-      config.models?.some(model => model.id === 'note-gen-vlm') || config.key === 'note-gen-vlm'
-    )
-    
-    if (!currentImageMethodModel && hasNoteGenVlm) {
-      const noteGenFreeConfig = finalAiModelList.find(config => config.key === 'note-gen-free')
-      if (noteGenFreeConfig?.models?.some(model => model.id === 'note-gen-vlm')) {
-        await store.set('imageMethodModel', 'note-gen-vlm')
-        set({ imageMethodModel: 'note-gen-vlm' })
-      } else {
-        await store.set('imageMethodModel', 'note-gen-vlm')
-        set({ imageMethodModel: 'note-gen-vlm' })
       }
     }
 
@@ -468,7 +517,8 @@ const useSettingStore = create<SettingState>((set, get) => ({
         // 过滤出不在默认模型中的限时免费模型
         const limitedModels = resModels.data.filter((model: any) => {
           // 检查是否在 noteGenDefaultModels 的 models 数组中
-          return !noteGenDefaultModels[0].models?.some(defaultModel => defaultModel.model === model.id)
+          const noteGenFreeConfig = finalAiModelList.find(config => config.key === 'note-gen-free')
+          return !noteGenFreeConfig?.models?.some(defaultModel => defaultModel.model === model.id)
         })
         
         // 如果有限时免费模型,创建统一的 NoteGen Limited 配置
@@ -498,7 +548,7 @@ const useSettingStore = create<SettingState>((set, get) => ({
       console.debug('NoteGen API service unavailable, skipping limited models:', error)
     }
 
-    Object.entries(get()).forEach(async ([key, value]) => {
+    await Promise.all(Object.entries(get()).map(async ([key, value]) => {
       const res = await store.get(key)
 
       if (typeof value === 'function') return
@@ -565,7 +615,10 @@ const useSettingStore = create<SettingState>((set, get) => ({
       } else {
         await store.set(key, value)
       }
-    })
+    }))
+
+    initSettingAutoSyncSubscription()
+    settingAutoSyncReady = true
   },
 
   version: '',
@@ -579,6 +632,15 @@ const useSettingStore = create<SettingState>((set, get) => ({
 
   language: '简体中文',
   setLanguage: (language) => set({ language }),
+
+  appFontFamily: APP_FONT_SYSTEM_VALUE,
+  setAppFontFamily: async (fontFamily) => {
+    set({ appFontFamily: fontFamily })
+    applyAppFontFamily(fontFamily)
+    const store = await Store.load('store.json')
+    await store.set('appFontFamily', fontFamily)
+    await store.save()
+  },
 
   currentAi: '',
   setCurrentAi: (currentAi) => set({ currentAi }),
@@ -682,6 +744,14 @@ const useSettingStore = create<SettingState>((set, get) => ({
     set({ inspirationModel })
   },
 
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  setSystemPrompt: async (systemPrompt) => {
+    set({ systemPrompt })
+    const store = await Store.load('store.json')
+    await store.set('systemPrompt', systemPrompt)
+    await store.save()
+  },
+
   templateList: [
     {
       id: '0',
@@ -715,9 +785,6 @@ const useSettingStore = create<SettingState>((set, get) => ({
 
   codeTheme: 'github',
   setCodeTheme: (codeTheme) => set({ codeTheme }),
-
-  tesseractList: 'eng,chi_sim',
-  setTesseractList: (tesseractList) => set({ tesseractList }),
 
   githubUsername: '',
   setGithubUsername: async (githubUsername) => {
@@ -757,15 +824,35 @@ const useSettingStore = create<SettingState>((set, get) => ({
     await store.save()
   },
 
-  autoSync: 'disabled',
+  autoSync: '5',
   setAutoSync: async (autoSync: string) => {
     set({ autoSync })
     const store = await Store.load('store.json');
     await store.set('autoSync', autoSync)
   },
 
-  // 自动拉取相关设置 - 默认关闭
-  autoPullOnOpen: false,
+  autoDataSyncEnabled: true,
+  setAutoDataSyncEnabled: async (autoDataSyncEnabled: boolean) => {
+    set({ autoDataSyncEnabled })
+    const store = await Store.load('store.json')
+    await store.set('autoDataSyncEnabled', autoDataSyncEnabled)
+    await store.save()
+  },
+
+  excludeSensitiveConfig: true,
+  setExcludeSensitiveConfig: async (excludeSensitiveConfig: boolean) => {
+    set({ excludeSensitiveConfig })
+    const store = await Store.load('store.json')
+    await store.set('excludeSensitiveConfig', excludeSensitiveConfig)
+    await store.save()
+
+    if (!isAutoDataSyncApplyingRemote()) {
+      enqueueAutoDataSync('settings', 'settings:exclude-sensitive-config')
+    }
+  },
+
+  // 自动拉取相关设置 - 默认开启
+  autoPullOnOpen: true,
   setAutoPullOnOpen: async (autoPullOnOpen: boolean) => {
     set({ autoPullOnOpen })
     const store = await Store.load('store.json');
@@ -781,7 +868,7 @@ const useSettingStore = create<SettingState>((set, get) => ({
     }
   },
 
-  autoPullOnSwitch: false,
+  autoPullOnSwitch: true,
   setAutoPullOnSwitch: async (autoPullOnSwitch: boolean) => {
     set({ autoPullOnSwitch })
     const store = await Store.load('store.json');
@@ -797,7 +884,7 @@ const useSettingStore = create<SettingState>((set, get) => ({
     }
   },
 
-  lastSettingPage: 'ai',
+  lastSettingPage: 'about',
   setLastSettingPage: async (page: string) => {
     set({ lastSettingPage: page })
     const store = await Store.load('store.json');
@@ -971,13 +1058,6 @@ const useSettingStore = create<SettingState>((set, get) => ({
     set({ enableImageRecognition: enable })
     const store = await Store.load('store.json');
     await store.set('enableImageRecognition', enable)
-    await store.save()
-  },
-  primaryImageMethod: 'vlm',
-  setPrimaryImageMethod: async (method: 'ocr' | 'vlm') => {
-    set({ primaryImageMethod: method })
-    const store = await Store.load('store.json');
-    await store.set('primaryImageMethod', method)
     await store.save()
   },
 

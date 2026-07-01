@@ -2,7 +2,7 @@ import { toast } from '@/hooks/use-toast';
 import { Store } from '@tauri-apps/plugin-store';
 import { v4 as uuid } from 'uuid';
 import { fetch, Proxy } from '@tauri-apps/plugin-http'
-import { buildRepoContentPath, buildRepoContentsEndpoint, pickNestedFileEntry } from './remote-file'
+import { buildRepoContentPath, buildRepoContentsEndpoint, debugSyncPath, pickNestedFileEntry } from './remote-file'
 export { decodeBase64ToString } from './remote-file'
 // Remove unused imports - these types are not actually used in this file
 
@@ -117,9 +117,67 @@ interface Links {
   html: string;
 }
 
+type GiteeDirectoryFileEntry = Partial<GiteeFile> & {
+  content?: string
+  url?: string
+  download_url?: string | null
+}
+type GiteeDirectoryListingResult = GiteeDirectoryFileEntry[] & GiteeDirectoryFileEntry
+type GiteeGetFilesResult = GiteeDirectoryFileEntry | GiteeDirectoryListingResult | null | undefined
+
 function looksLikeFilePath(path?: string) {
   const lastSegment = path?.split('/').filter(Boolean).pop() || ''
   return lastSegment.includes('.')
+}
+
+function appendAccessToken(url: string, accessToken: string) {
+  try {
+    const parsedUrl = new URL(url)
+    if (!parsedUrl.searchParams.has('access_token')) {
+      parsedUrl.searchParams.set('access_token', accessToken)
+    }
+    return parsedUrl.toString()
+  } catch {
+    return url
+  }
+}
+
+async function resolveDirectoryFileEntryContent(
+  entry: GiteeDirectoryFileEntry,
+  accessToken: string,
+  proxy?: Proxy
+) {
+  if (typeof entry.content === 'string') {
+    return entry
+  }
+
+  const requestOptions = {
+    method: 'GET',
+    proxy,
+  }
+
+  if (entry.url) {
+    const response = await fetch(appendAccessToken(entry.url, accessToken), requestOptions)
+    if (response.status >= 200 && response.status < 300) {
+      const data = await response.json() as GiteeDirectoryFileEntry
+      if (typeof data.content === 'string') {
+        return data
+      }
+    }
+  }
+
+  if (entry.download_url) {
+    const response = await fetch(appendAccessToken(entry.download_url, accessToken), requestOptions)
+    if (response.status >= 200 && response.status < 300) {
+      const content = await response.text()
+      return {
+        ...entry,
+        content: Buffer.from(content, 'utf-8').toString('base64'),
+      }
+    }
+  }
+
+  return null
 }
 
 export async function uploadFile(
@@ -139,7 +197,7 @@ export async function uploadFile(
   
   try {
     let targetPath = path
-    let resolvedExistingFile: GiteeFile | null = null
+    let resolvedExistingFile: GiteeDirectoryFileEntry | null = null
     if (path) {
       const existingFile = await getFiles({ path, repo })
       if (existingFile && !Array.isArray(existingFile)) {
@@ -154,6 +212,13 @@ export async function uploadFile(
       : targetPath
       ? buildRepoContentPath({ path: targetPath, filename })
       : buildRepoContentPath({ filename: filename || id })
+    debugSyncPath('gitee.uploadFile', {
+      inputPath: path,
+      filename,
+      resolvedExistingPath: resolvedExistingFile?.path,
+      finalPath,
+      hasSha: Boolean(sha),
+    })
 
     // 将内容转换为 Base64（Gitee API 要求）
     const base64Content = Buffer.from(file, 'utf-8').toString('base64')
@@ -228,13 +293,17 @@ export async function uploadFile(
   }
 }
 
-export async function getFiles({ path, repo, ref }: { path: string, repo: string, ref?: string }) {
+export async function getFiles({ path, repo, ref }: { path: string, repo: string, ref?: string }): Promise<GiteeGetFilesResult> {
   const store = await Store.load('store.json');
   const accessToken = await store.get<string>('giteeAccessToken')
   if (!accessToken) return;
 
   const giteeUsername = await store.get<string>('giteeUsername')
   const normalizedPath = buildRepoContentPath({ path })
+  debugSyncPath('gitee.getFiles', {
+    inputPath: path,
+    normalizedPath,
+  })
 
   // 获取代理设置
   const proxyUrl = await store.get<string>('proxy')
@@ -259,12 +328,33 @@ export async function getFiles({ path, repo, ref }: { path: string, repo: string
     try {
       const response = await fetch(url, requestOptions);
       if (response.status >= 200 && response.status < 300) {
-        const data = await response.json();
+        const data = await response.json() as GiteeGetFilesResult;
         if (Array.isArray(data) && looksLikeFilePath(path)) {
           const nestedFile = pickNestedFileEntry(data, path)
-          if (nestedFile?.path && nestedFile.path !== path) {
-            return await getFiles({ path: nestedFile.path, repo, ref })
+          if (nestedFile) {
+            if (nestedFile.path && nestedFile.path !== path) {
+              const resolvedFile = await getFiles({ path: nestedFile.path, repo, ref })
+              if (resolvedFile && !Array.isArray(resolvedFile)) {
+                return resolvedFile
+              }
+            }
+
+            const resolvedEntry = await resolveDirectoryFileEntryContent(
+              nestedFile as GiteeDirectoryFileEntry,
+              accessToken,
+              proxy
+            )
+            if (resolvedEntry) {
+              return resolvedEntry
+            }
           }
+
+          debugSyncPath('gitee.getFiles.fileNotFoundFromListing', {
+            inputPath: path,
+            normalizedPath,
+            listingCount: data.length,
+          })
+          return null
         }
         return data;
       }

@@ -18,9 +18,10 @@ import { filterMarks, getTrashRecordFilters } from '@/app/core/main/mark/mark-fi
 import { getMarkTypeChipClasses, MARK_TYPE_OPTIONS } from '@/app/core/main/mark/mark-type-meta'
 import useMarkStore, { RecordTimePreset } from '@/stores/mark'
 import useTagStore from '@/stores/tag'
-import { clearTrash, delMark, delMarkForever, initMarksDb, Mark, restoreMark, restoreMarks, updateMark as updateMarkDb } from '@/db/marks'
+import { clearTrash, delMark, deleteMarks, delMarkForever, initMarksDb, Mark, restoreMark, restoreMarks, updateMark as updateMarkDb } from '@/db/marks'
 import { insertTag } from '@/db/tags'
-import { cn } from '@/lib/utils'
+import { cn, isHttpUrl } from '@/lib/utils'
+import { RecordSyncStatusBanner } from '@/components/record-sync-status-banner'
 
 const TIME_OPTIONS: RecordTimePreset[] = ['all', 'today', 'last7Days', 'last30Days']
 
@@ -29,6 +30,18 @@ function getMarkPreview(mark: Mark): string {
   if (mark.type === 'image' || mark.type === 'scan') return mark.desc?.trim() || mark.content?.trim() || ''
   if (mark.type === 'link') return mark.url || mark.desc || ''
   return mark.desc?.trim() || mark.content?.trim() || mark.url || ''
+}
+
+function getMarkImageSrc(mark: Mark) {
+  if (!mark.url || (mark.type !== 'image' && mark.type !== 'scan')) {
+    return ''
+  }
+
+  if (isHttpUrl(mark.url)) {
+    return mark.url
+  }
+
+  return `/${mark.type === 'scan' ? 'screenshot' : 'image'}/${mark.url}`
 }
 
 export function MobileRecordStream() {
@@ -47,6 +60,9 @@ export function MobileRecordStream() {
     resetRecordFilters,
     setVisibleMarkIds,
     initRecordFilters,
+    pendingScrollMarkId,
+    setPendingScrollMarkId,
+    highlightedMarkId,
   } = useMarkStore()
   const { tags, fetchTags, currentTagId, setCurrentTagId, initTags } = useTagStore()
 
@@ -174,6 +190,39 @@ export function MobileRecordStream() {
     return () => setVisibleMarkIds([])
   }, [filteredRecords, setVisibleMarkIds])
 
+  useEffect(() => {
+    if (!pendingScrollMarkId) return
+    if (!filteredRecords.some((mark: Mark) => mark.id === pendingScrollMarkId)) return
+
+    let cancelled = false
+    let attempts = 0
+    const maxAttempts = 20
+
+    const scrollToTarget = () => {
+      if (cancelled) return
+      const target = document.querySelector<HTMLElement>(`[data-mobile-mark-id="${pendingScrollMarkId}"]`)
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        setPendingScrollMarkId(null)
+        return
+      }
+
+      if (attempts >= maxAttempts) {
+        setPendingScrollMarkId(null)
+        return
+      }
+
+      attempts += 1
+      window.setTimeout(scrollToTarget, 50)
+    }
+
+    scrollToTarget()
+
+    return () => {
+      cancelled = true
+    }
+  }, [filteredRecords, pendingScrollMarkId, setPendingScrollMarkId])
+
   function getDayLabel(day: string) {
     if (dayjs(day).isSame(dayjs(), 'day')) return t('common.today')
     if (dayjs(day).isSame(dayjs().subtract(1, 'day'), 'day')) return t('common.yesterday')
@@ -199,6 +248,11 @@ export function MobileRecordStream() {
 
   async function handleDelete(mark: Mark) {
     if (trashState) {
+      const accepted = await confirm(`${t('record.mark.toolbar.deleteForever')}?\n${t('record.trash.syncWarning')}`, {
+        title: t('record.trash.title'),
+        kind: 'warning',
+      })
+      if (!accepted) return
       await delMarkForever(mark.id)
     } else {
       await delMark(mark.id)
@@ -212,7 +266,7 @@ export function MobileRecordStream() {
   }
 
   async function handleClearTrash() {
-    const accepted = await confirm(t('record.trash.confirm'), {
+    const accepted = await confirm(`${t('record.trash.confirm')}\n${t('record.trash.syncWarning')}`, {
       title: t('record.trash.title'),
       kind: 'warning',
     })
@@ -286,12 +340,19 @@ export function MobileRecordStream() {
 
   async function handleDeleteSelected() {
     const targets = filteredRecords.filter((item: Mark) => selectedIds.has(item.id))
-    for (const item of targets) {
-      if (trashState) {
+    if (trashState && targets.length > 0) {
+      const accepted = await confirm(`${t('record.mark.toolbar.deleteSelectedForever', { count: targets.length })}\n${t('record.trash.syncWarning')}`, {
+        title: t('record.trash.title'),
+        kind: 'warning',
+      })
+      if (!accepted) return
+    }
+    if (trashState) {
+      for (const item of targets) {
         await delMarkForever(item.id)
-      } else {
-        await delMark(item.id)
       }
+    } else {
+      await deleteMarks(targets.map((item) => item.id))
     }
     setSelectedIds(new Set())
     await refreshRecords()
@@ -448,7 +509,9 @@ export function MobileRecordStream() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
+      <RecordSyncStatusBanner settingsHref="/mobile/setting/pages/sync" compact />
+
+      <div className="mobile-under-dock-scroll flex-1 min-h-0 overflow-y-auto px-3 py-2">
         {!trashState && queues.length > 0 && (
           <div className="mb-3 space-y-2">
             {queues.map((queue) => (
@@ -460,6 +523,9 @@ export function MobileRecordStream() {
                   <span className="text-xs text-muted-foreground">{t('common.loading')}</span>
                   <span className="ml-auto text-xs text-muted-foreground">{queue.progress}</span>
                 </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {tagMap.get(queue.tagId) ? `${t('record.capture.saveTarget')}: ${tagMap.get(queue.tagId)} · ` : ''}{t('record.capture.processingInBackground')}
+                </p>
               </div>
             ))}
           </div>
@@ -489,127 +555,138 @@ export function MobileRecordStream() {
                       : 0
 
                   return (
-                  <div key={mark.id} className="relative overflow-hidden rounded-xl bg-background">
-                    {!multiMode && (
-                      <div className="absolute inset-y-0 right-0 flex items-center gap-2 px-2">
-                        {trashState ? (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="size-11 rounded-xl shadow-sm"
-                              onClick={() => {
-                                handleRestore(mark)
-                                setSwipedMarkId(null)
-                              }}
-                              title={t('record.mark.toolbar.restore')}
-                              aria-label={t('record.mark.toolbar.restore')}
-                            >
-                              <RotateCcw className="size-4" />
-                              <span className="sr-only">{t('record.mark.toolbar.restore')}</span>
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="icon"
-                              className="size-11 rounded-xl shadow-sm"
-                              onClick={() => {
-                                handleDelete(mark)
-                                setSwipedMarkId(null)
-                              }}
-                              title={t('record.mark.toolbar.deleteForever')}
-                              aria-label={t('record.mark.toolbar.deleteForever')}
-                            >
-                              <Trash2 className="size-4" />
-                              <span className="sr-only">{t('record.mark.toolbar.deleteForever')}</span>
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="size-11 rounded-xl shadow-sm"
-                              disabled={!canMoveBetweenTags}
-                              onClick={() => {
-                                setMoveTargetMark(mark)
-                                setSwipedMarkId(null)
-                              }}
-                              title={t('record.mark.toolbar.moveTag')}
-                              aria-label={t('record.mark.toolbar.moveTag')}
-                            >
-                              <MoveRight className="size-4" />
-                              <span className="sr-only">{t('record.mark.toolbar.moveTag')}</span>
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="icon"
-                              className="size-11 rounded-xl shadow-sm"
-                              onClick={() => {
-                                handleDelete(mark)
-                                setSwipedMarkId(null)
-                              }}
-                              title={t('record.mark.toolbar.delete')}
-                              aria-label={t('record.mark.toolbar.delete')}
-                            >
-                              <Trash2 className="size-4" />
-                              <span className="sr-only">{t('record.mark.toolbar.delete')}</span>
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    )}
-
                     <div
-                      className="rounded-xl border bg-background px-3 py-3 transition-transform duration-200 ease-out"
-                      style={{ transform: `translateX(${translateX}px)` }}
-                      onTouchStart={(e) => handleItemTouchStart(e, mark.id)}
-                      onTouchMove={handleItemTouchMove}
-                      onTouchEnd={handleItemTouchEnd}
+                      key={mark.id}
+                      data-mobile-mark-id={mark.id}
+                      className={cn(
+                        "relative overflow-hidden rounded-xl bg-background transition-colors",
+                        highlightedMarkId === mark.id && "record-search-highlight"
+                      )}
                     >
-                    <div className="flex items-start gap-2">
-                      {multiMode ? (
-                        <div className="pt-1">
-                          <Checkbox checked={selectedIds.has(mark.id)} onCheckedChange={() => toggleSelect(mark.id)} />
-                        </div>
-                      ) : null}
-
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 text-left"
-                        onClick={() => {
-                          if (swipedMarkId === mark.id) {
-                            setSwipedMarkId(null)
-                            return
-                          }
-                          setActiveMark(mark)
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Badge variant="secondary" className="text-[10px]">
-                            {t(`record.mark.type.${mark.type}`)}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">{dayjs(mark.createdAt).format('HH:mm')}</span>
-                          {!trashState && (
-                            <span className="ml-auto text-xs text-muted-foreground">{tagMap.get(mark.tagId) || '-'}</span>
+                      {!multiMode && (
+                        <div className="absolute inset-y-0 right-0 z-0 flex items-center gap-2 bg-background px-2">
+                          {trashState ? (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="size-11 rounded-xl shadow-sm"
+                                onClick={() => {
+                                  handleRestore(mark)
+                                  setSwipedMarkId(null)
+                                }}
+                                title={t('record.mark.toolbar.restore')}
+                                aria-label={t('record.mark.toolbar.restore')}
+                              >
+                                <RotateCcw className="size-4" />
+                                <span className="sr-only">{t('record.mark.toolbar.restore')}</span>
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="icon"
+                                className="size-11 rounded-xl shadow-sm"
+                                onClick={() => {
+                                  handleDelete(mark)
+                                  setSwipedMarkId(null)
+                                }}
+                                title={t('record.mark.toolbar.deleteForever')}
+                                aria-label={t('record.mark.toolbar.deleteForever')}
+                              >
+                                <Trash2 className="size-4" />
+                                <span className="sr-only">{t('record.mark.toolbar.deleteForever')}</span>
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="size-11 rounded-xl shadow-sm"
+                                disabled={!canMoveBetweenTags}
+                                onClick={() => {
+                                  setMoveTargetMark(mark)
+                                  setSwipedMarkId(null)
+                                }}
+                                title={t('record.mark.toolbar.moveTag')}
+                                aria-label={t('record.mark.toolbar.moveTag')}
+                              >
+                                <MoveRight className="size-4" />
+                                <span className="sr-only">{t('record.mark.toolbar.moveTag')}</span>
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="icon"
+                                className="size-11 rounded-xl shadow-sm"
+                                onClick={() => {
+                                  handleDelete(mark)
+                                  setSwipedMarkId(null)
+                                }}
+                                title={t('record.mark.toolbar.delete')}
+                                aria-label={t('record.mark.toolbar.delete')}
+                              >
+                                <Trash2 className="size-4" />
+                                <span className="sr-only">{t('record.mark.toolbar.delete')}</span>
+                              </Button>
+                            </>
                           )}
                         </div>
-                        {(mark.type === 'image' || mark.type === 'scan') && mark.url ? (
-                          <div className="mt-2 flex items-center gap-2">
-                            <LocalImage
-                              src={mark.url.includes('http') ? mark.url : `/${mark.type === 'scan' ? 'screenshot' : 'image'}/${mark.url}`}
-                              alt=""
-                              className="h-12 w-12 rounded-md object-cover"
-                            />
-                            <p className="line-clamp-2 text-sm text-muted-foreground">{getMarkPreview(mark) || '-'}</p>
-                          </div>
-                        ) : (
-                          <p className="mt-2 line-clamp-2 text-sm">{getMarkPreview(mark) || '-'}</p>
+                      )}
+
+                      <div
+                        className={cn(
+                          "relative z-10 rounded-xl border bg-background px-3 py-3 transition-transform duration-200 ease-out",
+                          highlightedMarkId === mark.id && "border-primary/30 shadow-sm"
                         )}
-                      </button>
+                        style={{ transform: `translateX(${translateX}px)` }}
+                        onTouchStart={(e) => handleItemTouchStart(e, mark.id)}
+                        onTouchMove={handleItemTouchMove}
+                        onTouchEnd={handleItemTouchEnd}
+                      >
+                        <div className="flex items-start gap-2">
+                          {multiMode ? (
+                            <div className="pt-1">
+                              <Checkbox checked={selectedIds.has(mark.id)} onCheckedChange={() => toggleSelect(mark.id)} />
+                            </div>
+                          ) : null}
+
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 text-left"
+                            onClick={() => {
+                              if (swipedMarkId === mark.id) {
+                                setSwipedMarkId(null)
+                                return
+                              }
+                              setActiveMark(mark)
+                            }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Badge variant="secondary" className="text-[10px]">
+                                {t(`record.mark.type.${mark.type}`)}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">{dayjs(mark.createdAt).format('HH:mm')}</span>
+                              {!trashState && (
+                                <span className="ml-auto text-xs text-muted-foreground">{tagMap.get(mark.tagId) || '-'}</span>
+                              )}
+                            </div>
+                            {(mark.type === 'image' || mark.type === 'scan') && mark.url ? (
+                              <div className="mt-2 flex items-center gap-2">
+                                <LocalImage
+                                  src={getMarkImageSrc(mark)}
+                                  alt=""
+                                  useThumbnail
+                                  className="h-12 w-12 rounded-md object-cover"
+                                />
+                                <p className="line-clamp-2 text-sm text-muted-foreground">{getMarkPreview(mark) || '-'}</p>
+                              </div>
+                            ) : (
+                              <p className="mt-2 line-clamp-2 text-sm">{getMarkPreview(mark) || '-'}</p>
+                            )}
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    </div>
-                  </div>
-                )})}
+                  )})}
               </div>
             </div>
           ))
@@ -628,7 +705,7 @@ export function MobileRecordStream() {
                 {(activeMark.type === 'image' || activeMark.type === 'scan') && activeMark.url && (
                   <div className="overflow-hidden rounded-lg border bg-muted/20 p-2">
                     <LocalImage
-                      src={activeMark.url.includes('http') ? activeMark.url : `/${activeMark.type === 'scan' ? 'screenshot' : 'image'}/${activeMark.url}`}
+                      src={getMarkImageSrc(activeMark)}
                       alt=""
                       className="h-48 w-full rounded-md object-contain"
                     />

@@ -1,11 +1,19 @@
 import { fetch, Proxy } from '@tauri-apps/plugin-http'
 import { S3Config } from '@/types/sync'
+import { buildRepoContentPath, debugSyncPath, debugSyncPerf } from './remote-file'
 
 /**
  * S3 同步核心模块
  * 支持阿里云 OSS、AWS S3、MinIO 等 S3 兼容服务
  */
 
+function getPerfNow() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function roundMs(value: number) {
+  return Math.round(value)
+}
 
 // 生成 AWS 签名 V4 (使用 Web Crypto API)
 async function generateSignature(
@@ -175,6 +183,13 @@ function buildS3Url(config: S3Config, key: string): string {
   // 处理 pathPrefix，移除末尾的斜杠以防止双斜杠问题
   const prefix = config.pathPrefix ? config.pathPrefix.trim().replace(/\/+$/, '') : ''
   const fullKey = prefix ? `${prefix}/${key}` : key
+  const encodedFullKey = buildRepoContentPath({ path: fullKey })
+  debugSyncPath('s3.buildUrl', {
+    key,
+    pathPrefix: prefix,
+    fullKey,
+    encodedFullKey,
+  })
 
   let url = ''
 
@@ -186,22 +201,22 @@ function buildS3Url(config: S3Config, key: string): string {
   // Cloudflare R2 需要使用 Path Style，不是 Virtual Hosted Style
   if (isCloudflareR2) {
     // 使用 Path Style: https://endpoint/bucket/key
-    url = `${cleanEndpoint}/${bucket}/${fullKey}`
+    url = `${cleanEndpoint}/${bucket}/${encodedFullKey}`
   } else if (isAliyun || isAWS) {
     // 使用 Virtual Hosted Style: https://bucket.endpoint/key
     try {
       const urlObj = new URL(cleanEndpoint)
       urlObj.hostname = `${bucket}.${urlObj.hostname}`
-      url = `${urlObj.toString()}/${fullKey}`
+      url = `${urlObj.toString()}/${encodedFullKey}`
       // 处理可能的双斜杠
       url = url.replace(/([^:]\/)\/+/g, '$1')
     } catch {
       console.warn('[S3 Sync] Failed to switch to Virtual Hosted Style, using Path Style')
-      url = `${cleanEndpoint}/${bucket}/${fullKey}`
+      url = `${cleanEndpoint}/${bucket}/${encodedFullKey}`
     }
   } else {
     // MinIO 等使用 Path Style
-    url = `${cleanEndpoint}/${bucket}/${fullKey}`
+    url = `${cleanEndpoint}/${bucket}/${encodedFullKey}`
   }
 
   return url
@@ -365,9 +380,29 @@ export async function s3Upload(
   content: string,
   proxy?: Proxy
 ): Promise<{ etag: string } | null> {
+  const uploadStartedAt = getPerfNow()
+  let previousPerfAt = uploadStartedAt
+  const logPerf = (step: string, payload: Record<string, unknown> = {}) => {
+    const now = getPerfNow()
+    debugSyncPerf(`s3.upload.${step}`, {
+      key,
+      stepMs: roundMs(now - previousPerfAt),
+      totalMs: roundMs(now - uploadStartedAt),
+      ...payload,
+    })
+    previousPerfAt = now
+  }
+
   try {
+    logPerf('start', {
+      contentLength: content.length,
+      hasPathPrefix: Boolean(config.pathPrefix),
+    })
     const url = buildS3Url(config, key)
     const contentBytes = new TextEncoder().encode(content)
+    logPerf('encodeContent', {
+      byteLength: contentBytes.byteLength,
+    })
 
     const headers = {
       Host: new URL(url).host,
@@ -382,6 +417,7 @@ export async function s3Upload(
       contentBytes,
       config
     )
+    logPerf('generateSignature')
 
     const requestHeaders = new Headers()
     requestHeaders.append('Authorization', authorization)
@@ -395,17 +431,33 @@ export async function s3Upload(
       body: contentBytes,
       proxy
     })
+    logPerf('putRequest', {
+      status: response.status,
+    })
 
     if (response.status === 200 || response.status === 204) {
       // 获取 ETag
       const etag = response.headers.get('ETag') || ''
+      logPerf('completed', {
+        success: true,
+        status: response.status,
+        hasEtag: Boolean(etag),
+      })
       return { etag }
     } else {
       const errorText = await response.text()
+      logPerf('completed', {
+        success: false,
+        status: response.status,
+        bodyLength: errorText.length,
+      })
       console.error('S3 Upload failed:', response.status, errorText)
       return null
     }
   } catch (error) {
+    logPerf('failed', {
+      message: error instanceof Error ? error.message : String(error),
+    })
     console.error('S3 Upload error:', error)
     return null
   }
@@ -419,7 +471,21 @@ export async function s3Download(
   key: string,
   proxy?: Proxy
 ): Promise<{ content: string; etag: string; lastModified: string } | null> {
+  const startedAt = getPerfNow()
+  let previousPerfAt = startedAt
+  const logPerf = (step: string, payload: Record<string, unknown> = {}) => {
+    const now = getPerfNow()
+    debugSyncPerf(`s3.download.${step}`, {
+      key,
+      stepMs: roundMs(now - previousPerfAt),
+      totalMs: roundMs(now - startedAt),
+      ...payload,
+    })
+    previousPerfAt = now
+  }
+
   try {
+    logPerf('start')
     const url = buildS3Url(config, key)
 
     const emptyPayload = new ArrayBuffer(0)
@@ -434,6 +500,7 @@ export async function s3Download(
     }
 
     const { authorization, amzDate } = await generateSignature('GET', url, headers, emptyPayload, config)
+    logPerf('generateSignature')
 
     const requestHeaders = new Headers()
     requestHeaders.append('Authorization', authorization)
@@ -445,22 +512,40 @@ export async function s3Download(
       headers: requestHeaders,
       proxy
     })
+    logPerf('getRequest', {
+      status: response.status,
+    })
 
     if (response.status === 200) {
       const content = await response.text()
       const etag = response.headers.get('ETag') || ''
       const lastModified = response.headers.get('Last-Modified') || ''
+      logPerf('readBody', {
+        contentLength: content.length,
+      })
 
       return { content, etag, lastModified }
     } else if (response.status === 404) {
       // 文件不存在
+      logPerf('completed', {
+        success: false,
+        status: response.status,
+      })
       return null
     } else {
       const errorText = await response.text()
+      logPerf('completed', {
+        success: false,
+        status: response.status,
+        bodyLength: errorText.length,
+      })
       console.error('S3 Download failed:', response.status, errorText)
       return null
     }
   } catch (error) {
+    logPerf('failed', {
+      message: error instanceof Error ? error.message : String(error),
+    })
     console.error('S3 Download error:', error)
     return null
   }
@@ -513,7 +598,21 @@ export async function s3ListObjects(
   prefix: string,
   proxy?: Proxy
 ): Promise<Array<{ key: string; etag: string; lastModified: string; size: number }>> {
+  const startedAt = getPerfNow()
+  let previousPerfAt = startedAt
+  const logPerf = (step: string, payload: Record<string, unknown> = {}) => {
+    const now = getPerfNow()
+    debugSyncPerf(`s3.listObjects.${step}`, {
+      prefix,
+      stepMs: roundMs(now - previousPerfAt),
+      totalMs: roundMs(now - startedAt),
+      ...payload,
+    })
+    previousPerfAt = now
+  }
+
   try {
+    logPerf('start')
     const baseUrl = buildS3BaseUrl(config)
 
     // 处理 pathPrefix
@@ -539,6 +638,7 @@ export async function s3ListObjects(
     }
 
     const { authorization, amzDate } = await generateSignature('GET', urlStr, headers, emptyPayload, config)
+    logPerf('generateSignature')
 
     const requestHeaders = new Headers()
     requestHeaders.append('Authorization', authorization)
@@ -550,17 +650,32 @@ export async function s3ListObjects(
       headers: requestHeaders,
       proxy
     })
+    logPerf('getRequest', {
+      status: response.status,
+    })
 
     if (response.status === 200) {
       const xmlText = await response.text()
       const result = parseListObjectsResponse(xmlText, configPrefix)
+      logPerf('parseResponse', {
+        responseLength: xmlText.length,
+        resultCount: result.length,
+      })
       return result
     } else {
       const errorText = await response.text()
+      logPerf('completed', {
+        success: false,
+        status: response.status,
+        bodyLength: errorText.length,
+      })
       console.error('S3 ListObjects failed:', response.status, errorText)
       return []
     }
   } catch (error) {
+    logPerf('failed', {
+      message: error instanceof Error ? error.message : String(error),
+    })
     console.error('S3 ListObjects error:', error)
     return []
   }
@@ -619,7 +734,21 @@ export async function s3HeadObject(
   key: string,
   proxy?: Proxy
 ): Promise<{ etag: string; lastModified: string } | null> {
+  const startedAt = getPerfNow()
+  let previousPerfAt = startedAt
+  const logPerf = (step: string, payload: Record<string, unknown> = {}) => {
+    const now = getPerfNow()
+    debugSyncPerf(`s3.headObject.${step}`, {
+      key,
+      stepMs: roundMs(now - previousPerfAt),
+      totalMs: roundMs(now - startedAt),
+      ...payload,
+    })
+    previousPerfAt = now
+  }
+
   try {
+    logPerf('start')
     const url = buildS3Url(config, key)
 
     const emptyPayload = new ArrayBuffer(0)
@@ -634,6 +763,7 @@ export async function s3HeadObject(
     }
 
     const { authorization, amzDate } = await generateSignature('HEAD', url, headers, emptyPayload, config)
+    logPerf('generateSignature')
 
     const requestHeaders = new Headers()
     requestHeaders.append('Authorization', authorization)
@@ -645,6 +775,9 @@ export async function s3HeadObject(
       headers: requestHeaders,
       proxy
     })
+    logPerf('headRequest', {
+      status: response.status,
+    })
 
     if (response.status === 200) {
       const etag = response.headers.get('ETag') || ''
@@ -653,13 +786,25 @@ export async function s3HeadObject(
       return { etag, lastModified }
     } else if (response.status === 404) {
       // 文件不存在
+      logPerf('completed', {
+        success: false,
+        status: response.status,
+      })
       return null
     } else {
       const errorText = await response.text()
+      logPerf('completed', {
+        success: false,
+        status: response.status,
+        bodyLength: errorText.length,
+      })
       console.error('S3 HeadObject failed:', response.status, errorText)
       return null
     }
   } catch (error) {
+    logPerf('failed', {
+      message: error instanceof Error ? error.message : String(error),
+    })
     console.error('S3 HeadObject error:', error)
     return null
   }

@@ -23,30 +23,30 @@ import {
 } from "@/components/ui/drawer"
 import { Textarea } from "@/components/ui/textarea"
 import { insertMark } from "@/db/marks"
-import useMarkStore from "@/stores/mark"
 import useTagStore from "@/stores/tag"
 import { CopySlash } from "lucide-react"
 import { useEffect, useState, useCallback, useRef } from "react"
 import emitter from "@/lib/emitter"
-import { useRouter } from 'next/navigation'
-import { handleRecordComplete } from '@/lib/record-navigation'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { isMobileDevice as checkIsMobileDevice } from '@/lib/check'
 import { hasText, readText } from 'tauri-plugin-clipboard-api'
 import { Store } from '@tauri-apps/plugin-store'
 import { toast } from '@/hooks/use-toast'
+import { RecordSaveTarget } from './record-save-target'
+import { useRecordCompletion } from './use-record-completion'
 
 export function ControlText() {
   const t = useTranslations();
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('')
   const [autoReadClipboard, setAutoReadClipboard] = useState(true)
   const isMobile = useIsMobile() || checkIsMobileDevice()
   const onboardingPrefillRef = useRef<string | null>(null)
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null)
+  const completeRecord = useRecordCompletion()
 
-  const { currentTagId, fetchTags, getCurrentTag } = useTagStore()
-  const { fetchMarks } = useMarkStore()
+  const { currentTagId, tags } = useTagStore()
+  const [selectedTagId, setSelectedTagId] = useState<number>(currentTagId)
 
   // 初始化时从 store 读取设置
   useEffect(() => {
@@ -128,18 +128,19 @@ export function ControlText() {
 
     try {
       const store = await Store.load('store.json')
-      await store.set('currentTagId', currentTagId)
+      await store.set('currentTagId', selectedTagId)
       await store.save()
 
-      await insertMark({ tagId: currentTagId, type: 'text', desc: resetText, content: resetText })
-      await fetchMarks()
-      await fetchTags()
-      getCurrentTag()
+      const result = await insertMark({ tagId: selectedTagId, type: 'text', desc: resetText, content: resetText })
+      const markId = Number(result.lastInsertId || 0) || null
       emitter.emit('onboarding-step-complete', { step: 'create-record' })
       emitter.emit('onboarding-record-prefill-changed', {})
 
-      // 记录完成后的导航处理（桌面端切换tab，移动端跳转页面）
-      handleRecordComplete(router)
+      await completeRecord({
+        markId,
+        tagId: selectedTagId,
+        typeLabel: t('record.mark.type.text'),
+      })
 
       setText('')
       setOpen(false)
@@ -169,6 +170,28 @@ export function ControlText() {
   }, [checkClipboard])
 
   useEffect(() => {
+    if (open) {
+      setSelectedTagId(currentTagId)
+    }
+  }, [currentTagId, open])
+
+  useEffect(() => {
+    if (!open || isMobile) return
+
+    const focusTimer = window.setTimeout(() => {
+      textAreaRef.current?.focus()
+    }, 50)
+
+    return () => window.clearTimeout(focusTimer)
+  }, [isMobile, open])
+
+  const handleDrawerAnimationEnd = useCallback((drawerOpen: boolean) => {
+    if (!drawerOpen) return
+
+    textAreaRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
     const handleOnboardingPrefillChange = (payload?: { prefillText?: string }) => {
       onboardingPrefillRef.current = payload?.prefillText || null
     }
@@ -189,7 +212,7 @@ export function ControlText() {
   return (
     <>
       {isMobile ? (
-        <Drawer open={open} onOpenChange={handleOpenChange}>
+        <Drawer open={open} onOpenChange={handleOpenChange} onAnimationEnd={handleDrawerAnimationEnd}>
           <DrawerTrigger asChild>
             <TooltipButton buttonId="onboarding-target-record-text" icon={<CopySlash />} tooltipText={t('record.mark.type.text')} />
           </DrawerTrigger>
@@ -200,8 +223,14 @@ export function ControlText() {
                 {t('record.mark.text.description')}
               </DrawerDescription>
             </DrawerHeader>
-            <div className="px-4">
+            <div className="space-y-4 px-4">
+              <RecordSaveTarget
+                selectedTagId={selectedTagId}
+                tags={tags}
+                onTagChange={setSelectedTagId}
+              />
               <Textarea
+                ref={textAreaRef}
                 id="username"
                 rows={10}
                 value={text}
@@ -241,11 +270,18 @@ export function ControlText() {
                 {t('record.mark.text.description')}
               </DialogDescription>
             </DialogHeader>
+            <RecordSaveTarget
+              selectedTagId={selectedTagId}
+              tags={tags}
+              onTagChange={setSelectedTagId}
+            />
             <Textarea
+              ref={textAreaRef}
               id="username"
               rows={10}
               value={text}
               onChange={(e) => setText(e.target.value)}
+              autoFocus
             />
             <DialogFooter className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2">

@@ -28,6 +28,7 @@ import { filterMarks } from './mark-filters'
 import { MarkListDefaultView } from './mark-list-default-view'
 import { MarkListCompactView } from './mark-list-compact-view'
 import { MarkListCardView } from './mark-list-card-view'
+import { PhotoPreviewProvider } from "@/components/photo-preview-provider"
 import emitter from '@/lib/emitter'
 import { EmitterRecordEvents } from '@/config/emitters'
 import {
@@ -133,7 +134,7 @@ export function TagManage() {
   const [isAdding, setIsAdding] = React.useState(false)
   const [editingTagId, setEditingTagId] = React.useState<number | null>(null)
   const [editingName, setEditingName] = React.useState<string>("")
-  const [expandedTagId, setExpandedTagId] = React.useState<string | undefined>(undefined)
+  const [expandedTagId, setExpandedTagId] = React.useState("")
   const [hasInitialized, setHasInitialized] = React.useState(false)
   const { init } = useChatStore()
   const textSize = getContextMenuTextSize('record')
@@ -414,40 +415,41 @@ export function TagManage() {
 
   return (
     <div className="w-full">
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        <SortableContext
-          items={visibleTags.map(tag => tag.id)}
-          strategy={verticalListSortingStrategy}
+      <PhotoPreviewProvider>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
         >
-          {/* 标签列表 */}
-          <Accordion 
-            type="single" 
-            collapsible 
-            value={expandedTagId} 
-            onValueChange={(value) => {
-              // 直接设置展开状态，允许折叠（value 为 undefined）
-              setExpandedTagId(value)
-            }}
-            className="w-full"
+          <SortableContext
+            items={visibleTags.map(tag => tag.id)}
+            strategy={verticalListSortingStrategy}
           >
-            {visibleTags.length === 0 ? (
-              <Empty className="border-0 py-10">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <Inbox />
-                  </EmptyMedia>
-                  <EmptyTitle className="text-sm">{t('record.mark.list.emptyFiltered')}</EmptyTitle>
-                  <EmptyDescription className="text-xs">
-                    {t('record.mark.list.emptyFilteredHint')}
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : visibleTags.map((tag) => (
+            {/* 标签列表 */}
+            <Accordion
+              type="single"
+              collapsible
+              value={expandedTagId}
+              onValueChange={(value) => {
+                // 直接设置展开状态，允许折叠（折叠时 value 为空字符串）
+                setExpandedTagId(value || "")
+              }}
+              className="w-full"
+            >
+              {visibleTags.length === 0 ? (
+                <Empty className="border-0 py-10">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <Inbox />
+                    </EmptyMedia>
+                    <EmptyTitle className="text-sm">{t('record.mark.list.emptyFiltered')}</EmptyTitle>
+                    <EmptyDescription className="text-xs">
+                      {t('record.mark.list.emptyFilteredHint')}
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : visibleTags.map((tag) => (
               <SortableTagItem key={tag.id} tag={tag}>
                 <AccordionItemWrapper value={tag.id.toString()}>
                   <ContextMenu>
@@ -519,9 +521,10 @@ export function TagManage() {
                 </AccordionItemWrapper>
               </SortableTagItem>
             ))}
-          </Accordion>
-        </SortableContext>
-      </DndContext>
+            </Accordion>
+          </SortableContext>
+        </DndContext>
+      </PhotoPreviewProvider>
 
       {/* 添加标签 */}
       <div className="p-2">

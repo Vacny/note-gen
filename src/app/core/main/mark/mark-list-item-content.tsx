@@ -68,18 +68,23 @@ export function getMarkListItemContent(mark: Mark): MarkListItemContent {
   }
   case 'recording': {
     const desc = compactText(mark.desc)
-    const { title, preview } = splitTitleAndPreview(mark.content)
+    const { title } = splitTitleAndPreview(mark.content)
     return {
       title: desc || title,
-      preview: preview || title || desc,
+      preview: '',
     }
   }
   case 'scan':
   case 'image': {
-    const title = compactText(mark.desc) || compactText(mark.content)
+    const desc = compactText(mark.desc)
+    const content = compactText(mark.content)
+    const hasAiDescription = Boolean(desc && desc !== content)
+    const displayText = hasAiDescription ? desc : content || desc
+    const { title, preview } = splitTitleAndPreview(displayText)
+
     return {
-      title,
-      preview: compactText(mark.content) || title,
+      title: title || displayText,
+      preview: preview || '',
       imageUrl: mark.url,
     }
   }

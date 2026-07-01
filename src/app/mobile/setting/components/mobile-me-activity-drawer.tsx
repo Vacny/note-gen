@@ -34,7 +34,7 @@ export function MobileMeActivityDrawer({
 }: MobileMeActivityDrawerProps) {
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="max-h-[82vh] rounded-t-[24px]">
+      <DrawerContent className="mobile-dock-surface max-h-[82vh] rounded-t-[24px] border-border/60">
         <DrawerHeader className="pb-3 text-left">
           <DrawerTitle>{day?.day || labels.title}</DrawerTitle>
           <DrawerDescription>{day ? summaryText : labels.description}</DrawerDescription>

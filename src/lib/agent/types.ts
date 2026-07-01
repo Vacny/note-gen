@@ -1,3 +1,198 @@
+import type OpenAI from 'openai'
+
+export type JsonPrimitive = string | number | boolean | null
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[]
+export interface JsonObject {
+  [key: string]: JsonValue
+}
+
+export interface JsonSchema {
+  type?: string | string[]
+  description?: string
+  enum?: JsonPrimitive[]
+  properties?: Record<string, JsonSchema>
+  required?: string[]
+  items?: JsonSchema
+  additionalProperties?: boolean | JsonSchema
+  default?: JsonValue
+}
+
+export type AgentToolCategory =
+  | 'editor'
+  | 'note'
+  | 'folder'
+  | 'tag'
+  | 'mark'
+  | 'chat'
+  | 'memory'
+  | 'skill'
+  | 'mcp'
+  | 'system'
+
+export type AgentToolRisk =
+  | 'read'
+  | 'editor-write'
+  | 'file-create'
+  | 'file-update'
+  | 'delete'
+  | 'script'
+  | 'external'
+  | 'medium'
+
+export interface AgentContextSnapshot {
+  activeChatId?: number
+  activeFilePath?: string
+  userInput: string
+  currentQuote?: AgentQuoteSnapshot
+  availableSkills?: AgentSkillSummary[]
+  selectedMcpServerIds?: string[]
+}
+
+export interface AgentQuoteSnapshot {
+  fileName: string
+  startLine: number
+  endLine: number
+  from: number
+  to: number
+  fullContent?: string
+}
+
+export interface AgentSkillSummary {
+  id: string
+  name: string
+  description?: string
+}
+
+export interface AgentToolExecutionContext {
+  signal?: AbortSignal
+  runId: string
+  context: AgentContextSnapshot
+}
+
+export interface AgentChange {
+  id: string
+  type: 'editor' | 'file' | 'tag' | 'mark' | 'memory' | 'chat' | 'folder'
+  target: string
+  before?: string
+  after?: string
+  reversible: boolean
+  summary?: string
+}
+
+export interface AgentToolResult {
+  ok: boolean
+  message: string
+  data?: unknown
+  error?: string
+  changes?: AgentChange[]
+}
+
+export interface AgentTool {
+  name: string
+  title: string
+  description: string
+  category: AgentToolCategory
+  risk: AgentToolRisk
+  inputSchema: JsonSchema
+  execute: (
+    input: Record<string, unknown>,
+    context: AgentToolExecutionContext
+  ) => Promise<AgentToolResult>
+  legacyName?: string
+}
+
+export type AgentRunStatus =
+  | 'idle'
+  | 'preparing_context'
+  | 'thinking'
+  | 'calling_tool'
+  | 'waiting_approval'
+  | 'applying_change'
+  | 'recovering'
+  | 'completed'
+  | 'stopped'
+  | 'failed'
+
+export interface AgentTraceEvent {
+  id: string
+  runId: string
+  type:
+    | 'model_call'
+    | 'model_response'
+    | 'tool_call'
+    | 'tool_result'
+    | 'approval'
+    | 'change'
+    | 'error'
+    | 'final'
+  title: string
+  status: 'pending' | 'running' | 'success' | 'error'
+  timestamp: number
+  duration?: number
+  toolName?: string
+  input?: Record<string, unknown>
+  output?: unknown
+  message?: string
+}
+
+export interface AgentApprovalRequest {
+  id: string
+  runId: string
+  toolName: string
+  title: string
+  risk: AgentToolRisk
+  params: Record<string, unknown>
+  previewParams?: Record<string, unknown>
+  originalContent?: string
+  modifiedContent?: string
+  filePath?: string
+  canApproveForSession?: boolean
+  sessionApprovalType?: 'write' | 'runtime-script-skill'
+  sessionApprovalSkillId?: string
+}
+
+export interface AgentRuntimeInput {
+  userInput: string
+  messages?: OpenAI.Chat.ChatCompletionMessageParam[]
+  imageUrls?: string[]
+  activeChatId?: number
+  activeFilePath?: string
+  currentQuote?: AgentQuoteSnapshot
+  availableSkills?: AgentSkillSummary[]
+}
+
+export interface AgentRuntimeCallbacks {
+  onStatus?: (status: AgentRunStatus) => void
+  onTrace?: (event: AgentTraceEvent) => void
+  onToolCall?: (toolCall: ToolCall) => void
+  onChange?: (change: AgentChange) => void
+  onStep?: (step: AgentStep) => void
+  onCandidateAnswerRender?: (markdownContent: string) => void
+  onCandidateAnswerClear?: () => void
+  onFinalAnswerRender?: (markdownContent: string) => void
+  requestConfirmation?: (
+    toolName: string,
+    params: Record<string, unknown>,
+    context?: {
+      previewParams?: Record<string, unknown>
+      originalContent?: string
+      modifiedContent?: string
+      filePath?: string
+    }
+  ) => Promise<boolean>
+}
+
+export interface AgentRuntimeResult {
+  runId: string
+  content: string
+  stopped: boolean
+  steps: AgentStep[]
+  toolCalls: ToolCall[]
+  changes: AgentChange[]
+  trace: AgentTraceEvent[]
+}
+
+// Compatibility types kept for existing store/UI while the runtime is rewritten.
 export type ToolParameterType = 'string' | 'number' | 'boolean' | 'array' | 'object'
 
 export interface ToolParameter {
@@ -45,53 +240,53 @@ export interface ConfirmationRecord {
 
 export interface AgentState {
   activeChatId?: number
+  runId?: string
+  status?: AgentRunStatus
   isRunning: boolean
-  isThinking: boolean // 是否正在等待 AI 生成新的思考
+  isThinking: boolean
   currentThought: string
-  thoughtHistory: string[] // 累积的思考历史（已弃用，保留用于兼容）
-  completedSteps: ReActStep[] // 已完成的完整步骤（包含 thought, action, observation）
+  thoughtHistory: string[]
+  completedSteps: AgentStep[]
   currentAction?: string
   currentObservation?: string
   toolCalls: ToolCall[]
+  traceEvents?: AgentTraceEvent[]
+  changes?: AgentChange[]
   maxIterations: number
   currentIteration: number
   pendingConfirmation?: {
     toolName: string
     params: Record<string, any>
     previewParams?: Record<string, any>
-    originalContent?: string  // 原始内容（用于显示 diff）
-    modifiedContent?: string  // 修改后的内容（用于显示 diff）
-    filePath?: string         // 文件路径（用于显示在确认对话框中）
+    originalContent?: string
+    modifiedContent?: string
+    filePath?: string
     canApproveForSession?: boolean
     sessionApprovalType?: 'write' | 'runtime-script-skill'
     sessionApprovalSkillId?: string
   }
-  confirmationHistory: ConfirmationRecord[] // 确认操作的历史记录
-  loadedSkills?: Array<{
-    id: string
-    name: string
-    description?: string
-  }> // 当前对话加载的 Skills 列表
-  selectedSkills?: string[] // AI 选择的 Skill ID 列表
-  currentStepStartTime?: number // 当前步骤开始时间戳（用于实时计算耗时）
-  // RAG 相关字段（实时执行时显示）
-  ragSources?: string[] // RAG 检索到的来源文件列表
+  confirmationHistory: ConfirmationRecord[]
+  loadedSkills?: AgentSkillSummary[]
+  selectedSkills?: string[]
+  currentStepStartTime?: number
+  ragSources?: string[]
   ragSourceDetails?: Array<{
     filepath: string
     filename: string
     content: string
-  }> // RAG 检索到的来源文件详情
-  // Final Answer 模式（检测到 Final Answer 时切换到 Markdown 渲染）
+  }>
   isFinalAnswerMode?: boolean
   finalAnswerContent?: string
 }
 
-export interface ReActStep {
+export interface AgentStep {
   thought: string
   action?: {
     tool: string
     params: Record<string, any>
   }
   observation?: string
-  duration?: number  // 耗时（毫秒）
+  duration?: number
 }
+
+export type ReActStep = AgentStep

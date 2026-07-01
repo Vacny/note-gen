@@ -26,6 +26,21 @@ export interface PendingQuote {
   articlePath: string
 }
 
+function getPendingQuoteIdentity(quote: PendingQuote | null) {
+  if (!quote) {
+    return ''
+  }
+
+  return [
+    quote.articlePath,
+    quote.from,
+    quote.to,
+    quote.startLine,
+    quote.endLine,
+    quote.fullContent,
+  ].join('|')
+}
+
 // MCP 工具调用记录（临时，不保存到数据库）
 export interface McpToolCall {
   id: string
@@ -103,6 +118,10 @@ interface ChatState {
   pendingQuote: PendingQuote | null
   setPendingQuote: (quote: PendingQuote | null) => void
   clearPendingQuote: () => void
+
+  editorSelectionQuote: PendingQuote | null
+  setEditorSelectionQuote: (quote: PendingQuote | null) => void
+  clearEditorSelectionQuote: () => void
 
   onboardingPromptDraft: string | null
   setOnboardingPromptDraft: (prompt: string | null) => void
@@ -207,6 +226,8 @@ const useChatStore = create<ChatState>((set, get) => ({
 
   agentState: {
     activeChatId: undefined,
+    runId: undefined,
+    status: 'idle',
     isRunning: false,
     isThinking: false,
     currentThought: '',
@@ -215,6 +236,8 @@ const useChatStore = create<ChatState>((set, get) => ({
     currentAction: undefined,
     currentObservation: undefined,
     toolCalls: [],
+    traceEvents: [],
+    changes: [],
     maxIterations: 15,
     currentIteration: 0,
     pendingConfirmation: undefined,
@@ -235,6 +258,8 @@ const useChatStore = create<ChatState>((set, get) => ({
     set({
       agentState: {
         activeChatId: undefined,
+        runId: undefined,
+        status: 'idle',
         isRunning: false,
         isThinking: false,
         currentThought: '',
@@ -243,6 +268,8 @@ const useChatStore = create<ChatState>((set, get) => ({
         currentAction: '',
         currentObservation: '',
         toolCalls: [],
+        traceEvents: [],
+        changes: [],
         maxIterations: 15,
         currentIteration: 0,
         pendingConfirmation: undefined,
@@ -312,6 +339,20 @@ const useChatStore = create<ChatState>((set, get) => ({
   },
   clearPendingQuote: () => {
     set({ pendingQuote: null })
+  },
+
+  editorSelectionQuote: null,
+  setEditorSelectionQuote: (editorSelectionQuote: PendingQuote | null) => {
+    set((state) => {
+      if (getPendingQuoteIdentity(state.editorSelectionQuote) === getPendingQuoteIdentity(editorSelectionQuote)) {
+        return state
+      }
+
+      return { editorSelectionQuote }
+    })
+  },
+  clearEditorSelectionQuote: () => {
+    set({ editorSelectionQuote: null })
   },
 
   onboardingPromptDraft: null,
@@ -456,6 +497,7 @@ const useChatStore = create<ChatState>((set, get) => ({
     get().resetAgentState()
     get().clearMcpToolCalls()
     get().clearPendingQuote()
+    get().clearEditorSelectionQuote()
 
     // 更新会话的消息数量
     const { currentConversationId } = get()
@@ -702,7 +744,7 @@ const useChatStore = create<ChatState>((set, get) => ({
     // 然后加载消息
     const { getChatsByConversation } = await import('@/db/chats')
     const data = await getChatsByConversation(id)
-    set({ currentConversationId: id, chats: data, pendingQuote: null })
+    set({ currentConversationId: id, chats: data, pendingQuote: null, editorSelectionQuote: null })
     // 刷新会话列表以确保 UI 显示最新的会话状态
     await get().initConversations()
   },
@@ -731,6 +773,7 @@ const useChatStore = create<ChatState>((set, get) => ({
           currentConversationId: null,
           chats: [],
           pendingQuote: null,
+          editorSelectionQuote: null,
           agentAutoApproveConversationId: null,
           agentAutoApproveRuntimeSkillId: null
         })
@@ -773,6 +816,7 @@ const useChatStore = create<ChatState>((set, get) => ({
       currentConversationId: null,
       chats: [],
       pendingQuote: null,
+      editorSelectionQuote: null,
       agentAutoApproveConversationId: null,
       agentAutoApproveRuntimeSkillId: null
     })

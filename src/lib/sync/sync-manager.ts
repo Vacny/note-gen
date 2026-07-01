@@ -68,8 +68,8 @@ export interface SyncConfig {
 export const defaultSyncConfig: SyncConfig = {
   autoSync: true,
   autoPushOnSave: true,
-  autoPullOnOpen: false,      // 默认关闭
-  autoPullOnSwitch: false,    // 默认关闭
+  autoPullOnOpen: true,       // 默认开启
+  autoPullOnSwitch: true,     // 默认开启
   conflictPolicy: 'ask'
 }
 
@@ -819,6 +819,10 @@ export async function syncSingleFile(path: string, onConflict?: (local: string, 
   return await manager.syncFile(path, { onConflict })
 }
 
+function hasConfiguredText(value: string | null | undefined): boolean {
+  return Boolean(value?.trim())
+}
+
 /**
  * 检查同步是否已配置
  * 检查是否有选择同步平台并配置了对应的访问令牌
@@ -826,48 +830,59 @@ export async function syncSingleFile(path: string, onConflict?: (local: string, 
 export async function isSyncConfigured(): Promise<boolean> {
   try {
     const store = await Store.load('store.json')
-    const platform = await store.get<string>('primaryBackupMethod')
-
-    // 如果没有选择平台，返回 false
-    if (!platform) {
-      return false
-    }
+    const platform = await store.get<string>('primaryBackupMethod') || 'github'
 
     // 检查对应平台的访问令牌（确保不是空字符串）
-    const token = await store.get<string>('accessToken')
     switch (platform) {
-      case 'github':
-        return !!(token && token.trim().length > 0)
+      case 'github': {
+        const token = await store.get<string>('accessToken')
+        const username = await store.get<string>('githubUsername')
+        return hasConfiguredText(token) && hasConfiguredText(username)
+      }
       case 'gitee': {
         const giteeToken = await store.get<string>('giteeAccessToken')
-        return !!(giteeToken && giteeToken.trim().length > 0)
+        const giteeUsername = await store.get<string>('giteeUsername')
+        return hasConfiguredText(giteeToken) && hasConfiguredText(giteeUsername)
       }
       case 'gitlab': {
         const gitlabToken = await store.get<string>('gitlabAccessToken')
-        return !!(gitlabToken && gitlabToken.trim().length > 0)
+        const gitlabUsername = await store.get<string>('gitlabUsername')
+        const repo = await getSyncRepoName('gitlab')
+        const projectId = await store.get<string>(`gitlab_${repo}_project_id`)
+        const instanceType = await store.get<string>('gitlabInstanceType')
+        const customUrl = await store.get<string>('gitlabCustomUrl')
+        const instanceConfigured = instanceType !== 'self-hosted' || hasConfiguredText(customUrl)
+
+        return hasConfiguredText(gitlabToken) &&
+          hasConfiguredText(gitlabUsername) &&
+          hasConfiguredText(projectId) &&
+          instanceConfigured
       }
       case 'gitea': {
         const giteaToken = await store.get<string>('giteaAccessToken')
-        return !!(giteaToken && giteaToken.trim().length > 0)
+        const giteaUsername = await store.get<string>('giteaUsername')
+        const instanceType = await store.get<string>('giteaInstanceType')
+        const customUrl = await store.get<string>('giteaCustomUrl')
+        const instanceConfigured = instanceType !== 'self-hosted' || hasConfiguredText(customUrl)
+
+        return hasConfiguredText(giteaToken) &&
+          hasConfiguredText(giteaUsername) &&
+          instanceConfigured
       }
       case 's3': {
         const s3Config = await store.get<S3Config>('s3SyncConfig')
-        return !!(
-          s3Config &&
-          s3Config.accessKeyId &&
-          s3Config.secretAccessKey &&
-          s3Config.region &&
-          s3Config.bucket
-        )
+        return Boolean(s3Config) &&
+          hasConfiguredText(s3Config?.accessKeyId) &&
+          hasConfiguredText(s3Config?.secretAccessKey) &&
+          hasConfiguredText(s3Config?.region) &&
+          hasConfiguredText(s3Config?.bucket)
       }
       case 'webdav': {
         const webdavConfig = await store.get<WebDAVConfig>('webdavSyncConfig')
-        return !!(
-          webdavConfig &&
-          webdavConfig.url &&
-          webdavConfig.username &&
-          webdavConfig.password
-        )
+        return Boolean(webdavConfig) &&
+          hasConfiguredText(webdavConfig?.url) &&
+          hasConfiguredText(webdavConfig?.username) &&
+          hasConfiguredText(webdavConfig?.password)
       }
       default:
         return false

@@ -7,7 +7,6 @@ import { buildMobileEditorContextBarViewModel } from './mobile-editor-context-ba
 type MobileContextMode = 'text' | 'image' | 'table'
 
 type MobileContextAction =
-  | 'quote'
   | 'ai'
   | 'bold'
   | 'highlight'

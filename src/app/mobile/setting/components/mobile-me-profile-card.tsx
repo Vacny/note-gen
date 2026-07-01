@@ -37,10 +37,10 @@ export function MobileMeProfileCard({
   return (
     <section
       className={cn(
-        "rounded-3xl border p-4 shadow-sm transition-colors",
-        isGit && "border-emerald-200/70 bg-gradient-to-br from-emerald-50/90 via-background to-background dark:border-emerald-900/70 dark:from-emerald-950/30",
-        isStorage && "border-sky-200/70 bg-gradient-to-br from-sky-50/90 via-background to-background dark:border-sky-900/70 dark:from-sky-950/30",
-        isUnconfigured && "border-amber-200/70 bg-gradient-to-br from-amber-50/90 via-background to-background dark:border-amber-900/70 dark:from-amber-950/30"
+        "mobile-dock-surface rounded-[1.35rem] p-4 transition-colors",
+        isGit && "border-emerald-200/70 dark:border-emerald-900/70",
+        isStorage && "border-sky-200/70 dark:border-sky-900/70",
+        isUnconfigured && "border-amber-200/70 dark:border-amber-900/70"
       )}
     >
       <div className="flex items-start gap-3">

@@ -14,6 +14,7 @@ interface UpdateState {
   
   ignoredVersion: string
   setIgnoredVersion: (version: string) => Promise<void>
+  clearIgnoredVersion: () => Promise<void>
   
   checkForUpdates: () => Promise<void>
   ignoreCurrentVersion: () => Promise<void>
@@ -38,22 +39,29 @@ const useUpdateStore = create<UpdateState>((set, get) => ({
     await store.save()
     set({ ignoredVersion: version })
   },
+  clearIgnoredVersion: async () => {
+    const store = await Store.load('store.json')
+    await store.set('ignoredVersion', '')
+    await store.save()
+
+    const { update } = get()
+    set({ ignoredVersion: '', hasUpdate: Boolean(update) })
+  },
   
   checkForUpdates: async () => {
     try {
       const update = await check({
-        headers: {
-          'X-AccessKey': 'wHi8Tkuc5i6v1UCAuVk48A',
-        },
         timeout: 5000,
       })
       
       if (update) {
         const { ignoredVersion } = get()
+        const hasUpdate = update.version !== ignoredVersion
+
         set({ 
           update,
           latestVersion: update.version,
-          hasUpdate: update.version !== ignoredVersion
+          hasUpdate
         })
       } else {
         set({ 

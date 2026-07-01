@@ -8,10 +8,10 @@ import useMarkStore from "@/stores/mark";
 import { insertMark } from "@/db/marks";
 import { useEffect, useCallback } from 'react'
 import emitter from '@/lib/emitter'
-import { useRouter } from 'next/navigation'
-import { handleRecordComplete } from '@/lib/record-navigation'
 import { extractTextFromPDF } from '@/lib/pdf'
 import { v4 as uuid } from 'uuid'
+import { toast } from '@/hooks/use-toast'
+import { useRecordCompletion } from './use-record-completion'
 
 // 常见的代码格式
 const codeExtensions = [
@@ -28,13 +28,12 @@ const codeExtensions = [
 ];
 const textFileExtensions = ['txt', 'md', 'csv'];
 const pdfExtensions = ['pdf'];
-const fileExtensions: string[] = []
 
 export function ControlFile() {
   const t = useTranslations();
-  const router = useRouter();
-  const { currentTagId, fetchTags, getCurrentTag } = useTagStore()
-  const { fetchMarks, addQueue, setQueue, removeQueue } = useMarkStore()
+  const { currentTagId } = useTagStore()
+  const { addQueue, setQueue, removeQueue } = useMarkStore()
+  const completeRecord = useRecordCompletion()
 
   const handleSelectFile = useCallback(() => {
     selectFile()
@@ -51,17 +50,26 @@ export function ControlFile() {
     const filePath = await open({
       multiple: false,
       directory: false,
-      filters: [{
-        name: 'files',
-        extensions: [...textFileExtensions, ...fileExtensions, ...codeExtensions, ...pdfExtensions]
-      }]
     });
     if (!filePath) return
-    
-    // 记录完成后的导航处理（桌面端切换tab，移动端跳转页面）
-    handleRecordComplete(router)
-    
+
     await readFileByPath(filePath)
+  }
+
+  async function saveFileRecord(path: string, desc: string, content: string) {
+    const result = await insertMark({
+      tagId: currentTagId,
+      type: 'file',
+      desc,
+      content,
+      url: path
+    })
+    const markId = Number(result.lastInsertId || 0) || null
+    await completeRecord({
+      markId,
+      tagId: currentTagId,
+      typeLabel: t('record.mark.type.file'),
+    })
   }
 
   async function readFileByPath(path: string) {
@@ -88,39 +96,30 @@ export function ControlFile() {
       removeQueue(queueId)
 
       // 将完整路径存储在 url 字段，用于点击时打开文件夹
-      await insertMark({
-        tagId: currentTagId,
-        type: 'file',
-        desc: desc,
-        content: content,
-        url: path
-      })
-      await fetchMarks()
-      await fetchTags()
-      getCurrentTag()
+      await saveFileRecord(path, desc, content)
       return
     }
     // 处理文本文件和代码文件
     else if ([...textFileExtensions, ...codeExtensions].includes(ext)) {
-      content = await readTextFile(path)
-      content = content.replace(/'/g, '')
+      try {
+        content = await readTextFile(path)
+        content = content.replace(/'/g, '')
+      } catch (error) {
+        console.error('File text read failed:', error)
+        content = t('record.capture.fileReadFailed')
+      }
     }
     // 不支持的文件类型
     else {
-      return
+      content = t('record.capture.fileUnsupportedContent')
+      toast({
+        title: t('record.capture.fileUnsupportedSaved'),
+        description: t('record.capture.fileUnsupportedDescription'),
+      })
     }
 
     // 将完整路径存储在 url 字段，用于点击时打开文件夹
-    await insertMark({
-      tagId: currentTagId,
-      type: 'file',
-      desc: desc,
-      content: content,
-      url: path
-    })
-    await fetchMarks()
-    await fetchTags()
-    getCurrentTag()
+    await saveFileRecord(path, desc, content)
   }
 
   return (

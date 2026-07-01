@@ -327,12 +327,18 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   }, [searchValue, debouncedSearch])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || isMobileRoute) return
     const timer = setTimeout(() => {
       searchInputRef.current?.focus()
     }, 60)
     return () => clearTimeout(timer)
   }, [open, isMobileRoute])
+
+  const handleDrawerAnimationEnd = useCallback((drawerOpen: boolean) => {
+    if (!drawerOpen) return
+
+    searchInputRef.current?.focus()
+  }, [])
 
   const searchContent = (
     <>
@@ -340,7 +346,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
         <div className="min-w-0 flex-1">
           <CommandInput
             ref={searchInputRef}
-            autoFocus
+            autoFocus={!isMobileRoute}
             placeholder={t('search.placeholder')}
             value={searchValue}
             onValueChange={setSearchValue}
@@ -516,7 +522,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
 
   if (isMobileRoute) {
     return (
-      <Drawer open={open} onOpenChange={onOpenChange}>
+      <Drawer open={open} onOpenChange={onOpenChange} onAnimationEnd={handleDrawerAnimationEnd}>
         <DrawerContent className="h-[88vh] rounded-t-[28px] border-border/70 bg-background p-0 shadow-2xl">
           <div className="min-h-0 flex-1 px-3 pb-3 pt-3">
         <Command

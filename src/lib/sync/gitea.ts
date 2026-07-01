@@ -3,7 +3,7 @@ import { Store } from '@tauri-apps/plugin-store';
 import { v4 as uuid } from 'uuid';
 import { fetch, Proxy } from '@tauri-apps/plugin-http';
 import { fetch as encodeFetch } from './encode-fetch'
-import { buildRepoContentPath } from './remote-file'
+import { buildRemoteLogicalPath, buildRepoContentPath, debugSyncPath } from './remote-file'
 import { 
   GiteaInstanceType, 
   GiteaRepositoryInfo, 
@@ -17,6 +17,15 @@ import {
 } from './gitea.types';
 
 // 获取 Gitea 实例的 API 基础 URL
+
+function resolveUploadPath(path: string | undefined, filename: string | undefined, fallbackFilename: string) {
+  if (filename) {
+    return buildRemoteLogicalPath({ path, filename })
+  }
+
+  return path?.replace(/^\/+|\/+$/g, '') || fallbackFilename
+}
+
 export async function getGiteaApiBaseUrl(): Promise<string> {
   const store = await Store.load('store.json');
   const instanceType = await store.get<GiteaInstanceType>('giteaInstanceType') || GiteaInstanceType.OFFICIAL;
@@ -95,47 +104,15 @@ export async function uploadFile({
     }
 
     const id = uuid();
-    // path 可能是完整路径（如 "视频文案/03_免费的笔记同步方案.md"）
-    // 也可能是目录路径（如 "视频文案"）
-    // filename 是文件名（如 "03_免费的笔记同步方案.md"）
-
-    // 从 path 中分离目录和文件名
-    let dirPath: string;
-    let _filename: string;
-
-    if (path) {
-      const lastSlashIndex = path.lastIndexOf('/');
-      if (lastSlashIndex > 0) {
-        // path 包含目录和文件名
-        dirPath = path.substring(0, lastSlashIndex);
-        _filename = filename || path.substring(lastSlashIndex + 1);
-      } else if (lastSlashIndex === -1 && path) {
-        // path 是纯目录名（如 .settings），filename 单独传
-        dirPath = path;
-        _filename = filename || id;
-      } else {
-        // path 为空
-        dirPath = '';
-        _filename = filename || id;
-      }
-    } else {
-      dirPath = '';
-      _filename = filename || id;
-    }
-
-    // 将空格转换成下划线
-    _filename = _filename.replace(/\s/g, '_');
-    // 对文件名进行编码
-    const encodedFilename = encodeURIComponent(_filename);
-
-    // 组合完整路径
-    let normalizedPath: string;
-    if (dirPath) {
-      const encodedDir = dirPath.split('/').map(p => encodeURIComponent(p.replace(/\s/g, '_'))).join('/');
-      normalizedPath = `${encodedDir}/${encodedFilename}`;
-    } else {
-      normalizedPath = encodedFilename;
-    }
+    const targetPath = resolveUploadPath(path, filename, id)
+    const normalizedPath = buildRepoContentPath({ path: targetPath })
+    debugSyncPath('gitea.uploadFile', {
+      inputPath: path,
+      filename,
+      targetPath,
+      normalizedPath,
+      hasSha: Boolean(sha),
+    })
 
     // 将内容转换为 Base64（Gitea API 要求）
     const base64Content = Buffer.from(file, 'utf-8').toString('base64')
@@ -284,7 +261,12 @@ export async function getFiles({ path, repo, sha }: { path: string; repo: string
     const proxy = await getProxyConfig();
 
     // 对路径进行 URL 编码，处理特殊字符
-    const encodedPath = path.replace(/\s/g, '_').split('/').map(encodeURIComponent).join('/');
+    const encodedPath = buildRepoContentPath({ path });
+    debugSyncPath('gitea.getFiles', {
+      inputPath: path,
+      encodedPath,
+      sha,
+    })
     // Gitea API 使用 sha 参数来获取特定 commit/branch 的文件内容
     const shaParam = sha ? `?sha=${sha}` : '';
     const url = `${baseUrl}/repos/${giteaUsername}/${repo}/contents/${encodedPath}${shaParam}`;
@@ -499,7 +481,6 @@ export async function getFileContentFromCommit({ path, ref, repo }: { path: stri
     }
 
     // 获取文件在 tree 中的路径
-    const safePath = path.replace(/\s/g, '_');
     const treeUrl = `${baseUrl}/repos/${giteaUsername}/${repo}/git/trees/${treeSha}?recursive=1`;
 
     const treeResponse = await fetch(treeUrl, {
@@ -514,7 +495,7 @@ export async function getFileContentFromCommit({ path, ref, repo }: { path: stri
 
     const treeData = await treeResponse.json();
     // 查找目标文件
-    const fileEntry = treeData.tree?.find((item: any) => item.path === safePath);
+    const fileEntry = treeData.tree?.find((item: any) => item.path === path);
 
     if (!fileEntry || fileEntry.type !== 'blob') {
       return null;
@@ -560,7 +541,12 @@ export async function getFileContent({ path, ref, repo }: { path: string; ref: s
 
     // 获取特定 commit 的文件内容，对 path 进行编码
     // 与 getFiles 保持一致：对每个路径部分分别进行编码
-    const encodedPath = path.replace(/\s/g, '_').split('/').map(encodeURIComponent).join('/');
+    const encodedPath = buildRepoContentPath({ path });
+    debugSyncPath('gitea.getFileContent', {
+      inputPath: path,
+      encodedPath,
+      ref,
+    })
     // Gitea API 使用 sha 参数而不是 ref 参数来获取特定 commit 的文件内容
     const url = `${baseUrl}/repos/${giteaUsername}/${repo}/contents/${encodedPath}?sha=${ref}`;
 
